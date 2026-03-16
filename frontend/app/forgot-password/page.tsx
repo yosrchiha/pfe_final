@@ -1,62 +1,24 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-const styles = {
-  container: {
-    height: "100vh",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    background: "linear-gradient(135deg, #667eea, #764ba2)",
-  },
-  card: {
-    background: "white",
-    padding: "40px",
-    borderRadius: "12px",
-    width: "350px",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
-  },
-  input: {
-    width: "100%",
-    padding: "10px",
-    marginTop: "15px",
-    borderRadius: "6px",
-    border: "1px solid #ccc",
-  },
-  button: {
-    width: "100%",
-    marginTop: "20px",
-    padding: "10px",
-    borderRadius: "6px",
-    border: "none",
-    backgroundColor: "#667eea",
-    color: "white",
-    cursor: "pointer",
-  },
-  success: {
-    marginTop: "15px",
-    color: "green",
-  },
-  error: {
-    marginTop: "15px",
-    color: "red",
-  },
-}
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import styles from "./forgot.module.css";
 
 export default function ForgotPassword() {
-  const [email, setEmail] = useState("")
-  const [message, setMessage] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
 
-  const router = useRouter()
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError("")
-    setMessage("")
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setMessage("");
 
     try {
       const res = await fetch("http://127.0.0.1:8000/auth/forgot-password", {
@@ -65,49 +27,84 @@ export default function ForgotPassword() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ email }),
-      })
+      });
 
-      const data = await res.json()
+      const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.detail || "Erreur")
+        throw new Error(data.detail || "Erreur");
       }
 
-      // ✅ Redirection vers page reset
-      router.push(`/reset-password?email=${email}`)
+      router.push(`/reset-password?email=${email}`);
 
     } catch (err: any) {
-      setError(err.message)
+      setError(err.message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h2>Mot de passe oublié</h2>
+    <div className={styles.page}>
 
-        <form onSubmit={handleSubmit}>
-          <input
-            type="email"
-            placeholder="Entrez votre email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={styles.input}
-          />
+      <div className={styles.card}>
 
-          <button type="submit" disabled={loading} style={styles.button}>
-            {loading ? "Envoi..." : "Envoyer le code OTP"}
+        {/* Header */}
+        <div className={styles.header}>
+          <div className={styles.logoWrap}>🔑</div>
+          <p className={styles.appName}>GitLab Audit Platform</p>
+          <h1 className={styles.title}>Mot de passe oublié</h1>
+          <p className={styles.subtitle}>
+            Entrez votre email pour recevoir un code OTP
+          </p>
+        </div>
+
+        {/* Formulaire */}
+        <form onSubmit={handleSubmit} className={styles.form}>
+
+          {error && <div className={styles.error}>✕ {error}</div>}
+
+          {message && <div className={styles.success}>{message}</div>}
+
+          <div className={styles.field}>
+            <label className={styles.label}>Email</label>
+
+            <input
+              type="email"
+              placeholder="vous@exemple.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className={styles.input}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className={styles.btnSubmit}
+          >
+            {loading
+              ? <><div className={styles.spinner} /> Envoi...</>
+              : "Envoyer le code OTP"}
           </button>
+
+          <div className={styles.registerRow}>
+            Retour à{" "}
+            <Link href="/login" className={styles.registerLink}>
+              connexion
+            </Link>
+          </div>
+
         </form>
 
-        {message && <p style={styles.success}>{message}</p>}
-        {error && <p >{error}</p>}
       </div>
+
+      <div className={styles.version}>
+        <div className={styles.versionDot} />
+        v1.0.0 · PFE 2025 · FastAPI + Next.js
+      </div>
+
     </div>
-    
-  )
-  
+  );
 }

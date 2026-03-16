@@ -1,35 +1,38 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import styles from "./reset.module.css";
 
 export default function ResetPassword() {
-  const router = useRouter()
 
-  const [email, setEmail] = useState("")
-  const [otp, setOtp] = useState("")
-  const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
+  const router = useRouter();
+
+  const [email, setEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
 
-    setError("")
+    setError("");
 
     if (password !== confirmPassword) {
-      setError("Les mots de passe ne correspondent pas")
-      return
+      setError("Les mots de passe ne correspondent pas");
+      return;
     }
 
     if (password.length < 6) {
-      setError("Le mot de passe doit contenir au moins 6 caractères")
-      return
+      setError("Le mot de passe doit contenir au moins 6 caractères");
+      return;
     }
 
     try {
-      setLoading(true)
+      setLoading(true);
 
       const res = await fetch("http://127.0.0.1:8000/auth/reset-password", {
         method: "POST",
@@ -41,119 +44,117 @@ export default function ResetPassword() {
           otp,
           password,
         }),
-      })
+      });
 
-      const data = await res.json()
+      const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.detail || "Erreur lors de la réinitialisation")
+        throw new Error(data.detail || "Erreur lors de la réinitialisation");
       }
 
-      // ✅ Redirection directe vers login
-      router.replace("/login")
+      router.replace("/login");
 
     } catch (err: any) {
-      setError(err.message)
+      setError(err.message);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h2 style={styles.title}>Réinitialiser le mot de passe</h2>
+    <div className={styles.page}>
 
-        <form onSubmit={handleSubmit}>
-          <input
-            type="email"
-            placeholder="Votre email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            style={styles.input}
-          />
+      <div className={styles.card}>
 
-          <input
-            type="text"
-            placeholder="Code OTP reçu par email"
-            value={otp}
-            onChange={(e) => setOtp(e.target.value)}
-            required
-            style={styles.input}
-          />
+        {/* Header */}
+        <div className={styles.header}>
+          <div className={styles.logoWrap}>🔒</div>
+          <p className={styles.appName}>GitLab Audit Platform</p>
+          <h1 className={styles.title}>Réinitialiser le mot de passe</h1>
+          <p className={styles.subtitle}>
+            Entrez le code OTP et votre nouveau mot de passe
+          </p>
+        </div>
 
-          <input
-            type="password"
-            placeholder="Nouveau mot de passe"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            style={styles.input}
-          />
+        {/* Formulaire */}
+        <form onSubmit={handleSubmit} className={styles.form}>
 
-          <input
-            type="password"
-            placeholder="Confirmer le mot de passe"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-            style={styles.input}
-          />
+          {error && <div className={styles.error}>✕ {error}</div>}
 
-          <button type="submit" disabled={loading} style={styles.button}>
-            {loading ? "Réinitialisation..." : "Changer le mot de passe"}
+          <div className={styles.field}>
+            <label className={styles.label}>Email</label>
+            <input
+              type="email"
+              placeholder="vous@exemple.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className={styles.input}
+            />
+          </div>
+
+          <div className={styles.field}>
+            <label className={styles.label}>Code OTP</label>
+            <input
+              type="text"
+              placeholder="Code reçu par email"
+              value={otp}
+              onChange={(e) => setOtp(e.target.value)}
+              required
+              className={styles.input}
+            />
+          </div>
+
+          <div className={styles.field}>
+            <label className={styles.label}>Nouveau mot de passe</label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className={styles.input}
+            />
+          </div>
+
+          <div className={styles.field}>
+            <label className={styles.label}>Confirmer le mot de passe</label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              className={styles.input}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className={styles.btnSubmit}
+          >
+            {loading
+              ? <><div className={styles.spinner} /> Réinitialisation...</>
+              : "Changer le mot de passe"}
           </button>
+
+          <div className={styles.registerRow}>
+            Retour à{" "}
+            <Link href="/login" className={styles.registerLink}>
+              connexion
+            </Link>
+          </div>
+
         </form>
 
-        {error && <p style={styles.error}>{error}</p>}
       </div>
-    </div>
-  )
-}
 
-const styles: any = {
-  container: {
-    height: "100vh",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    background: "linear-gradient(135deg, #667eea, #764ba2)",
-  },
-  card: {
-    background: "white",
-    padding: "40px",
-    borderRadius: "12px",
-    width: "380px",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.2)",
-  },
-  title: {
-    textAlign: "center",
-    marginBottom: "15px",
-  },
-  input: {
-    width: "100%",
-    padding: "12px",
-    marginTop: "15px",
-    borderRadius: "6px",
-    border: "1px solid #ccc",
-    fontSize: "14px",
-  },
-  button: {
-    width: "100%",
-    marginTop: "20px",
-    padding: "12px",
-    borderRadius: "6px",
-    border: "none",
-    backgroundColor: "#667eea",
-    color: "white",
-    cursor: "pointer",
-    fontWeight: "bold",
-  },
-  error: {
-    marginTop: "15px",
-    color: "red",
-    textAlign: "center",
-    fontWeight: "bold",
-  },
+      <div className={styles.version}>
+        <div className={styles.versionDot} />
+        v1.0.0 · PFE 2025 · FastAPI + Next.js
+      </div>
+
+    </div>
+  );
 }

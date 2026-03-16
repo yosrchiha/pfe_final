@@ -1,20 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
-import requests
-from urllib.parse import quote
-import base64
-import re
+
 from app.models.depot import Depot
 from app.schemas.depot import DepotCreate, DepotResponse, DepotUpdate
 from app.config.database import SessionLocal
-from app.routes.auth import get_current_user  # <- ajoute ceci
-from app.models.user import User  # <- pour type hint
-from app.schemas.depot import DepotResponse
-router = APIRouter(
-    prefix="/depots",
-    tags=["Depots"]
-)
+from app.routes.auth import get_current_user
+from app.models.user import User
+
+# ─────────────────────────────────────────────────────────────────
+# CHANGEMENT : Import du service gitlab_client qui remplace tous les
+# appels requests.get() manuels vers l'API GitLab
+# ─────────────────────────────────────────────────────────────────
+from app.services.gitlab_client import compare_branches, get_project_files
+
+router = APIRouter(prefix="/depots", tags=["Depots"])
+
 
 def get_db():
     db = SessionLocal()
@@ -24,125 +25,156 @@ def get_db():
         db.close()
 
 
+# ── POST / ────────────────────────────────────────────────────────
+# INCHANGÉ : création du dépôt, proprietaire_id depuis JWT
 @router.post("/", response_model=DepotResponse)
-def create_depots(
+def create_depot(
     depot: DepotCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)  # <- l'utilisateur connecté
+    current_user: User = Depends(get_current_user)
 ):
     db_depot = Depot(
         nom=depot.nom,
         url_branche_principale=depot.url_branche_principale,
         url_branche_developpement=depot.url_branche_developpement,
         token_gitlab=depot.token_gitlab,
-        proprietaire_id=current_user.id  # 🔥 Défini automatiquement
+        proprietaire_id=current_user.id  # ✅ toujours depuis le token JWT
     )
     db.add(db_depot)
     db.commit()
     db.refresh(db_depot)
     return db_depot
 
+
+# ── GET / ─────────────────────────────────────────────────────────
+# INCHANGÉ : retourne tous les dépôts (tous utilisateurs)
 @router.get("/", response_model=List[DepotResponse])
-def read_depots(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def list_depots(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return db.query(Depot).offset(skip).limit(limit).all()
 
-@router.get("/{depot_id}", response_model=DepotResponse)
-def read_depots_by_id(depot_id: int, db: Session = Depends(get_db)):
-    depot = db.query(Depot).filter(Depot.id == depot_id).first()
-    if not depot:
-        raise HTTPException(status_code=404, detail="Depot non trouvé")
-    return depot
 
-@router.put("/{depot_id}", response_model=DepotResponse)
-def update_depots(depot_id: int, depot_update: DepotUpdate, db: Session = Depends(get_db)):
-    depot = db.query(Depot).filter(Depot.id == depot_id).first()
-    if not depot:
-        raise HTTPException(status_code=404, detail="Depot non trouvé")
-    for var, value in depot_update.dict(exclude_unset=True).items():
-        setattr(depot, var, value)
-    db.commit()
-    db.refresh(depot)
-    return depot
-
-@router.delete("/{depot_id}")
-def delete_depots(depot_id: int, db: Session = Depends(get_db)):
-    depot = db.query(Depot).filter(Depot.id == depot_id).first()
-    if not depot:
-        raise HTTPException(status_code=404, detail="Depot non trouvé")
-    db.delete(depot)
-    db.commit()
-    return {"detail": "Depot supprimé avec succès"}
-
-@router.get("/{depot_id}/compare")
-def compare_depot(depot_id: int, db: Session = Depends(get_db)):
-    # 1️⃣ Récupérer le dépôt depuis la DB
-    depot = db.query(Depot).filter(Depot.id == depot_id).first()
-    if not depot:
-        raise HTTPException(status_code=404, detail="Depot non trouvé")
-
-    # 2️⃣ Extraire project_path pour GitLab API
-    match = re.search(r"(?:git@gitlab.com:|https://gitlab.com/)(.+)\.git", depot.nom.strip())
-    if not match:
-        raise HTTPException(status_code=400, detail=f"Nom de dépôt invalide pour GitLab API: {depot.nom}")
-
-    project_path = match.group(1)
-    project_encoded = quote(project_path, safe='')
-
-    # 3️⃣ Branches
-    from_branch = depot.url_branche_principale.strip()  # dev2
-    to_branch = depot.url_branche_developpement.strip()       # main
-
-    print(f"DEBUG: project_path={project_path}")
-    print(f"DEBUG: from_branch={from_branch}, to_branch={to_branch}")
-
-    # 4️⃣ Comparer les branches via GitLab API
-    compare_url = f"https://gitlab.com/api/v4/projects/{project_encoded}/repository/compare"
-    headers = {"Authorization": f"Bearer {depot.token_gitlab}"}
-    params = {"from": from_branch, "to": to_branch}
-
-    response = requests.get(compare_url, headers=headers, params=params)
-
-    # 5️⃣ Gestion d'erreur détaillée
-    if response.status_code != 200:
-        print(f"GitLab API error {response.status_code}: {response.text}")
-        raise HTTPException(status_code=response.status_code, detail=f"GitLab API error: {response.text}")
-
-    compare_data = response.json()
-    print(f"DEBUG: compare_data keys: {compare_data.keys()}")
-
-    if not compare_data.get("diffs") and not compare_data.get("commits"):
-        return {"message": "Aucun changement détecté entre les branches", "files": []}
-
-    # 6️⃣ Récupération du contenu des fichiers modifiés
-    files_with_content = []
-    for diff in compare_data.get("diffs", []):
-        file_path = diff["new_path"]
-        file_url = f"https://gitlab.com/api/v4/projects/{project_encoded}/repository/files/{quote(file_path, safe='')}"
-        file_res = requests.get(file_url, headers=headers, params={"ref": from_branch})
-
-        if file_res.status_code != 200:
-            print(f"Impossible de récupérer {file_path}: {file_res.text}")
-            continue
-
-        file_data = file_res.json()
-        content = base64.b64decode(file_data["content"]).decode("utf-8")
-        files_with_content.append({
-            "path": file_path,
-            "content": content,
-            "diff": diff.get("diff")
-        })
-
-    return {
-        "project": project_path,
-        "from_branch": from_branch,
-        "to_branch": to_branch,
-        "commits_count": len(compare_data.get("commits", [])),
-        "files": files_with_content
-    }
-
+# ── GET /user/{user_id} ───────────────────────────────────────────
+# IMPORTANT : cette route doit rester AVANT /{depot_id} sinon
+# FastAPI interprète "user" comme un depot_id et retourne 404
 @router.get("/user/{user_id}", response_model=List[DepotResponse])
 def get_user_depots(user_id: int, db: Session = Depends(get_db)):
+    """Retourne les dépôts d'un utilisateur spécifique."""
     depots = db.query(Depot).filter(Depot.proprietaire_id == user_id).all()
     if not depots:
         raise HTTPException(status_code=404, detail="Aucun dépôt trouvé pour cet utilisateur")
     return depots
+
+
+# ── GET /{depot_id} ───────────────────────────────────────────────
+# INCHANGÉ
+@router.get("/{depot_id}", response_model=DepotResponse)
+def get_depot(depot_id: int, db: Session = Depends(get_db)):
+    depot = db.query(Depot).filter(Depot.id == depot_id).first()
+    if not depot:
+        raise HTTPException(status_code=404, detail="Dépôt non trouvé")
+    return depot
+
+
+# ── PUT /{depot_id} ───────────────────────────────────────────────
+# CHANGEMENT : .dict() → .model_dump() pour Pydantic V2
+@router.put("/{depot_id}", response_model=DepotResponse)
+def update_depot(depot_id: int, depot_update: DepotUpdate, db: Session = Depends(get_db)):
+    depot = db.query(Depot).filter(Depot.id == depot_id).first()
+    if not depot:
+        raise HTTPException(status_code=404, detail="Dépôt non trouvé")
+
+    # CHANGEMENT : .dict() est déprécié en Pydantic V2 → .model_dump()
+    for field, value in depot_update.model_dump(exclude_unset=True).items():
+        setattr(depot, field, value)
+
+    db.commit()
+    db.refresh(depot)
+    return depot
+
+
+# ── DELETE /{depot_id} ────────────────────────────────────────────
+# INCHANGÉ
+@router.delete("/{depot_id}")
+def delete_depot(depot_id: int, db: Session = Depends(get_db)):
+    depot = db.query(Depot).filter(Depot.id == depot_id).first()
+    if not depot:
+        raise HTTPException(status_code=404, detail="Dépôt non trouvé")
+    db.delete(depot)
+    db.commit()
+    return {"detail": "Dépôt supprimé avec succès"}
+
+
+# ── GET /{depot_id}/compare ───────────────────────────────────────
+# CHANGEMENT MAJEUR : tout le bloc requests.get() manuel a été
+# supprimé et remplacé par un seul appel à compare_branches()
+# du service gitlab_client.py
+# Le format de réponse JSON est identique → frontend inchangé
+@router.get("/{depot_id}/compare")
+def compare_depot(
+    depot_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)  # CHANGEMENT : auth requise
+):
+    """
+    Compare les deux branches du dépôt.
+    Utilise python-gitlab via gitlab_client.compare_branches()
+    au lieu de requests.get() manuel.
+    """
+    depot = db.query(Depot).filter(Depot.id == depot_id).first()
+    if not depot:
+        raise HTTPException(status_code=404, detail="Dépôt non trouvé")
+
+    try:
+        # CHANGEMENT : appel au service au lieu du code inline avec requests
+        result = compare_branches(
+            token=depot.token_gitlab,           # token stocké en base
+            project_name=depot.nom,             # nom saisi dans le formulaire
+            from_branch=depot.url_branche_principale,
+            to_branch=depot.url_branche_developpement
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return result
+
+
+# ── GET /{depot_id}/files ─────────────────────────────────────────
+# NOUVEAU : endpoint pour récupérer tous les fichiers d'une branche
+# Sera utilisé par l'analyse LLM (prochaine étape)
+@router.get("/{depot_id}/files")
+def get_depot_files(
+    depot_id: int,
+    branch: str = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    NOUVEAU : Récupère le contenu de tous les fichiers du dépôt
+    sur la branche principale (ou une branche spécifiée).
+    Prépare les données pour l'analyse LLM.
+    """
+    depot = db.query(Depot).filter(Depot.id == depot_id).first()
+    if not depot:
+        raise HTTPException(status_code=404, detail="Dépôt non trouvé")
+
+    # Utilise la branche principale par défaut
+    target_branch = branch or depot.url_branche_principale
+
+    try:
+        # Récupère les fichiers source via python-gitlab
+        fichiers = get_project_files(
+            token=depot.token_gitlab,
+            project_name=depot.nom,
+            branch=target_branch,
+            # Filtre sur les extensions de code source
+            extensions=[".py", ".js", ".ts", ".java", ".go", ".rb", ".php", ".cpp", ".cs"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "depot_id": depot_id,
+        "branch": target_branch,
+        "total_files": len(fichiers),
+        "files": fichiers
+    }

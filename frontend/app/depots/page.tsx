@@ -4,38 +4,34 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
+// ✅ Interface alignée avec les vraies colonnes du backend
 interface Depot {
   id: number;
-  name: string;
-  repo_url: string;
-  branch: string;
-  trigger_push: boolean;
-  trigger_merge: boolean;
-  trigger_schedule: boolean;
-  last_analysis?: string;
-  score_quality?: number;
-  vulnerabilities?: number;
-  coverage?: number;
-  status?: "active" | "error";
+  nom: string;
+  url_branche_principale: string;
+  url_branche_developpement: string;
+  token_gitlab: string;
+  proprietaire_id: number;
 }
 
 export default function DepotsPage() {
   const router = useRouter();
   const [depots, setDepots] = useState<Depot[]>([]);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "active" | "error">("all");
 
   useEffect(() => {
     const fetchDepots = async () => {
       try {
         const token = localStorage.getItem("token");
         if (!token) return;
+        // Récupère TOUS les dépôts de tous les utilisateurs
         const res = await axios.get("http://127.0.0.1:8000/depots/", {
           headers: { Authorization: `Bearer ${token}` },
         });
         setDepots(res.data);
-      } catch (err) {
-        console.error(err);
+      } catch (err: any) {
+        if (err?.response?.status === 404) setDepots([]);
+        else console.error(err);
       }
     };
     fetchDepots();
@@ -43,19 +39,67 @@ export default function DepotsPage() {
     return () => window.removeEventListener("focus", fetchDepots);
   }, []);
 
-  const filtered = depots.filter((d) => {
-    const matchSearch =
-  (d.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
-  (d.repo_url ?? "").toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === "all" || (d.status ?? "active") === filter;
-    return matchSearch && matchFilter;
-  });
+  const filtered = depots.filter((d) =>
+    (d.nom ?? "").toLowerCase().includes(search.toLowerCase()) ||
+    (d.url_branche_principale ?? "").toLowerCase().includes(search.toLowerCase()) ||
+    (d.url_branche_developpement ?? "").toLowerCase().includes(search.toLowerCase())
+  );
 
-  const scoreColor = (score?: number) => {
-    if (!score) return "#555";
-    if (score >= 80) return "#00d4aa";
-    if (score >= 50) return "#ffd166";
-    return "#ff6b6b";
+  const handleDelete = async (id: number) => {
+    if (!confirm("Supprimer ce dépôt ?")) return;
+    try {
+      const token = localStorage.getItem("token");
+      await axios.delete(`http://127.0.0.1:8000/depots/${id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setDepots(prev => prev.filter(d => d.id !== id));
+    } catch (err) {
+      console.error("Erreur suppression:", err);
+    }
+  };
+
+  const [comparing, setComparing] = useState<number | null>(null);
+  const [compareError, setCompareError] = useState<string | null>(null);
+  const [modalDepot, setModalDepot] = useState<Depot | null>(null);
+  const [modalToken, setModalToken] = useState("");
+
+  // Ouvre le modal pour saisir un token frais
+  const openCompareModal = (depot: Depot) => {
+    setModalDepot(depot);
+    setModalToken("");
+    setCompareError(null);
+  };
+
+  const handleCompare = async () => {
+    if (!modalDepot) return;
+    if (!modalToken.trim()) {
+      setCompareError("Veuillez saisir un token GitLab valide.");
+      return;
+    }
+    setComparing(modalDepot.id);
+    setCompareError(null);
+    try {
+      // 1. Met à jour le token du dépôt
+      const token = localStorage.getItem("token");
+      await axios.put(`http://127.0.0.1:8000/depots/${modalDepot.id}`, {
+        token_gitlab: modalToken.trim()
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      // 2. Lance la comparaison
+      const res = await axios.get(`http://127.0.0.1:8000/depots/${modalDepot.id}/compare`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = encodeURIComponent(JSON.stringify(res.data));
+      setModalDepot(null);
+      router.push(`/difference?data=${data}`);
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || "Erreur inconnue";
+      setCompareError(`Erreur : ${msg}`);
+    } finally {
+      setComparing(null);
+    }
   };
 
   return (
@@ -64,185 +108,145 @@ export default function DepotsPage() {
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        .page {
-          min-height: 100vh;
-          background: #0d0e12;
-          font-family: 'Inter', sans-serif;
-          color: #c9cad6;
-          padding: 32px;
-        }
+        .page { min-height: 100vh; background: #0d0e12; font-family: 'Inter', sans-serif; color: #c9cad6; padding: 32px; }
 
-        /* TOPBAR */
-        .topbar {
-          display: flex; align-items: center;
-          justify-content: space-between;
-          margin-bottom: 28px;
-          flex-wrap: wrap; gap: 12px;
-        }
+        .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
         .topbar-left { display: flex; align-items: center; gap: 12px; }
         .back-btn {
-          background: transparent; border: 1px solid #1c1d26;
-          border-radius: 7px; color: #555; font-size: 16px;
-          width: 34px; height: 34px; cursor: pointer;
-          display: flex; align-items: center; justify-content: center;
-          transition: all 0.15s; flex-shrink: 0;
+          background: transparent; border: 1px solid #1c1d26; border-radius: 7px;
+          color: #555; font-size: 16px; width: 34px; height: 34px; cursor: pointer;
+          display: flex; align-items: center; justify-content: center; transition: all 0.15s;
         }
         .back-btn:hover { border-color: #333; color: #aaa; }
         .page-title { font-size: 20px; font-weight: 700; color: #fff; }
         .page-sub   { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; margin-top: 3px; }
-
         .btn-add {
-          padding: 8px 18px; background: #6c63ff;
-          border: none; border-radius: 7px; color: #fff;
-          font-family: 'Inter', sans-serif; font-size: 13px;
+          padding: 8px 18px; background: #6c63ff; border: none; border-radius: 7px;
+          color: #fff; font-family: 'Inter', sans-serif; font-size: 13px;
           font-weight: 600; cursor: pointer; transition: background 0.15s;
-          white-space: nowrap;
         }
         .btn-add:hover { background: #5b52e0; }
 
-        /* SUMMARY CARDS */
-        .summary {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 12px;
-          margin-bottom: 24px;
-        }
-        .sum-card {
-          background: #111218; border: 1px solid #1c1d26;
-          border-radius: 10px; padding: 16px 18px;
-        }
+        /* SUMMARY */
+        .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }
+        .sum-card { background: #111218; border: 1px solid #1c1d26; border-radius: 10px; padding: 16px 18px; }
         .sum-val { font-size: 26px; font-weight: 700; color: #fff; letter-spacing: -0.02em; }
         .sum-lbl { font-size: 10px; color: #444; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.07em; margin-top: 4px; }
 
         /* TOOLBAR */
-        .toolbar {
-          display: flex; align-items: center; gap: 10px;
-          margin-bottom: 20px; flex-wrap: wrap;
-        }
-        .search-wrap { position: relative; flex: 1; min-width: 200px; }
-        .search-icon {
-          position: absolute; left: 12px; top: 50%;
-          transform: translateY(-50%); color: #444; font-size: 14px; pointer-events: none;
-        }
+        .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+        .search-wrap { position: relative; flex: 1; }
+        .search-icon { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #444; font-size: 14px; pointer-events: none; }
         .search-input {
-          width: 100%; background: #111218; border: 1px solid #1c1d26;
-          border-radius: 8px; padding: 9px 12px 9px 34px;
-          color: #e8e8f0; font-family: 'JetBrains Mono', monospace;
+          width: 100%; background: #111218; border: 1px solid #1c1d26; border-radius: 8px;
+          padding: 9px 12px 9px 34px; color: #e8e8f0; font-family: 'JetBrains Mono', monospace;
           font-size: 12px; outline: none; transition: border-color 0.15s;
         }
         .search-input::placeholder { color: #333; }
         .search-input:focus { border-color: #6c63ff55; }
+        .count-label { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
 
-        .filter-btns { display: flex; gap: 6px; }
-        .filter-btn {
-          padding: 7px 14px; border-radius: 7px; font-size: 12px;
-          font-family: 'JetBrains Mono', monospace; cursor: pointer;
-          border: 1px solid #1c1d26; background: transparent;
-          color: #555; transition: all 0.15s;
-        }
-        .filter-btn:hover { border-color: #333; color: #aaa; }
-        .filter-btn.active { background: #1e1f2e; color: #fff; border-color: #6c63ff40; }
+        /* TABLE */
+        .table-wrap { background: #111218; border: 1px solid #1c1d26; border-radius: 12px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 800px; }
 
-        .count-label {
-          font-size: 11px; color: #444;
-          font-family: 'JetBrains Mono', monospace;
-          white-space: nowrap;
-        }
-
-        /* DEPOT CARDS */
-        .depot-list { display: flex; flex-direction: column; gap: 12px; }
-
-        .depot-card {
-          background: #111218; border: 1px solid #1c1d26;
-          border-radius: 12px; padding: 20px 22px;
-          transition: border-color 0.15s, transform 0.15s;
-          cursor: pointer;
-        }
-        .depot-card:hover { border-color: #6c63ff50; transform: translateY(-1px); }
-        .depot-card.error { border-color: #ff6b6b25; }
-
-        .depot-top {
-          display: flex; align-items: flex-start;
-          justify-content: space-between; gap: 12px;
-          margin-bottom: 14px;
-        }
-        .depot-name { font-size: 15px; font-weight: 700; color: #e8e8f0; margin-bottom: 3px; }
-        .depot-url  {
-          font-size: 11px; color: #3a3b4a;
-          font-family: 'JetBrains Mono', monospace;
-          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-          max-width: 380px;
-        }
-
-        .depot-badges { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-
-        .status-badge {
-          display: flex; align-items: center; gap: 5px;
-          font-size: 10px; border-radius: 20px; padding: 3px 9px;
+        thead tr { border-bottom: 1px solid #1c1d26; background: #0d0e12; }
+        th {
+          padding: 12px 16px; text-align: left; font-size: 10px; font-weight: 600;
+          color: #444; text-transform: uppercase; letter-spacing: 0.08em;
           font-family: 'JetBrains Mono', monospace; white-space: nowrap;
         }
-        .status-active { color: #00d4aa; background: #00d4aa12; border: 1px solid #00d4aa20; }
-        .status-error  { color: #ff6b6b; background: #ff6b6b12; border: 1px solid #ff6b6b20; }
-        .status-dot { width: 5px; height: 5px; border-radius: 50%; animation: blink 2s infinite; }
-        .dot-active { background: #00d4aa; }
-        .dot-error  { background: #ff6b6b; }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-        .branch-tag {
-          font-size: 11px; color: #6c63ff;
-          background: #6c63ff12; border: 1px solid #6c63ff20;
-          border-radius: 5px; padding: 2px 8px;
+        tbody tr { border-bottom: 1px solid #1c1d2650; transition: background 0.12s; }
+        tbody tr:last-child { border-bottom: none; }
+        tbody tr:hover { background: #16172060; }
+        td { padding: 14px 16px; vertical-align: middle; }
+
+        /* CELLS */
+        .cell-id   { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; }
+        .cell-nom  { font-size: 14px; font-weight: 600; color: #e8e8f0; }
+        .cell-url  { font-size: 11px; color: #555; font-family: 'JetBrains Mono', monospace; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .cell-url a { color: #6c63ff; text-decoration: none; }
+        .cell-url a:hover { text-decoration: underline; }
+
+        .branch-badge {
+          display: inline-block; font-size: 10px; font-family: 'JetBrains Mono', monospace;
+          padding: 2px 7px; border-radius: 4px; margin-top: 4px;
+        }
+        .badge-principale    { color: #00d4aa; background: #00d4aa10; border: 1px solid #00d4aa20; }
+        .badge-developpement { color: #9b91ff; background: #6c63ff10; border: 1px solid #6c63ff20; }
+
+        .token-cell { font-size: 11px; color: #333; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.05em; }
+
+        .owner-badge {
+          font-size: 11px; color: #ffd166; background: #ffd16610;
+          border: 1px solid #ffd16620; border-radius: 5px; padding: 2px 8px;
           font-family: 'JetBrains Mono', monospace;
         }
 
-        .trigger-tag { font-size: 10px; border-radius: 5px; padding: 2px 7px; font-family: 'JetBrains Mono', monospace; }
-        .tag-push     { background: #00d4aa10; color: #00d4aa; border: 1px solid #00d4aa20; }
-        .tag-merge    { background: #6c63ff10; color: #9b91ff; border: 1px solid #6c63ff20; }
-        .tag-schedule { background: #ffd16610; color: #ffd166; border: 1px solid #ffd16620; }
-
-        /* METRICS ROW */
-        .divider { height: 1px; background: #1c1d26; margin: 14px 0; }
-
-        .metrics {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 12px;
+        .status-badge {
+          display: inline-flex; align-items: center; gap: 5px;
+          font-size: 10px; border-radius: 20px; padding: 3px 9px;
+          font-family: 'JetBrains Mono', monospace;
+          color: #00d4aa; background: #00d4aa12; border: 1px solid #00d4aa20;
         }
+        .status-dot { width: 5px; height: 5px; border-radius: 50%; background: #00d4aa; animation: blink 2s infinite; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
 
-        .metric { display: flex; flex-direction: column; gap: 6px; }
-        .metric-label { font-size: 10px; color: #444; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.07em; }
-        .metric-value { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
-        .metric-sub   { font-size: 10px; color: #444; font-family: 'JetBrains Mono', monospace; }
-
-        .progress-track { height: 3px; background: #1c1d26; border-radius: 10px; overflow: hidden; margin-top: 4px; }
-        .progress-fill  { height: 100%; border-radius: 10px; transition: width 0.6s ease; }
-
-        /* CARD FOOTER */
-        .depot-footer {
-          display: flex; align-items: center;
-          justify-content: space-between;
-          margin-top: 14px; flex-wrap: wrap; gap: 8px;
-        }
-        .last-analysis { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; }
-
-        .btn-analyse {
-          padding: 6px 14px; background: transparent;
+        /* ACTIONS */
+        .actions { display: flex; gap: 6px; align-items: center; }
+        .btn-compare {
+          padding: 5px 11px; background: transparent;
           border: 1px solid #6c63ff40; border-radius: 6px;
-          color: #9b91ff; font-size: 12px; font-family: 'Inter', sans-serif;
-          font-weight: 500; cursor: pointer; transition: all 0.15s;
+          color: #9b91ff; font-size: 11px; font-family: 'Inter', sans-serif;
+          font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap;
         }
-        .btn-analyse:hover { background: #6c63ff15; border-color: #6c63ff80; color: #fff; }
+        .btn-compare:hover { background: #6c63ff15; border-color: #6c63ff80; color: #fff; }
+        .btn-delete {
+          padding: 5px 10px; background: transparent;
+          border: 1px solid #ff6b6b30; border-radius: 6px;
+          color: #ff6b6b; font-size: 12px; cursor: pointer; transition: all 0.15s;
+        }
+        .btn-delete:hover { background: #ff6b6b10; border-color: #ff6b6b60; }
 
         /* EMPTY */
-        .empty {
-          display: flex; flex-direction: column;
-          align-items: center; justify-content: center;
-          padding: 70px 20px; gap: 12px;
-          background: #111218; border: 1px solid #1c1d26;
-          border-radius: 12px;
-        }
+        .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 70px 20px; gap: 12px; }
         .empty-icon { font-size: 36px; opacity: 0.1; }
         .empty-txt  { font-size: 12px; color: #444; font-family: 'JetBrains Mono', monospace; }
+        /* MODAL */
+        .modal-overlay {
+          position: fixed; inset: 0; background: #00000090; z-index: 100;
+          display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .modal {
+          background: #111218; border: 1px solid #1c1d26; border-radius: 14px;
+          padding: 28px; width: 100%; max-width: 420px;
+        }
+        .modal-title { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+        .modal-sub   { font-size: 11px; color: #444; font-family: "JetBrains Mono", monospace; margin-bottom: 20px; }
+        .modal-label { font-size: 11px; color: #666; font-weight: 500; margin-bottom: 6px; display: block; }
+        .modal-input {
+          width: 100%; background: #0d0e12; border: 1px solid #1c1d26; border-radius: 8px;
+          padding: 10px 14px; color: #e8e8f0; font-family: "JetBrains Mono", monospace;
+          font-size: 13px; outline: none; transition: border-color 0.15s; margin-bottom: 12px;
+        }
+        .modal-input:focus { border-color: #6c63ff55; }
+        .modal-input::placeholder { color: #2e2f3e; }
+        .modal-hint { font-size: 10px; color: #444; font-family: "JetBrains Mono", monospace; margin-bottom: 20px; }
+        .modal-actions { display: flex; gap: 8px; }
+        .modal-cancel {
+          flex: 1; padding: 9px; background: transparent; border: 1px solid #1c1d26;
+          border-radius: 7px; color: #666; font-family: "Inter", sans-serif;
+          font-size: 13px; cursor: pointer; transition: all 0.15s;
+        }
+        .modal-cancel:hover { border-color: #333; color: #aaa; }
+        .modal-confirm {
+          flex: 2; padding: 9px; background: #6c63ff; border: none; border-radius: 7px;
+          color: #fff; font-family: "Inter", sans-serif; font-size: 13px;
+          font-weight: 600; cursor: pointer; transition: background 0.15s;
+        }
+        .modal-confirm:hover { background: #5b52e0; }
+        .modal-error { font-size: 11px; color: #ff6b6b; font-family: "JetBrains Mono", monospace; margin-bottom: 12px; }
       `}</style>
 
       <div className="page">
@@ -268,24 +272,14 @@ export default function DepotsPage() {
             <div className="sum-lbl">Total dépôts</div>
           </div>
           <div className="sum-card">
-            <div className="sum-val" style={{ color: "#00d4aa" }}>
-              {depots.filter(d => (d.status ?? "active") === "active").length}
-            </div>
+            <div className="sum-val" style={{ color: "#00d4aa" }}>{depots.length}</div>
             <div className="sum-lbl">Actifs</div>
           </div>
           <div className="sum-card">
-            <div className="sum-val" style={{ color: "#ff6b6b" }}>
-              {depots.filter(d => d.status === "error").length}
+            <div className="sum-val" style={{ color: "#9b91ff" }}>
+              {[...new Set(depots.map(d => d.proprietaire_id))].length}
             </div>
-            <div className="sum-lbl">En erreur</div>
-          </div>
-          <div className="sum-card">
-            <div className="sum-val" style={{ color: "#ffd166" }}>
-              {depots.length > 0
-                ? Math.round(depots.reduce((acc, d) => acc + (d.score_quality ?? 0), 0) / depots.length)
-                : 0}
-            </div>
-            <div className="sum-lbl">Score moyen</div>
+            <div className="sum-lbl">Propriétaires</div>
           </div>
         </div>
 
@@ -296,32 +290,28 @@ export default function DepotsPage() {
             <input
               className="search-input"
               type="text"
-              placeholder="Rechercher un dépôt..."
+              placeholder="Rechercher par nom ou URL..."
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <div className="filter-btns">
-            {(["all", "active", "error"] as const).map(f => (
-              <button
-                key={f}
-                className={`filter-btn ${filter === f ? "active" : ""}`}
-                onClick={() => setFilter(f)}
-              >
-                {f === "all" ? "Tous" : f === "active" ? "Actifs" : "Erreurs"}
-              </button>
-            ))}
-          </div>
-          <span className="count-label">{filtered.length} résultat{filtered.length !== 1 ? "s" : ""}</span>
+          <span className="count-label">{filtered.length} dépôt{filtered.length !== 1 ? "s" : ""}</span>
         </div>
 
-        {/* List */}
-        <div className="depot-list">
+        {/* Error banner */}
+        {compareError && (
+          <div style={{ background: "#ff6b6b12", border: "1px solid #ff6b6b30", borderRadius: 8, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ fontSize: 12, color: "#ff6b6b", fontFamily: "JetBrains Mono, monospace" }}>{compareError}</span>
+            <button onClick={() => setCompareError(null)} style={{ background: "transparent", border: "none", color: "#ff6b6b", cursor: "pointer", fontSize: 14 }}>✕</button>
+          </div>
+        )}
+        {/* Table */}
+        <div className="table-wrap">
           {filtered.length === 0 ? (
             <div className="empty">
               <div className="empty-icon">◈</div>
               <div className="empty-txt">
-                {depots.length === 0 ? "Aucun dépôt configuré" : "Aucun résultat pour cette recherche"}
+                {depots.length === 0 ? "Aucun dépôt configuré" : "Aucun résultat"}
               </div>
               {depots.length === 0 && (
                 <button className="btn-add" style={{ marginTop: 8 }} onClick={() => router.push("/add-depot")}>
@@ -330,86 +320,120 @@ export default function DepotsPage() {
               )}
             </div>
           ) : (
-            filtered.map((d) => {
-              const status = d.status ?? "active";
-              const score = d.score_quality;
-              const sColor = scoreColor(score);
-              return (
-                <div key={d.id} className={`depot-card ${status === "error" ? "error" : ""}`}>
+            <table>
+              <thead>
+                <tr>
+                  <th>#ID</th>
+                  <th>Nom</th>
+                  <th>Branche principale</th>
+                  <th>Branche développement</th>
+                  <th>Token GitLab</th>
+                  <th>Propriétaire</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((d) => (
+                  <tr key={d.id}>
 
-                  {/* Top */}
-                  <div className="depot-top">
-                    <div>
-                      <div className="depot-name">{d.name}</div>
-                      <div className="depot-url">{d.repo_url}</div>
-                    </div>
-                    <div className="depot-badges">
-                      <div className={`status-badge ${status === "active" ? "status-active" : "status-error"}`}>
-                        <div className={`status-dot ${status === "active" ? "dot-active" : "dot-error"}`} />
-                        {status === "active" ? "actif" : "erreur"}
+                    <td><span className="cell-id">#{d.id}</span></td>
+
+                    <td><span className="cell-nom">{d.nom}</span></td>
+
+                    <td>
+                      <div className="cell-url">
+                        <a href={d.url_branche_principale} target="_blank" rel="noreferrer">
+                          {d.url_branche_principale}
+                        </a>
                       </div>
-                    </div>
-                  </div>
+                      <span className="branch-badge badge-principale">principale</span>
+                    </td>
 
-                  {/* Tags */}
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-                    <span className="branch-tag">⑂ {d.branch}</span>
-                    {d.trigger_push     && <span className="trigger-tag tag-push">push</span>}
-                    {d.trigger_merge    && <span className="trigger-tag tag-merge">merge</span>}
-                    {d.trigger_schedule && <span className="trigger-tag tag-schedule">planifié</span>}
-                  </div>
-
-                  <div className="divider" />
-
-                  {/* Metrics */}
-                  <div className="metrics">
-                    <div className="metric">
-                      <div className="metric-label">Score qualité</div>
-                      <div className="metric-value" style={{ color: sColor }}>{score ?? "—"}{score !== undefined ? "%" : ""}</div>
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: `${score ?? 0}%`, background: sColor }} />
+                    <td>
+                      <div className="cell-url">
+                        <a href={d.url_branche_developpement} target="_blank" rel="noreferrer">
+                          {d.url_branche_developpement}
+                        </a>
                       </div>
-                    </div>
-                    <div className="metric">
-                      <div className="metric-label">Vulnérabilités</div>
-                      <div className="metric-value" style={{ color: d.vulnerabilities ? "#ff6b6b" : "#00d4aa" }}>
-                        {d.vulnerabilities ?? "0"}
-                      </div>
-                      <div className="metric-sub">{d.vulnerabilities ? "à corriger" : "aucune détectée"}</div>
-                    </div>
-                    <div className="metric">
-                      <div className="metric-label">Couverture tests</div>
-                      <div className="metric-value" style={{ color: "#9b91ff" }}>{d.coverage ?? "—"}{d.coverage !== undefined ? "%" : ""}</div>
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: `${d.coverage ?? 0}%`, background: "#6c63ff" }} />
-                      </div>
-                    </div>
-                    <div className="metric">
-                      <div className="metric-label">Dernière analyse</div>
-                      <div className="metric-value" style={{ fontSize: 13, color: "#888", fontFamily: "JetBrains Mono" }}>
-                        {d.last_analysis ?? "—"}
-                      </div>
-                      <div className="metric-sub">analyse LLM</div>
-                    </div>
-                  </div>
+                      <span className="branch-badge badge-developpement">développement</span>
+                    </td>
 
-                  {/* Footer */}
-                  <div className="depot-footer">
-                    <span className="last-analysis">
-                      {d.last_analysis ? `Analysé le ${d.last_analysis}` : "Jamais analysé"}
-                    </span>
-                    <button className="btn-analyse" onClick={() => router.push(`/analyses?depot=${d.id}`)}>
-                      ◎ Lancer une analyse
-                    </button>
-                  </div>
+                    <td>
+                      <span className="token-cell">
+                        {d.token_gitlab ? d.token_gitlab.slice(0, 6) + "••••••••••" : "—"}
+                      </span>
+                    </td>
 
-                </div>
-              );
-            })
+                    <td><span className="owner-badge">user #{d.proprietaire_id}</span></td>
+
+                    <td>
+                      <span className="status-badge">
+                        <div className="status-dot" />
+                        actif
+                      </span>
+                    </td>
+
+                    <td>
+                      <div className="actions">
+                        <button
+                          className="btn-compare"
+                          onClick={() => openCompareModal(d)}
+                          disabled={comparing === d.id}
+                          style={{ opacity: comparing === d.id ? 0.6 : 1 }}
+                        >
+                          {comparing === d.id ? "⏳ Chargement..." : "⟁ Comparer"}
+                        </button>
+                        <button className="btn-delete" onClick={() => handleDelete(d.id)}>
+                          ✕
+                        </button>
+                      </div>
+                    </td>
+
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
 
       </div>
+      {/* MODAL token GitLab */}
+      {modalDepot && (
+        <div className="modal-overlay" onClick={() => setModalDepot(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">⟁ Comparer les branches</div>
+            <div className="modal-sub">{modalDepot.nom}</div>
+
+            <label className="modal-label">Token GitLab valide</label>
+            <input
+              className="modal-input"
+              type="password"
+              placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
+              value={modalToken}
+              onChange={e => setModalToken(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleCompare()}
+              autoFocus
+            />
+            <div className="modal-hint">
+              Settings → Access Tokens → scopes: read_api, read_repository
+            </div>
+
+            {compareError && <div className="modal-error">{compareError}</div>}
+
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={() => setModalDepot(null)}>Annuler</button>
+              <button
+                className="modal-confirm"
+                onClick={handleCompare}
+                disabled={comparing !== null}
+              >
+                {comparing !== null ? "⏳ Chargement..." : "Lancer la comparaison"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
