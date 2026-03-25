@@ -1,498 +1,317 @@
-// frontend/app/analyse/page.tsx
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import axios from "axios";
-import styles from "./analyse.module.css";
 
 const API = "http://127.0.0.1:8000";
 
 export default function AnalysePage() {
+  const router = useRouter();
 
-  // ── Formulaire ───────────────────────────────────────
   const [nomProjet,  setNomProjet]  = useState("");
   const [token,      setToken]      = useState("");
   const [projectUrl, setProjectUrl] = useState("");
   const [branche,    setBranche]    = useState("main");
-
-  // ── Options ──────────────────────────────────────────
-  const [owasp,     setOwasp]     = useState(true);
-  const [autoTests, setAutoTests] = useState(true);
-  const [autoMr,    setAutoMr]    = useState(true);
-  const [seuil,     setSeuil]     = useState(60);
-
-  // ── Résultat ─────────────────────────────────────────
+  const [owasp,      setOwasp]      = useState(true);
+  const [autoTests,  setAutoTests]  = useState(true);
+  const [autoMr,     setAutoMr]     = useState(true);
+  const [seuil,      setSeuil]      = useState(60);
   const [loading,    setLoading]    = useState(false);
-  const [rapport,    setRapport]    = useState<any>(null);
   const [erreur,     setErreur]     = useState("");
-  const [historique, setHistorique] = useState<any[]>([]);
 
-  // ── Couleurs ─────────────────────────────────────────
-  const couleurScore = (s: number) => {
-    if (!s && s !== 0) return "#94a3b8";
-    if (s >= 75) return "#16a34a";
-    if (s >= 50) return "#d97706";
-    return "#dc2626";
+  const couleurSeuil = (s: number) => {
+    if (s >= 75) return "#00d4aa";
+    if (s >= 50) return "#ffd166";
+    return "#ff6b6b";
   };
 
-  const couleurSeverite = (s: string) => {
-    if (s === "CRITIQUE") return "#dc2626";
-    if (s === "HAUTE")    return "#ea580c";
-    if (s === "MOYENNE")  return "#d97706";
-    return "#16a34a";
+  const getHeaders = () => {
+    const jwt = localStorage.getItem("token");
+    return { Authorization: jwt ? `Bearer ${jwt}` : "" };
   };
 
-  // ── Lancer l'analyse ─────────────────────────────────
   const lancerAnalyse = async () => {
-    // Validation
-    if (!nomProjet.trim()) {
-      setErreur("Le nom du projet est requis");
-      return;
-    }
-    if (!token.trim()) {
-      setErreur("Le token GitLab est requis");
-      return;
-    }
-    if (!projectUrl.trim()) {
-      setErreur("L'URL du projet est requise");
-      return;
-    }
+    if (!nomProjet.trim()) { setErreur("Le nom du projet est requis"); return; }
+    if (!token.trim())     { setErreur("Le token GitLab est requis");  return; }
+    if (!projectUrl.trim()){ setErreur("Le chemin du projet est requis"); return; }
 
     setLoading(true);
-    setRapport(null);
     setErreur("");
 
     try {
-      const res = await axios.post(`${API}/analyses/lancer`, {
-        nom_projet    : nomProjet,
-        gitlab_token  : token,
-        project_url   : projectUrl,
-        branche       : branche,
-        owasp_enabled : owasp,
-        auto_tests    : autoTests,
-        auto_mr       : autoMr,
-        seuil_qualite : seuil,
-      });
+      const res = await axios.post(
+        `${API}/analyses/lancer`,
+        {
+          nom_projet    : nomProjet,
+          gitlab_token  : token,
+          project_url   : projectUrl,
+          branche,
+          owasp_enabled : owasp,
+          auto_tests    : autoTests,
+          auto_mr       : autoMr,
+          seuil_qualite : seuil,
+        },
+        { headers: getHeaders() }
+      );
 
-      setRapport(res.data);
+      // Sauvegarder le résultat et rediriger vers la page rapport
+      sessionStorage.setItem("rapport",     JSON.stringify(res.data));
+      sessionStorage.setItem("nomProjet",   nomProjet);
+      sessionStorage.setItem("token",       token);
+      sessionStorage.setItem("projectUrl",  projectUrl);
+      sessionStorage.setItem("branche",     branche);
+      sessionStorage.setItem("autoTests",   String(autoTests));
+      sessionStorage.setItem("autoMr",      String(autoMr));
 
-      // Charger l'historique du dépôt
-      if (res.data.depot_analyse_id) {
-        try {
-          const hist = await axios.get(
-            `${API}/analyses/depot/${res.data.depot_analyse_id}`
-          );
-          setHistorique(hist.data);
-        } catch {
-          setHistorique([]);
-        }
-      }
+      router.push("/analyse/rapport");
 
     } catch (e: any) {
-      // Gérer detail tableau ou string
       const detail = e.response?.data?.detail;
       if (Array.isArray(detail)) {
-        setErreur(
-          detail.map((d: any) => d.msg).join(", ")
-        );
+        setErreur(detail.map((d: any) => d.msg).join(", "));
       } else if (typeof detail === "string") {
         setErreur(detail);
       } else {
-        setErreur("Erreur lors de l'analyse");
+        setErreur("Erreur lors de l'analyse — vérifiez le token et le chemin du projet");
       }
     } finally {
       setLoading(false);
     }
   };
 
-  // ── Rendu ─────────────────────────────────────────────
   return (
-    <div className={styles.page}>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-      <div className={styles.header}>
-        <h1 className={styles.title}>Analyse de code</h1>
-        <p className={styles.subtitle}>
-          Remplis les informations du projet et lance l'analyse
-        </p>
-      </div>
+        .page {
+          min-height: 100vh;
+          background: #060810;
+          font-family: 'Inter', sans-serif;
+          color: #c9cad6;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 32px 16px;
+        }
 
-      <div className={styles.body}>
+        .container {
+          width: 100%;
+          max-width: 560px;
+        }
 
-        {/* ════════════════════════════════════════
-            COLONNE GAUCHE
-        ════════════════════════════════════════ */}
-        <div className={styles.left}>
+        /* ── En-tête ── */
+        .header { text-align: center; margin-bottom: 36px; }
+        .badge {
+          display: inline-flex; align-items: center; gap: 6px;
+          background: #5b63f510; border: 1px solid #5b63f530;
+          border-radius: 20px; padding: 4px 14px;
+          font-size: 10px; font-family: 'JetBrains Mono', monospace;
+          color: #818cf8; letter-spacing: 0.08em; margin-bottom: 16px;
+        }
+        .dot { width: 6px; height: 6px; border-radius: 50%; background: #818cf8; animation: blink 2s infinite; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .title { font-size: 28px; font-weight: 700; color: #e8eaf6; letter-spacing: -0.02em; margin-bottom: 8px; }
+        .subtitle { font-size: 13px; color: #3a4060; font-family: 'JetBrains Mono', monospace; }
 
-          {/* ── 1. Infos du projet ── */}
-          <div className={styles.card}>
-            <h2 className={styles.cardTitle}>
-              1. Informations du projet GitLab
-            </h2>
+        /* ── Card ── */
+        .card {
+          background: #0f1222;
+          border: 1px solid #1a1e35;
+          border-radius: 14px;
+          padding: 24px;
+          margin-bottom: 14px;
+        }
+        .card-title {
+          font-size: 11px; font-weight: 600; color: #3a4060;
+          font-family: 'JetBrains Mono', monospace;
+          text-transform: uppercase; letter-spacing: 0.1em;
+          margin-bottom: 18px; padding-bottom: 10px;
+          border-bottom: 1px solid #1a1e35;
+        }
 
-            <div style={{ marginBottom: 14 }}>
-              <label className={styles.label}>
-                Nom du projet
-              </label>
-              <input
-                type="text"
-                placeholder="ex: mon-projet-pfe"
-                value={nomProjet}
-                onChange={e => setNomProjet(e.target.value)}
-                className={styles.input}
-              />
+        /* ── Champs ── */
+        .field { margin-bottom: 16px; }
+        .field:last-child { margin-bottom: 0; }
+        .label {
+          display: block; font-size: 11px; font-weight: 600;
+          color: #6870a0; margin-bottom: 6px;
+          font-family: 'JetBrains Mono', monospace;
+          text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .input {
+          width: 100%; background: #080a14;
+          border: 1px solid #1a1e35; border-radius: 8px;
+          padding: 10px 14px; color: #e8eaf6;
+          font-family: 'JetBrains Mono', monospace; font-size: 13px;
+          outline: none; transition: border-color 0.15s;
+        }
+        .input::placeholder { color: #2e3355; }
+        .input:focus { border-color: #5b63f555; box-shadow: 0 0 0 3px #5b63f510; }
+        .hint { font-size: 10px; color: #2e3355; font-family: 'JetBrains Mono', monospace; margin-top: 5px; display: block; }
+
+        /* ── Options ── */
+        .option {
+          display: flex; align-items: flex-start; gap: 12px;
+          padding: 12px 0; border-bottom: 1px solid #1a1e3540;
+        }
+        .option:last-of-type { border-bottom: none; }
+        .checkbox { width: 16px; height: 16px; accent-color: #5b63f5; margin-top: 2px; flex-shrink: 0; cursor: pointer; }
+        .option-text { flex: 1; cursor: pointer; }
+        .option-title { display: block; font-size: 13px; font-weight: 500; color: #c9cad6; margin-bottom: 2px; }
+        .option-desc  { display: block; font-size: 11px; color: #3a4060; font-family: 'JetBrains Mono', monospace; }
+
+        /* ── Seuil ── */
+        .seuil-wrap { padding-top: 14px; }
+        .seuil-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+        .range { flex: 1; accent-color: #5b63f5; cursor: pointer; }
+        .seuil-val { font-size: 16px; font-weight: 700; font-family: 'JetBrains Mono', monospace; min-width: 52px; text-align: right; }
+
+        /* ── Erreur ── */
+        .erreur {
+          background: #ff6b6b10; border: 1px solid #ff6b6b30;
+          border-radius: 8px; padding: 12px 14px;
+          font-size: 12px; color: #ff6b6b;
+          font-family: 'JetBrains Mono', monospace;
+          margin-bottom: 14px;
+        }
+
+        /* ── Bouton ── */
+        .btn {
+          width: 100%; padding: 14px;
+          background: linear-gradient(135deg, #5b63f5, #818cf8);
+          border: none; border-radius: 10px;
+          color: #fff; font-family: 'Inter', sans-serif;
+          font-size: 15px; font-weight: 700;
+          cursor: pointer; transition: all 0.15s;
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 24px #5b63f540; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+        .spin {
+          width: 16px; height: 16px;
+          border: 2px solid #ffffff40;
+          border-top: 2px solid #fff;
+          border-radius: 50%;
+          animation: spin 0.7s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Steps indicator ── */
+        .steps { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 28px; }
+        .step { display: flex; align-items: center; gap: 6px; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
+        .step-num { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+        .step-active .step-num  { background: #5b63f5; color: #fff; }
+        .step-done .step-num    { background: #00d4aa; color: #000; }
+        .step-pending .step-num { background: #1a1e35; color: #3a4060; }
+        .step-active .step-lbl  { color: #e8eaf6; font-weight: 600; }
+        .step-pending .step-lbl { color: #2e3355; }
+        .step-sep { width: 24px; height: 1px; background: #1a1e35; }
+      `}</style>
+
+      <div className="page">
+        <div className="container">
+
+          {/* En-tête */}
+          <div className="header">
+            <div className="badge">
+              <div className="dot"/>
+              Plateforme Audit GitLab
             </div>
+            <h1 className="title">Analyser un projet</h1>
+            <p className="subtitle">Renseignez les infos du projet pour lancer l'audit IA</p>
+          </div>
 
-            <div style={{ marginBottom: 14 }}>
-              <label className={styles.label}>
-                Token GitLab
-              </label>
-              <input
-                type="password"
-                placeholder="glpat-xxxxxxxxxxxx"
-                value={token}
-                onChange={e => setToken(e.target.value)}
-                className={styles.input}
-              />
-              <span className={styles.hint}>
-                GitLab → Settings → Access Tokens
-              </span>
+          {/* Steps */}
+          <div className="steps">
+            <div className="step step-active">
+              <div className="step-num">1</div>
+              <span className="step-lbl">Formulaire</span>
             </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <label className={styles.label}>
-                Chemin du projet
-              </label>
-              <input
-                type="text"
-                placeholder="username/nom-du-projet"
-                value={projectUrl}
-                onChange={e => setProjectUrl(e.target.value)}
-                className={styles.input}
-              />
-              <span className={styles.hint}>
-                Ex: ahmed/mon-projet ou https://gitlab.com/ahmed/mon-projet
-              </span>
-            </div>
-
-            <div>
-              <label className={styles.label}>
-                Branche à analyser
-              </label>
-              <input
-                type="text"
-                placeholder="main"
-                value={branche}
-                onChange={e => setBranche(e.target.value)}
-                className={styles.input}
-              />
+            <div className="step-sep"/>
+            <div className="step step-pending">
+              <div className="step-num">2</div>
+              <span className="step-lbl">Résultats</span>
             </div>
           </div>
 
-          {/* ── 2. Options ── */}
-          <div className={styles.card}>
-            <h2 className={styles.cardTitle}>
-              2. Options d'analyse
-            </h2>
+          {/* Card 1 — Infos projet */}
+          <div className="card">
+            <div className="card-title">Projet GitLab</div>
 
-            <div className={styles.option}>
-              <input
-                type="checkbox"
-                id="owasp"
-                checked={owasp}
-                onChange={e => setOwasp(e.target.checked)}
-                className={styles.checkbox}
-              />
-              <label htmlFor="owasp" className={styles.optionLabel}>
-                <span className={styles.optionTitle}>
-                  Analyse sécurité OWASP
-                </span>
-                <span className={styles.optionDesc}>
-                  Détecte les failles OWASP Top 10
-                </span>
-              </label>
+            <div className="field">
+              <label className="label">Nom du projet</label>
+              <input className="input" type="text" placeholder="ex: mon-projet-pfe"
+                value={nomProjet} onChange={e => setNomProjet(e.target.value)} />
             </div>
 
-            <div className={styles.option}>
-              <input
-                type="checkbox"
-                id="autoTests"
-                checked={autoTests}
-                onChange={e => setAutoTests(e.target.checked)}
-                className={styles.checkbox}
-              />
-              <label htmlFor="autoTests" className={styles.optionLabel}>
-                <span className={styles.optionTitle}>
-                  Générer les tests unitaires
-                </span>
-                <span className={styles.optionDesc}>
-                  Génère les tests après l'analyse
-                </span>
-              </label>
+            <div className="field">
+              <label className="label">Token d'accès GitLab</label>
+              <input className="input" type="password" placeholder="glpat-xxxxxxxxxxxx"
+                value={token} onChange={e => setToken(e.target.value)} />
+              <span className="hint">GitLab → Settings → Access Tokens → scopes : api, write_repository</span>
             </div>
 
-            <div className={styles.option}>
-              <input
-                type="checkbox"
-                id="autoMr"
-                checked={autoMr}
-                onChange={e => setAutoMr(e.target.checked)}
-                className={styles.checkbox}
-              />
-              <label htmlFor="autoMr" className={styles.optionLabel}>
-                <span className={styles.optionTitle}>
-                  Créer la Merge Request
-                </span>
-                <span className={styles.optionDesc}>
-                  Crée une MR pour les tests générés
-                </span>
-              </label>
+            <div className="field">
+              <label className="label">Chemin du projet</label>
+              <input className="input" type="text" placeholder="username/nom-du-projet"
+                value={projectUrl} onChange={e => setProjectUrl(e.target.value)} />
+              <span className="hint">Ex: yosrchiha01/plateforme-audit-ia ou URL HTTPS complète</span>
             </div>
 
-            <div className={styles.seuilWrap}>
-              <label className={styles.label}>
-                Seuil minimum de qualité
-              </label>
-              <div className={styles.seuilRow}>
-                <input
-                  type="range"
-                  min={0} max={100}
-                  value={seuil}
-                  onChange={e => setSeuil(parseInt(e.target.value))}
-                  className={styles.range}
-                />
-                <span
-                  className={styles.seuilVal}
-                  style={{ color: couleurScore(seuil) }}
-                >
+            <div className="field">
+              <label className="label">Branche</label>
+              <input className="input" type="text" placeholder="main"
+                value={branche} onChange={e => setBranche(e.target.value)} />
+            </div>
+          </div>
+
+          {/* Card 2 — Options */}
+          <div className="card">
+            <div className="card-title">Options d'analyse</div>
+
+            {[
+              { id: "owasp",     val: owasp,     set: setOwasp,     title: "Analyse OWASP Top 10",        desc: "Détecte les 10 failles de sécurité les plus critiques" },
+              { id: "autoTests", val: autoTests, set: setAutoTests, title: "Générer les tests unitaires", desc: "L'IA génère les tests pour tout le code" },
+              { id: "autoMr",    val: autoMr,    set: setAutoMr,    title: "Créer une Merge Request",     desc: "Pousse les tests sur GitLab et ouvre une MR" },
+            ].map(opt => (
+              <div key={opt.id} className="option">
+                <input type="checkbox" id={opt.id} checked={opt.val}
+                  onChange={e => opt.set(e.target.checked)} className="checkbox" />
+                <label htmlFor={opt.id} className="option-text">
+                  <span className="option-title">{opt.title}</span>
+                  <span className="option-desc">{opt.desc}</span>
+                </label>
+              </div>
+            ))}
+
+            <div className="seuil-wrap">
+              <label className="label">Seuil minimum de qualité</label>
+              <div className="seuil-row">
+                <input type="range" min={0} max={100} value={seuil}
+                  onChange={e => setSeuil(parseInt(e.target.value))} className="range" />
+                <span className="seuil-val" style={{ color: couleurSeuil(seuil) }}>
                   {seuil}/100
                 </span>
               </div>
             </div>
           </div>
 
-          {/* ── Erreur ── */}
-          {erreur && (
-            <div className={styles.erreur}>
-              ⚠️ {erreur}
-            </div>
-          )}
+          {/* Erreur */}
+          {erreur && <div className="erreur">⚠ {erreur}</div>}
 
-          {/* ── Bouton ── */}
-          <button
-            className={styles.btnAnalyse}
-            onClick={lancerAnalyse}
-            disabled={loading}
-          >
-            {loading ? (
-              <>
-                <span className={styles.spinner}/>
-                Analyse en cours...
-              </>
-            ) : (
-              "🚀 Lancer l'analyse"
-            )}
+          {/* Bouton */}
+          <button className="btn" onClick={lancerAnalyse} disabled={loading}>
+            {loading
+              ? <><div className="spin"/> Analyse en cours — patience...</>
+              : "Lancer l'analyse →"
+            }
           </button>
 
-          {/* ── Historique ── */}
-          {historique.length > 0 && (
-            <div className={styles.card}>
-              <h2 className={styles.cardTitle}>
-                Historique — {nomProjet}
-              </h2>
-              {historique.slice(0, 5).map((h: any) => (
-                <div
-                  key={h.id}
-                  className={styles.histRow}
-                  onClick={() => setRapport(h)}
-                >
-                  <span className={styles.histBranche}>
-                    {h.branche}
-                  </span>
-                  <span
-                    className={styles.histScore}
-                    style={{ color: couleurScore(h.score_qualite) }}
-                  >
-                    {h.score_qualite}/100
-                  </span>
-                  <span className={styles.histDate}>
-                    {new Date(h.created_at)
-                      .toLocaleDateString("fr-FR")}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* ════════════════════════════════════════
-            COLONNE DROITE — Rapport
-        ════════════════════════════════════════ */}
-        <div className={styles.right}>
-
-          {/* Etat vide */}
-          {!rapport && !loading && (
-            <div className={styles.empty}>
-              <div style={{ fontSize: 52, marginBottom: 16 }}>🔍</div>
-              <p>Remplis le formulaire et lance l'analyse</p>
-              <p style={{ fontSize: 13, color: "#94a3b8" }}>
-                Le rapport apparaîtra ici
-              </p>
-            </div>
-          )}
-
-          {/* Chargement */}
-          {loading && (
-            <div className={styles.loading}>
-              <div className={styles.spinnerBig}/>
-              <p>Récupération des fichiers GitLab...</p>
-              <p className={styles.loadingSub}>
-                Analyse LLM en cours, quelques secondes...
-              </p>
-            </div>
-          )}
-
-          {/* Rapport */}
-          {rapport && !loading && (
-            <div className={styles.rapport}>
-
-              {/* En-tête */}
-              <div style={{
-                display        : "flex",
-                justifyContent : "space-between",
-                alignItems     : "center",
-                marginBottom   : 24,
-                paddingBottom  : 16,
-                borderBottom   : "1px solid #e2e8f0"
-              }}>
-                <div>
-                  <h2 className={styles.rapportTitle}>
-                    Rapport — {nomProjet}
-                  </h2>
-                  <span style={{
-                    fontSize   : 12,
-                    color      : "#64748b",
-                    fontFamily : "monospace"
-                  }}>
-                    Branche : {rapport.branche}
-                  </span>
-                </div>
-                <span style={{
-                  background   : "#f0fdf4",
-                  border       : "1px solid #bbf7d0",
-                  borderRadius : 20,
-                  padding      : "4px 14px",
-                  fontSize     : 12,
-                  color        : "#16a34a",
-                  fontWeight   : "bold"
-                }}>
-                  ✅ Terminé
-                </span>
-              </div>
-
-              {/* Scores */}
-              <div className={styles.scores}>
-                {[
-                  { label: "Qualité",
-                    val: rapport.score_qualite },
-                  { label: "Sécurité",
-                    val: rapport.score_securite },
-                  { label: "Performance",
-                    val: rapport.score_performance },
-                ].map(s => (
-                  <div key={s.label} className={styles.scoreCard}>
-                    <div
-                      className={styles.scoreVal}
-                      style={{ color: couleurScore(s.val) }}
-                    >
-                      {s.val ?? "—"}
-                    </div>
-                    <div className={styles.scoreLabel}>
-                      {s.label}
-                    </div>
-                    <div className={styles.scoreBar}>
-                      <div
-                        className={styles.scoreBarFill}
-                        style={{
-                          width      : `${s.val ?? 0}%`,
-                          background : couleurScore(s.val)
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Vulnérabilités */}
-              {rapport.vulnerabilites?.length > 0 && (
-                <div className={styles.section}>
-                  <h3 className={styles.sectionTitle}>
-                    ⚠️ Vulnérabilités (
-                      {rapport.vulnerabilites.length}
-                    )
-                  </h3>
-                  {rapport.vulnerabilites.map(
-                    (v: any, i: number) => (
-                    <div key={i} className={styles.vuln}>
-                      <div className={styles.vulnHeader}>
-                        <span
-                          className={styles.vulnBadge}
-                          style={{
-                            background : couleurSeverite(v.severite)
-                                         + "22",
-                            color      : couleurSeverite(v.severite),
-                            border     : `1px solid
-                              ${couleurSeverite(v.severite)}`
-                          }}
-                        >
-                          {v.severite}
-                        </span>
-                        <span className={styles.vulnType}>
-                          {v.type}
-                        </span>
-                      </div>
-                      <div className={styles.vulnFichier}>
-                        📄 {v.fichier} — ligne {v.ligne}
-                      </div>
-                      <div className={styles.vulnSuggestion}>
-                        💡 {v.suggestion}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Recommandations */}
-              {rapport.recommandations?.length > 0 && (
-                <div className={styles.section}>
-                  <h3 className={styles.sectionTitle}>
-                    ✅ Recommandations (
-                      {rapport.recommandations.length}
-                    )
-                  </h3>
-                  {rapport.recommandations.map(
-                    (r: any, i: number) => (
-                    <div key={i} className={styles.reco}>
-                      <div className={styles.recoTitre}>
-                        {r.titre}
-                      </div>
-                      <div className={styles.recoDesc}>
-                        {r.description}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Code propre */}
-              {rapport.vulnerabilites?.length === 0 && (
-                <div className={styles.success}>
-                  ✅ Aucune vulnérabilité — Code propre !
-                </div>
-              )}
-
-            </div>
-          )}
         </div>
       </div>
-    </div>
+    </>
   );
 }

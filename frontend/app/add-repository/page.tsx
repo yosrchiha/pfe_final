@@ -1,114 +1,201 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 export default function AddDepot() {
   const router = useRouter();
 
   const [form, setForm] = useState({
-    nom: "", // URL SSH ou HTTPS du repo GitLab
-    url_branche_principale: "", // juste le nom de la branche, ex: "main"
-    url_branche_developpement: "", // juste le nom de la branche, ex: "dev2"
-    token_gitlab: "",
-    proprietaire_id: Number(localStorage.getItem("user_id")),
+    nom                       : "",
+    url_branche_principale    : "",
+    url_branche_developpement : "",
+    token_gitlab              : "",
+    proprietaire_id           : 0,
   });
 
-const handleSubmit = async (e: any) => {
+  const [loading, setLoading] = useState(false);
+  const [erreur,  setErreur]  = useState("");
+
+  // ── localStorage uniquement côté client ──────────────────
+  useEffect(() => {
+    const userId = localStorage.getItem("user_id");
+    if (userId) {
+      setForm(prev => ({ ...prev, proprietaire_id: Number(userId) }));
+    }
+  }, []);
+
+  const handleSubmit = async (e: any) => {
     e.preventDefault();
+    setLoading(true);
+    setErreur("");
 
     try {
-      // 1️⃣ Création du dépôt dans la DB
+      // 1. Créer le dépôt en base
       const res = await fetch("http://127.0.0.1:8000/depots/", {
-        method: "POST",
-        headers: {
+        method  : "POST",
+        headers : {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
+          Authorization : `Bearer ${localStorage.getItem("token")}`,
         },
         body: JSON.stringify(form),
       });
 
-      if (!res.ok) throw new Error("Erreur lors de l'ajout du dépôt");
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Erreur lors de l'ajout du dépôt");
+      }
 
       const depot = await res.json();
 
-      // 2️⃣ Comparer les branches juste après création
+      // 2. Comparer les branches
       const compareRes = await fetch(
         `http://127.0.0.1:8000/depots/${depot.id}/compare`,
         {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         }
       );
 
       if (!compareRes.ok) {
         const errText = await compareRes.text();
-        throw new Error(`Erreur comparaison: ${errText}`);
+        throw new Error(`Erreur comparaison : ${errText}`);
       }
 
       const compareData = await compareRes.json();
-      console.log("Résultat comparaison:", compareData);
 
-      // 3️⃣ Redirection vers la page /difference avec les données
-      router.push(`/difference?data=${encodeURIComponent(JSON.stringify(compareData))}`);
+      // 3. Redirection vers /difference
+      router.push(
+        `/difference?data=${encodeURIComponent(JSON.stringify(compareData))}`
+      );
+
     } catch (error: any) {
-      alert(error.message);
+      setErreur(error.message || "Une erreur est survenue");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center", background: "#0d0e12", padding: "24px", fontFamily: "Inter, sans-serif" }}>
-      <form
-        onSubmit={handleSubmit}
-        style={{ background: "#111218", padding: "36px", borderRadius: "14px", width: "100%", maxWidth: "480px", color: "#fff" }}
-      >
-        <h2 style={{ fontSize: "20px", marginBottom: "24px" }}>Ajouter un dépôt GitLab</h2>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        <label>Nom du dépôt (SSH ou HTTPS)</label>
-        <input
-          type="text"
-          placeholder="git@gitlab.com:user/projet.git"
-          value={form.nom}
-          onChange={(e) => setForm({ ...form, nom: e.target.value })}
-          style={{ width: "100%", padding: "10px", marginBottom: "16px", borderRadius: "8px", border: "1px solid #1c1d26", background: "#0d0e12", color: "#fff" }}
-          required
-        />
+        .page {
+          min-height: 100vh; background: #0d0e12;
+          display: flex; align-items: center; justify-content: center;
+          padding: 24px; font-family: 'Inter', sans-serif;
+        }
 
-        <label>Branche principale</label>
-        <input
-          type="text"
-          placeholder="main"
-          value={form.url_branche_principale}
-          onChange={(e) => setForm({ ...form, url_branche_principale: e.target.value })}
-          style={{ width: "100%", padding: "10px", marginBottom: "16px", borderRadius: "8px", border: "1px solid #1c1d26", background: "#0d0e12", color: "#fff" }}
-          required
-        />
+        .card {
+          background: #111218; border: 1px solid #1c1d26;
+          border-radius: 14px; padding: 36px;
+          width: 100%; max-width: 480px;
+        }
 
-        <label>Branche développement</label>
-        <input
-          type="text"
-          placeholder="dev2"
-          value={form.url_branche_developpement}
-          onChange={(e) => setForm({ ...form, url_branche_developpement: e.target.value })}
-          style={{ width: "100%", padding: "10px", marginBottom: "16px", borderRadius: "8px", border: "1px solid #1c1d26", background: "#0d0e12", color: "#fff" }}
-          required
-        />
+        .card-title { font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+        .card-sub   { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; margin-bottom: 28px; }
 
-        <label>Token GitLab</label>
-        <input
-          type="password"
-          placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
-          value={form.token_gitlab}
-          onChange={(e) => setForm({ ...form, token_gitlab: e.target.value })}
-          style={{ width: "100%", padding: "10px", marginBottom: "16px", borderRadius: "8px", border: "1px solid #1c1d26", background: "#0d0e12", color: "#fff" }}
-          required
-        />
+        .field { margin-bottom: 18px; }
 
-        <button type="submit" style={{ width: "100%", padding: "12px", background: "#6c63ff", border: "none", borderRadius: "8px", color: "#fff", cursor: "pointer" }}>
-          Comparer
-        </button>
-      </form>
-    </div>
+        .label {
+          display: block; font-size: 11px; font-weight: 600;
+          color: #666; font-family: 'JetBrains Mono', monospace;
+          text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 7px;
+        }
+
+        .input {
+          width: 100%; padding: 10px 14px; background: #0d0e12;
+          border: 1px solid #1c1d26; border-radius: 8px;
+          color: #e8e8f0; font-family: 'JetBrains Mono', monospace;
+          font-size: 13px; outline: none; transition: border-color 0.15s;
+        }
+        .input::placeholder { color: #2e3355; }
+        .input:focus { border-color: #6c63ff55; box-shadow: 0 0 0 3px #6c63ff10; }
+
+        .hint { display: block; font-size: 10px; color: #333; font-family: 'JetBrains Mono', monospace; margin-top: 5px; }
+
+        .erreur {
+          background: #ff6b6b10; border: 1px solid #ff6b6b30;
+          border-radius: 8px; padding: 10px 14px;
+          font-size: 12px; color: #ff6b6b;
+          font-family: 'JetBrains Mono', monospace; margin-bottom: 16px;
+        }
+
+        .btn {
+          width: 100%; padding: 13px; background: #6c63ff;
+          border: none; border-radius: 8px; color: #fff;
+          font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 700;
+          cursor: pointer; transition: background 0.15s;
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+        }
+        .btn:hover:not(:disabled) { background: #5b52e0; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .spin { width: 14px; height: 14px; border: 2px solid #ffffff30; border-top: 2px solid #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+
+      <div className="page">
+        <form className="card" onSubmit={handleSubmit}>
+
+          <div className="card-title">Ajouter un dépôt GitLab</div>
+          <div className="card-sub">Renseigne les infos du dépôt pour lancer la comparaison de branches</div>
+
+          <div className="field">
+            <label className="label">Nom du dépôt</label>
+            <input className="input" type="text"
+              placeholder="git@gitlab.com:user/projet.git"
+              value={form.nom}
+              onChange={e => setForm({ ...form, nom: e.target.value })}
+              required
+            />
+            <span className="hint">SSH ou URL HTTPS complète</span>
+          </div>
+
+          <div className="field">
+            <label className="label">Branche principale</label>
+            <input className="input" type="text"
+              placeholder="main"
+              value={form.url_branche_principale}
+              onChange={e => setForm({ ...form, url_branche_principale: e.target.value })}
+              required
+            />
+            <span className="hint">Ex : main, master</span>
+          </div>
+
+          <div className="field">
+            <label className="label">Branche développement</label>
+            <input className="input" type="text"
+              placeholder="develop"
+              value={form.url_branche_developpement}
+              onChange={e => setForm({ ...form, url_branche_developpement: e.target.value })}
+              required
+            />
+            <span className="hint">Ex : develop, dev, feature/xxx</span>
+          </div>
+
+          <div className="field">
+            <label className="label">Token GitLab</label>
+            <input className="input" type="password"
+              placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
+              value={form.token_gitlab}
+              onChange={e => setForm({ ...form, token_gitlab: e.target.value })}
+              required
+            />
+            <span className="hint">Settings → Access Tokens → scopes : api, read_repository</span>
+          </div>
+
+          {erreur && <div className="erreur">⚠ {erreur}</div>}
+
+          <button className="btn" type="submit" disabled={loading}>
+            {loading
+              ? <><div className="spin"/> Comparaison en cours...</>
+              : "Comparer les branches →"
+            }
+          </button>
+
+        </form>
+      </div>
+    </>
   );
 }

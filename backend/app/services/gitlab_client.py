@@ -40,19 +40,18 @@ def get_gitlab_project(token: str, project_name: str):
     Raises:
         Exception si le token est révoqué ou le projet introuvable
     """
+    
     clean_name = _clean_project_name(project_name)
 
-    # CHANGEMENT : gl.Gitlab() remplace la construction manuelle des headers
-    gl = gitlab.Gitlab("https://gitlab.com", private_token="glpat-uL9hpypebR1wrlFq1eM12m86MQp1Omtxdml5Cw.01.1201e08ki")
+    # ✅ utiliser le token de l'utilisateur
+    gl = gitlab.Gitlab("https://gitlab.com", private_token=token)
 
     try:
-        # CHANGEMENT : gl.auth() vérifie le token avant toute opération
         gl.auth()
     except GitlabAuthenticationError:
         raise Exception("Token GitLab invalide ou révoqué")
 
     try:
-        # CHANGEMENT : gl.projects.get() remplace requests.get(url/projects/...)
         project = gl.projects.get(clean_name)
     except GitlabGetError:
         raise Exception(f"Projet '{clean_name}' introuvable sur GitLab")
