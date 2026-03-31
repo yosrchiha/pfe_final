@@ -15,8 +15,18 @@ from app.routes              import auth, depots
 from app.routes.explorer     import router as explorer_router
 from app.routes.Admin        import router as admin_router
 from app.routes.analyses     import router as analyses_router
+from app.routes import exports as exports_router
 
+from app.routes import tests
+from app.models.merge_request import MergeRequest
+from app.routes import merge_requests
+from app.routes import issues as issues_router
+# backend/app/main.py
+from app.routes import chat as chat_router
+from app.routes import recommandations as reco_router
+from app.routes import tickets
 
+# Ajouter avec les autres routes
 # ── Application ──────────────────────────────────────────
 app = FastAPI(title="Plateforme Audit GitLab API")
 
@@ -38,6 +48,24 @@ app.include_router(depots.router)
 app.include_router(explorer_router)
 app.include_router(admin_router)
 app.include_router(analyses_router)
+# backend/app/main.py
+
+app.include_router(reco_router.router)
+# backend/app/main.py
+
+app.include_router(merge_requests.router)
+
+app.include_router(tests.router)
+
+app.include_router(issues_router.router)
+app.include_router(chat_router.router)
+# backend/app/main.py
+
+app.include_router(exports_router.router)
+
+
+# ... après les autres routers ...
+app.include_router(tickets.router)
 
 # ── Création des tables ──────────────────────────────────
 @app.on_event("startup")

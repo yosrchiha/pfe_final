@@ -3,24 +3,36 @@
 import os
 import math
 from groq import Groq
+from openai import OpenAI
 from app.services.gitlab_client import get_gitlab_project
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# ── Détection du fournisseur ─────────────────────────
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+
+if LLM_PROVIDER == "openrouter":
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+        default_headers={
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "AuditPlatform"
+        }
+    )
+    DEFAULT_MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct")
+else:
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    DEFAULT_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 # ── Constantes ────────────────────────────────────────
-CHARS_PAR_APPEL = 60_000   # chars de code par appel LLM
-MAX_TOKENS_REP  = 4_000    # tokens max de la réponse
+CHARS_PAR_APPEL = 60_000
+MAX_TOKENS_REP  = 6_000  # Augmenté pour tests plus complets
 
 
 # ══════════════════════════════════════════════════════
-# UTILITAIRE — Détecter le langage
+# UTILITAIRE — Détecter le langage avec plus de détails
 # ══════════════════════════════════════════════════════
 def _detecter_langage(fichiers: list) -> dict:
-    """
-    Détecte le langage dominant du projet
-    et retourne le framework de test associé.
-    """
-    # Compte les occurrences de chaque extension
+    """Détecte le langage et retourne les infos de test adaptées."""
     compteur = {}
     for f in fichiers:
         if "." in f["path"]:
@@ -29,111 +41,338 @@ def _detecter_langage(fichiers: list) -> dict:
 
     print(f"[TESTS] Extensions détectées : {compteur}")
 
+    # Mapping complet des langages avec frameworks, extensions et conventions
+    langages = {
+        "java": {
+            "langage": "java",
+            "framework": "JUnit 5 + Mockito",
+            "fichier": "GeneratedTest.java",
+            "structure": """@ExtendWith(MockitoExtension.class)
+public class GeneratedTest {
+    @Mock
+    private Dependency dependency;
+    
+    @InjectMocks
+    private ServiceUnderTest service;
+    
+    @BeforeEach
+    void setUp() {
+        // Initialisation
+    }
+    
+    @Test
+    void testMethodName_should_expectedBehavior_when_condition() {
+        // Arrange
+        // Act
+        // Assert
+    }
+}""",
+            "assertions": ["assertEquals", "assertTrue", "assertFalse", "assertThrows", "assertNotNull"],
+            "annotations": ["@Test", "@BeforeEach", "@AfterEach", "@Mock", "@InjectMocks"]
+        },
+        "py": {
+            "langage": "python",
+            "framework": "pytest",
+            "fichier": "test_generated.py",
+            "structure": """import pytest
+from unittest.mock import Mock, patch
+
+class TestService:
+    @pytest.fixture
+    def mock_dependency(self):
+        return Mock()
+    
+    def test_method_name_should_expected_behavior_when_condition(self, mock_dependency):
+        # Arrange
+        # Act
+        # Assert
+        pass""",
+            "assertions": ["assert", "assert_equal", "assert_raises", "assert_in", "assert_is_not_none"],
+            "decorators": ["@pytest.fixture", "@patch", "@pytest.mark.parametrize"]
+        },
+        "ts": {
+            "langage": "typescript",
+            "framework": "Jest",
+            "fichier": "generated.spec.ts",
+            "structure": """import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+
+describe('ServiceName', () => {
+    let service: ServiceName;
+    let mockDependency: jest.Mocked<Dependency>;
+
+    beforeEach(() => {
+        mockDependency = { method: jest.fn() } as any;
+        service = new ServiceName(mockDependency);
+    });
+
+    it('should return expected value when condition is met', () => {
+        // Arrange
+        // Act
+        // Assert
+        expect(result).toEqual(expected);
+    });
+});""",
+            "assertions": ["expect", "toEqual", "toBe", "toContain", "toThrow", "toHaveBeenCalled"],
+            "functions": ["describe", "it", "beforeEach", "afterEach"]
+        },
+        "js": {
+            "langage": "javascript",
+            "framework": "Jest",
+            "fichier": "generated.test.js",
+            "structure": """const { describe, it, expect, beforeEach } = require('@jest/globals');
+const { ServiceName } = require('./service');
+
+describe('ServiceName', () => {
+    let service;
+    
+    beforeEach(() => {
+        service = new ServiceName();
+    });
+    
+    it('should do something', () => {
+        expect(service.method()).toBeDefined();
+    });
+});""",
+            "assertions": ["expect", "toEqual", "toBe", "toContain", "toThrow"],
+            "functions": ["describe", "it", "beforeEach", "afterEach"]
+        },
+        "php": {
+            "langage": "php",
+            "framework": "PHPUnit",
+            "fichier": "GeneratedTest.php",
+            "structure": """<?php
+use PHPUnit\\Framework\\TestCase;
+
+class GeneratedTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+    }
+    
+    public function testMethodNameReturnsExpectedValue(): void
+    {
+        // Arrange
+        // Act
+        // Assert
+        $this->assertEquals($expected, $actual);
+    }
+}""",
+            "assertions": ["$this->assertEquals", "$this->assertTrue", "$this->assertFalse", "$this->assertNull"]
+        },
+        "go": {
+            "langage": "go",
+            "framework": "testing",
+            "fichier": "generated_test.go",
+            "structure": """package main
+
+import "testing"
+
+func TestFunctionName(t *testing.T) {
+    // Arrange
+    // Act
+    // Assert
+    if result != expected {
+        t.Errorf("expected %v, got %v", expected, result)
+    }
+}""",
+            "assertions": ["t.Error", "t.Errorf", "t.Fatal", "t.Fatalf"]
+        }
+    }
+
     # Priorité au langage le plus fréquent
-    if compteur.get("java", 0) > 0:
-        return {
-            "langage"   : "java",
-            "framework" : "JUnit 5 + Mockito",
-            "fichier"   : "GeneratedTest.java",
-            "import"    : "import org.junit.jupiter.api.Test;"
-        }
-    elif compteur.get("py", 0) > 0:
-        return {
-            "langage"   : "python",
-            "framework" : "pytest",
-            "fichier"   : "test_generated.py",
-            "import"    : "import pytest"
-        }
-    elif compteur.get("ts", 0) > 0 or compteur.get("tsx", 0) > 0:
-        return {
-            "langage"   : "typescript",
-            "framework" : "Jest",
-            "fichier"   : "generated.spec.ts",
-            "import"    : "import { describe, it, expect } from '@jest/globals';"
-        }
-    elif compteur.get("js", 0) > 0 or compteur.get("jsx", 0) > 0:
-        return {
-            "langage"   : "javascript",
-            "framework" : "Jest",
-            "fichier"   : "generated.test.js",
-            "import"    : "const { describe, it, expect } = require('@jest/globals');"
-        }
-    elif compteur.get("php", 0) > 0:
-        return {
-            "langage"   : "php",
-            "framework" : "PHPUnit",
-            "fichier"   : "GeneratedTest.php",
-            "import"    : "use PHPUnit\\Framework\\TestCase;"
-        }
-    elif compteur.get("go", 0) > 0:
-        return {
-            "langage"   : "go",
-            "framework" : "testing",
-            "fichier"   : "generated_test.go",
-            "import"    : "import \"testing\""
-        }
-    elif compteur.get("cs", 0) > 0:
-        return {
-            "langage"   : "csharp",
-            "framework" : "xUnit",
-            "fichier"   : "GeneratedTest.cs",
-            "import"    : "using Xunit;"
-        }
+    for ext, info in langages.items():
+        if compteur.get(ext, 0) > 0:
+            return info
+
+    # Par défaut Python
+    return langages["py"]
+
+
+# ══════════════════════════════════════════════════════
+# UTILITAIRE — Construire le prompt adapté
+# ══════════════════════════════════════════════════════
+def _construire_prompt_tests(
+    lot: list,
+    lot_num: int,
+    total_lots: int,
+    info_langage: dict,
+    vulnerabilites: list,
+    recommandations: list,
+    code_text: str
+) -> str:
+    """Construit un prompt ultra-détaillé adapté au langage détecté."""
+    
+    langage = info_langage["langage"]
+    framework = info_langage["framework"]
+    fichier_test = info_langage["fichier"]
+    structure_exemple = info_langage.get("structure", "")
+    assertions = info_langage.get("assertions", [])
+    
+    # Instructions de lot
+    if total_lots == 1:
+        instruction_lot = "Génère une suite de tests COMPLÈTE pour TOUT le code fourni."
+    elif lot_num == 1:
+        instruction_lot = f"""
+Ceci est le PREMIER lot ({lot_num}/{total_lots}).
+Génère la structure de test complète avec :
+- Tous les imports nécessaires
+- La classe/les fonctions de test
+- Les fixtures/mocks pour les dépendances
+- Les premiers tests pour les fichiers de ce lot
+"""
+    elif lot_num == total_lots:
+        instruction_lot = f"""
+Ceci est le DERNIER lot ({lot_num}/{total_lots}).
+Génère les tests restants pour compléter la suite.
+- Continue la classe de test existante
+- Ajoute les méthodes/fonctions manquantes
+- Ne répète pas les imports déjà faits
+"""
     else:
-        return {
-            "langage"   : "python",
-            "framework" : "pytest",
-            "fichier"   : "test_generated.py",
-            "import"    : "import pytest"
-        }
+        instruction_lot = f"""
+Ceci est le lot {lot_num}/{total_lots}.
+Génère les tests pour ces fichiers.
+- Continue dans la même classe de test
+- Ajoute les nouvelles méthodes
+- Utilise les fixtures/mocks déjà définis
+"""
+
+    # Préparer les fichiers pour le prompt
+    fichiers_noms = [f["path"] for f in lot]
+    fichiers_descr = "\n".join([f"  - {path}" for path in fichiers_noms])
+
+    # Vulnérabilités formatées
+    vuln_text = ""
+    if vulnerabilites:
+        vuln_text = "\n".join([
+            f"  • [{v.get('severite','?')}] {v.get('type','?')}\n"
+            f"    Fichier: {v.get('fichier','?')} ligne {v.get('ligne','?')}\n"
+            f"    Correction: {v.get('suggestion','?')}"
+            for v in vulnerabilites[:10]  # Limite pour éviter prompt trop long
+        ])
+    else:
+        vuln_text = "  • Aucune vulnérabilité spécifique détectée — testez toutes les fonctions"
+
+    # Recommandations formatées
+    reco_text = ""
+    if recommandations:
+        reco_text = "\n".join([
+            f"  • {r.get('titre','?')} : {r.get('description','?')}"
+            for r in recommandations[:5]
+        ])
+    else:
+        reco_text = "  • Aucune recommandation spécifique"
+
+    prompt = f"""Tu es un expert senior en tests unitaires avec plus de 10 ans d'expérience en {langage} et {framework}.
+
+═══════════════════════════════════════════════════════════════════════
+CONTEXTE
+═══════════════════════════════════════════════════════════════════════
+- Langage : {langage}
+- Framework de test : {framework}
+- Fichier de test à générer : {fichier_test}
+- Ce lot est le {lot_num} sur {total_lots} lots
+
+═══════════════════════════════════════════════════════════════════════
+RÈGLES DE GÉNÉRATION DE TESTS (OBLIGATOIRES)
+═══════════════════════════════════════════════════════════════════════
+
+1. STRUCTURE DU CODE DE TEST :
+{instruction_lot}
+
+Structure recommandée pour {langage} :
+{structure_exemple}
+
+2. COUVERTURE DES FONCTIONS :
+   - ✅ Teste TOUTES les fonctions/méthodes publiques
+   - ✅ Teste les cas NOMINAUX (comportement attendu)
+   - ✅ Teste les cas LIMITES (valeurs aux frontières)
+   - ✅ Teste les cas d'ERREUR (exceptions, retours d'erreur)
+   - ✅ Teste les dépendances via MOCKS
+
+3. NOMENCLATURE DES TESTS :
+   {f'   - Utilise les annotations : {info_langage.get("annotations", [])}' if "annotations" in info_langage else ''}
+   {f'   - Utilise les décorateurs : {info_langage.get("decorators", [])}' if "decorators" in info_langage else ''}
+   {f'   - Utilise les fonctions : {info_langage.get("functions", [])}' if "functions" in info_langage else ''}
+   - Chaque test doit avoir un nom explicite en anglais ou français
+   - Format recommandé : test_[fonction]_[condition]_[resultat_attendu]
+
+4. MOCKS ET ISOLATION :
+   - Toute dépendance externe (API, base de données, fichiers) DOIT être mockée
+   - Utilise les mocks pour isoler la logique métier
+   - Vérifie les appels aux dépendances : combien de fois, avec quels paramètres
+
+5. ASSERTIONS :
+   - Utilise les assertions suivantes : {', '.join(assertions)}
+   - Une assertion par test ou très peu (une seule responsabilité)
+   - Les messages d'erreur doivent être informatifs
+
+6. QUALITÉ DES TESTS :
+   - Pas de code mort
+   - Pas de logs dans les tests (sauf pour debug)
+   - Les tests doivent être INDÉPENDANTS (ordre n'importe pas)
+   - Chaque test doit pouvoir s'exécuter seul
+
+7. GESTION DES DONNÉES DE TEST :
+   - Utilise des fixtures pour les données réutilisables
+   - Les données de test doivent être prévisibles et reproductibles
+   - Évite les données aléatoires sauf si nécessaire
+
+═══════════════════════════════════════════════════════════════════════
+VULNÉRABILITÉS À TESTER EN PRIORITÉ
+═══════════════════════════════════════════════════════════════════════
+{vuln_text}
+
+═══════════════════════════════════════════════════════════════════════
+RECOMMANDATIONS À VALIDER
+═══════════════════════════════════════════════════════════════════════
+{reco_text}
+
+═══════════════════════════════════════════════════════════════════════
+FICHIERS À TESTER ({len(lot)} fichier(s) — lot {lot_num}/{total_lots})
+═══════════════════════════════════════════════════════════════════════
+{fichiers_descr}
+
+═══════════════════════════════════════════════════════════════════════
+CODE SOURCE COMPLET
+═══════════════════════════════════════════════════════════════════════
+{code_text}
+
+═══════════════════════════════════════════════════════════════════════
+INSTRUCTION FINALE
+═══════════════════════════════════════════════════════════════════════
+Génère UNIQUEMENT le code de test {langage} (fichier {fichier_test}).
+Pas d'explications, pas de markdown, seulement le code prêt à être exécuté.
+Le code doit être complet, compilable et exécutable immédiatement.
+"""
+    return prompt
 
 
 # ══════════════════════════════════════════════════════
 # UTILITAIRE — Découper en lots
 # ══════════════════════════════════════════════════════
 def _decouper_en_lots(fichiers: list, budget: int) -> list:
-    """
-    Découpe la liste de fichiers en lots
-    chacun ne dépassant pas `budget` caractères.
-
-    Returns:
-        liste de listes de fichiers
-    """
-    lots       = []
-    lot_actuel = []
-    total      = 0
-
-    # Trier par taille croissante pour équilibrer les lots
+    """Découpe la liste de fichiers en lots ne dépassant pas budget caractères."""
+    lots, lot_actuel, total = [], [], 0
     fichiers_tries = sorted(fichiers, key=lambda f: f.get("size", 0))
 
     for f in fichiers_tries:
         taille = len(f.get("content", ""))
         if taille == 0:
             continue
-
-        # Si le fichier seul dépasse le budget → on le tronque
         if taille > budget:
-            f_tronque = {
-                **f,
-                "content": f["content"][:budget],
-                "size"   : budget
-            }
+            f_tronque = {**f, "content": f["content"][:budget], "size": budget}
             lots.append([f_tronque])
             continue
-
-        # Si l'ajout au lot actuel dépasse le budget → nouveau lot
         if total + taille > budget and lot_actuel:
             lots.append(lot_actuel)
-            lot_actuel = []
-            total      = 0
-
+            lot_actuel, total = [], 0
         lot_actuel.append(f)
         total += taille
 
-    # Dernier lot
     if lot_actuel:
         lots.append(lot_actuel)
-
     return lots
 
 
@@ -148,326 +387,248 @@ def _generer_tests_lot(
     vulnerabilites : list,
     recommandations: list
 ) -> str:
-    """
-    Génère les tests pour un lot de fichiers via un seul appel LLM.
-    """
-    langage   = info_langage["langage"]
-    framework = info_langage["framework"]
-
+    """Génère les tests pour un lot avec le prompt ultra-détaillé."""
+    
+    langage = info_langage["langage"]
+    
     # Prépare le code du lot
     code_text = ""
     for f in lot:
         code_text += (
-            f"\n\n{'─'*60}\n"
-            f"Fichier : {f['path']}\n"
-            f"{'─'*60}\n"
+            f"\n\n{'─'*70}\n"
+            f"📄 Fichier : {f['path']}\n"
+            f"{'─'*70}\n"
             f"{f['content']}"
         )
 
-    # Prépare les vulnérabilités
-    vuln_text = ""
-    for v in vulnerabilites:
-        vuln_text += (
-            f"\n  • [{v.get('severite','?')}] {v.get('type','?')} "
-            f"dans {v.get('fichier','?')} "
-            f"ligne {v.get('ligne','?')} "
-            f"→ {v.get('suggestion','?')}"
-        )
-
-    # Prépare les recommandations
-    reco_text = ""
-    for r in recommandations:
-        reco_text += f"\n  • {r.get('titre','?')} : {r.get('description','?')}"
-
-    # Instruction spéciale selon lot
-    if total_lots == 1:
-        instruction_lot = "Génère les tests complets pour tout le code."
-    elif lot_num == 1:
-        instruction_lot = (
-            f"Ceci est le lot {lot_num}/{total_lots}. "
-            f"Génère les tests pour ces fichiers. "
-            f"Commence par les imports et la classe de test principale."
-        )
-    elif lot_num == total_lots:
-        instruction_lot = (
-            f"Ceci est le dernier lot {lot_num}/{total_lots}. "
-            f"Génère les tests pour ces fichiers. "
-            f"Tu peux ajouter des méthodes à la classe existante."
-        )
-    else:
-        instruction_lot = (
-            f"Ceci est le lot {lot_num}/{total_lots}. "
-            f"Génère les tests pour ces fichiers. "
-            f"Continue la classe de test (pas besoin de réimporter)."
-        )
+    # Construit le prompt adapté
+    prompt = _construire_prompt_tests(
+        lot=lot,
+        lot_num=lot_num,
+        total_lots=total_lots,
+        info_langage=info_langage,
+        vulnerabilites=vulnerabilites,
+        recommandations=recommandations,
+        code_text=code_text
+    )
 
     fichiers_noms = [f["path"] for f in lot]
-    print(f"[TESTS] Lot {lot_num}/{total_lots} : {fichiers_noms}")
+    print(f"[TESTS] Lot {lot_num}/{total_lots} : {len(lot)} fichier(s)")
+    for name in fichiers_noms[:5]:  # Affiche max 5 noms
+        print(f"[TESTS]   - {name}")
+    if len(fichiers_noms) > 5:
+        print(f"[TESTS]   ... et {len(fichiers_noms)-5} autre(s)")
 
-    prompt = f"""
-Tu es un expert senior en tests unitaires {langage} avec {framework}.
-
-{instruction_lot}
-
-RÈGLES OBLIGATOIRES :
-1. Utilise UNIQUEMENT {framework}
-2. Couvre TOUTES les fonctions/méthodes de chaque fichier
-3. Inclus : cas normaux + cas limites + cas d'erreur
-4. Teste en PRIORITÉ les vulnérabilités listées ci-dessous
-5. Retourne UNIQUEMENT le code — pas d'explication, pas de markdown
-6. Utilise des mocks pour les dépendances externes (DB, API, etc.)
-7. Chaque test doit avoir un nom descriptif en français ou anglais
-
-VULNÉRABILITÉS DÉTECTÉES (à tester en priorité) :
-{vuln_text if vuln_text else "  • Aucune — teste toutes les fonctions"}
-
-RECOMMANDATIONS :
-{reco_text if reco_text else "  • Aucune recommandation spécifique"}
-
-CODE SOURCE ({len(lot)} fichier(s)) :
-{code_text}
-
-Génère le code de test {langage} maintenant :
-"""
-
+    # Appel LLM
     response = client.chat.completions.create(
-        model      = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-        messages   = [{"role": "user", "content": prompt}],
-        max_tokens = MAX_TOKENS_REP,
-        temperature= 0.1
+        model=DEFAULT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=MAX_TOKENS_REP,
+        temperature=0.1
     )
 
     contenu = response.choices[0].message.content.strip()
 
     # Nettoyer les backticks markdown
     if contenu.startswith("```"):
-        lines   = contenu.split("\n")
-        lines   = [l for l in lines if not l.startswith("```")]
+        lines = contenu.split("\n")
+        lines = [l for l in lines if not l.startswith("```")]
         contenu = "\n".join(lines)
 
     return contenu
 
 
 # ══════════════════════════════════════════════════════
-# 1. GÉNÉRER TOUS LES TESTS — plusieurs appels LLM
+# 1. GÉNÉRER TOUS LES TESTS
 # ══════════════════════════════════════════════════════
 def generer_tests_llm(
     fichiers       : list,
     vulnerabilites : list,
     recommandations: list
 ) -> dict:
-    """
-    Génère des tests unitaires pour TOUS les fichiers du projet.
-    Utilise plusieurs appels LLM si nécessaire (un par lot).
-
-    Args:
-        fichiers        : tous les fichiers du projet
-        vulnerabilites  : vulnérabilités détectées lors de l'analyse
-        recommandations : recommandations de l'analyse
-
-    Returns:
-        dict {
-            langage  : langage détecté,
-            contenu  : code de test complet fusionné,
-            fichier  : nom du fichier de test
-        }
-    """
+    """Génère des tests unitaires pour TOUS les fichiers du projet."""
     if not fichiers:
         raise Exception("Aucun fichier de code trouvé")
 
-    print(f"[TESTS] Total fichiers à tester : {len(fichiers)}")
+    print(f"\n[TESTS] ════════════════════════════════════════")
+    print(f"[TESTS] Génération de tests unitaires")
+    print(f"[TESTS] ════════════════════════════════════════")
+    print(f"[TESTS] Total fichiers : {len(fichiers)}")
 
-    # ── 1. Détecter le langage ────────────────────────
+    # Détecter le langage
     info_langage = _detecter_langage(fichiers)
-    langage      = info_langage["langage"]
-    framework    = info_langage["framework"]
-    nom_fichier  = info_langage["fichier"]
+    langage = info_langage["langage"]
+    nom_fichier = info_langage["fichier"]
 
-    print(f"[TESTS] Langage : {langage} | Framework : {framework}")
+    print(f"[TESTS] Langage détecté : {langage}")
+    print(f"[TESTS] Framework : {info_langage['framework']}")
+    print(f"[TESTS] Fichier de sortie : {nom_fichier}")
 
-    # ── 2. Découper en lots ───────────────────────────
+    # Découper en lots
     lots = _decouper_en_lots(fichiers, CHARS_PAR_APPEL)
-    print(f"[TESTS] Nombre de lots : {len(lots)}")
+    print(f"[TESTS] Lots créés : {len(lots)}")
 
-    # ── 3. Appel LLM par lot ──────────────────────────
+    # Appels LLM
     resultats = []
     for i, lot in enumerate(lots, start=1):
-        print(f"[TESTS] Traitement lot {i}/{len(lots)}...")
+        print(f"\n[TESTS] ── Lot {i}/{len(lots)} ──")
         try:
             code_tests = _generer_tests_lot(
-                lot             = lot,
-                lot_num         = i,
-                total_lots      = len(lots),
-                info_langage    = info_langage,
-                vulnerabilites  = vulnerabilites,
-                recommandations = recommandations
+                lot=lot,
+                lot_num=i,
+                total_lots=len(lots),
+                info_langage=info_langage,
+                vulnerabilites=vulnerabilites,
+                recommandations=recommandations
             )
             resultats.append(code_tests)
-            print(f"[TESTS] Lot {i} terminé : {len(code_tests)} chars générés")
+            print(f"[TESTS] Lot {i} terminé : {len(code_tests)} caractères")
         except Exception as e:
-            print(f"[TESTS] Erreur lot {i} : {e}")
-            # On continue avec les autres lots
+            print(f"[TESTS] ERREUR lot {i} : {e}")
             continue
 
     if not resultats:
         raise Exception("Impossible de générer les tests — tous les lots ont échoué")
 
-    # ── 4. Fusionner les résultats ────────────────────
+    # Fusionner
     contenu_final = _fusionner_resultats(resultats, info_langage)
 
-    print(f"[TESTS] Tests générés : {len(contenu_final)} chars total")
+    print(f"\n[TESTS] ════════════════════════════════════════")
+    print(f"[TESTS] Tests générés avec succès !")
+    print(f"[TESTS] Taille totale : {len(contenu_final)} caractères")
     print(f"[TESTS] Fichier : {nom_fichier}")
+    print(f"[TESTS] ════════════════════════════════════════\n")
 
     return {
-        "langage"  : langage,
-        "contenu"  : contenu_final,
-        "fichier"  : nom_fichier
+        "langage": langage,
+        "contenu": contenu_final,
+        "fichier": nom_fichier
     }
 
 
 # ══════════════════════════════════════════════════════
-# UTILITAIRE — Fusionner les résultats de tous les lots
+# UTILITAIRE — Fusionner les résultats
 # ══════════════════════════════════════════════════════
 def _fusionner_resultats(resultats: list, info_langage: dict) -> str:
-    """
-    Fusionne les tests de plusieurs lots en un seul fichier cohérent.
-    """
+    """Fusionne les tests de plusieurs lots."""
     if len(resultats) == 1:
         return resultats[0]
 
     langage = info_langage["langage"]
 
     if langage == "java":
-        # Fusionner les méthodes @Test dans une seule classe
         return _fusionner_java(resultats)
-
     elif langage == "python":
-        # Fusionner les fonctions test_ dans un seul fichier
         return _fusionner_python(resultats)
-
     elif langage in ("typescript", "javascript"):
-        # Fusionner les describe/it blocks
         return _fusionner_js(resultats)
-
     else:
-        # Fusion simple par concaténation avec séparateur
-        separateur = f"\n\n{'='*60}\n// Lot suivant\n{'='*60}\n\n"
+        separateur = f"\n\n{'='*70}\n// LOT SUIVANT\n{'='*70}\n\n"
         return separateur.join(resultats)
 
 
 def _fusionner_java(resultats: list) -> str:
     """Fusionne plusieurs fichiers Java en une seule classe."""
-    imports    = set()
-    methodes   = []
-    classe_nom = "GeneratedTest"
-
+    imports = set()
+    imports.add("import org.junit.jupiter.api.Test;")
+    imports.add("import org.junit.jupiter.api.BeforeEach;")
+    imports.add("import org.junit.jupiter.api.extension.ExtendWith;")
+    imports.add("import org.mockito.Mock;")
+    imports.add("import org.mockito.InjectMocks;")
+    imports.add("import org.mockito.junit.jupiter.MockitoExtension;")
+    imports.add("import static org.junit.jupiter.api.Assertions.*;")
+    imports.add("import static org.mockito.Mockito.*;")
+    
+    methodes = []
+    
     for r in resultats:
         lignes = r.split("\n")
+        in_method = False
+        current_method = []
+        depth = 0
+        
         for ligne in lignes:
-            ligne_strip = ligne.strip()
-            # Collecte les imports
-            if ligne_strip.startswith("import "):
-                imports.add(ligne_strip)
-            # Collecte les méthodes @Test (et leurs annotations)
-            elif (ligne_strip.startswith("@Test")
-                  or ligne_strip.startswith("@ParameterizedTest")
-                  or ligne_strip.startswith("public void test")
-                  or ligne_strip.startswith("void test")):
-                methodes.append(ligne)
-
-    # Reconstruit le fichier proprement
-    contenu  = "// Tests générés automatiquement par AuditPlatform\n\n"
-    contenu += "\n".join(sorted(imports)) + "\n\n"
-    contenu += f"@ExtendWith(MockitoExtension.class)\n"
-    contenu += f"public class {classe_nom} {{\n\n"
-    contenu += "    // ── Tests générés ──\n\n"
-
-    # Extrait et ajoute les blocs de méthodes complets
-    for r in resultats:
-        lignes  = r.split("\n")
-        in_test = False
-        depth   = 0
-        bloc    = []
-
-        for ligne in lignes:
-            if "@Test" in ligne or "@ParameterizedTest" in ligne:
-                in_test = True
-                bloc    = [ligne]
-                depth   = 0
-            elif in_test:
-                bloc.append(ligne)
+            stripped = ligne.strip()
+            if stripped.startswith("@Test") or stripped.startswith("@BeforeEach"):
+                in_method = True
+                current_method = [ligne]
+                depth = 0
+            elif in_method:
+                current_method.append(ligne)
                 depth += ligne.count("{") - ligne.count("}")
-                if depth <= 0 and len(bloc) > 2:
-                    methodes_text = "\n".join(bloc)
-                    if methodes_text not in contenu:
-                        contenu += "    " + "\n    ".join(bloc) + "\n\n"
-                    in_test = False
-                    bloc    = []
-
+                if depth <= 0 and len(current_method) > 2:
+                    methodes.append("\n".join(current_method))
+                    in_method = False
+    
+    contenu = "// Tests générés automatiquement par AuditPlatform\n\n"
+    contenu += "\n".join(sorted(imports)) + "\n\n"
+    contenu += "@ExtendWith(MockitoExtension.class)\n"
+    contenu += "public class GeneratedTest {\n\n"
+    contenu += "    // ── Tests générés ──\n\n"
+    contenu += "\n\n".join(["    " + m.replace("\n", "\n    ") for m in methodes]) + "\n"
     contenu += "}\n"
     return contenu
 
 
 def _fusionner_python(resultats: list) -> str:
     """Fusionne plusieurs fichiers Python en un seul."""
-    imports  = set()
+    imports = set(["import pytest", "from unittest.mock import Mock, patch"])
     fixtures = []
-    tests    = []
-
+    tests = []
+    
     for r in resultats:
         lignes = r.split("\n")
-        for i, ligne in enumerate(lignes):
+        in_fixture = False
+        in_test = False
+        current = []
+        
+        for ligne in lignes:
             if ligne.startswith("import ") or ligne.startswith("from "):
                 imports.add(ligne)
             elif ligne.startswith("@pytest.fixture"):
-                # Collecte les fixtures
-                bloc = [ligne]
-                j    = i + 1
-                while j < len(lignes) and (lignes[j].startswith(" ") or lignes[j] == ""):
-                    bloc.append(lignes[j])
-                    j += 1
-                fixtures.append("\n".join(bloc))
-            elif ligne.startswith("def test_"):
-                # Collecte les fonctions test
-                bloc = [ligne]
-                j    = i + 1
-                while j < len(lignes) and (lignes[j].startswith(" ") or lignes[j] == ""):
-                    bloc.append(lignes[j])
-                    j += 1
-                test_text = "\n".join(bloc)
-                if test_text not in tests:
-                    tests.append(test_text)
-
-    # Reconstruit
-    contenu  = "# Tests générés automatiquement par AuditPlatform\n\n"
+                in_fixture = True
+                current = [ligne]
+            elif in_fixture:
+                current.append(ligne)
+                if ligne.startswith("def "):
+                    fixtures.append("\n".join(current))
+                    in_fixture = False
+            elif ligne.startswith("def test_") or ligne.startswith("async def test_"):
+                in_test = True
+                current = [ligne]
+            elif in_test:
+                current.append(ligne)
+                if ligne == "" or ligne.startswith("def "):
+                    tests.append("\n".join(current))
+                    in_test = False
+    
+    contenu = "# Tests générés automatiquement par AuditPlatform\n\n"
     contenu += "\n".join(sorted(imports)) + "\n\n"
-
     if fixtures:
-        contenu += "\n\n".join(set(fixtures)) + "\n\n"
-
-    contenu += "\n\n".join(tests) + "\n"
+        contenu += "\n\n".join(fixtures) + "\n\n"
+    contenu += "\n\n".join(tests)
     return contenu
 
 
 def _fusionner_js(resultats: list) -> str:
     """Fusionne plusieurs fichiers JS/TS en un seul."""
-    imports  = set()
+    imports = set()
     describes = []
-
+    
     for r in resultats:
         lignes = r.split("\n")
         for ligne in lignes:
-            if (ligne.strip().startswith("import ")
-                    or ligne.strip().startswith("const {")
-                    or ligne.strip().startswith("require(")):
-                imports.add(ligne.strip())
-            elif ligne.strip().startswith("describe("):
+            stripped = ligne.strip()
+            if stripped.startswith("import ") or stripped.startswith("const {") or stripped.startswith("require("):
+                imports.add(stripped)
+            elif stripped.startswith("describe("):
                 describes.append(r)
                 break
-
-    contenu  = "// Tests générés automatiquement par AuditPlatform\n\n"
-    contenu += "\n".join(sorted(imports)) + "\n\n"
-    contenu += "\n\n".join(describes) + "\n"
+    
+    contenu = "// Tests générés automatiquement par AuditPlatform\n\n"
+    if imports:
+        contenu += "\n".join(sorted(imports)) + "\n\n"
+    contenu += "\n\n".join(describes)
     return contenu
 
 
@@ -481,55 +642,37 @@ def creer_branche_et_pousser(
     nom_fichier  : str,
     contenu_tests: str
 ) -> dict:
-    """
-    Crée une branche ai/tests/YYYY-MM-DD-HHMM
-    et pousse le fichier de tests dedans.
-
-    Returns:
-        dict { branche, fichier, project_url }
-    """
+    """Crée une branche ai/tests/... et pousse le fichier de tests."""
     from datetime import datetime
 
-    project     = get_gitlab_project(token, project_url)
-    date_str    = datetime.now().strftime("%Y-%m-%d-%H%M")
+    project = get_gitlab_project(token, project_url)
+    date_str = datetime.now().strftime("%Y-%m-%d-%H%M")
     nom_branche = f"ai/tests/{date_str}"
 
-    # ── Créer la branche ──────────────────────────────
     try:
-        project.branches.create({
-            "branch": nom_branche,
-            "ref"   : branche_base.strip()
-        })
+        project.branches.create({"branch": nom_branche, "ref": branche_base.strip()})
         print(f"[TESTS] Branche créée : {nom_branche}")
     except Exception as e:
-        print(f"[TESTS] Branche existante ou erreur : {e}")
+        print(f"[TESTS] Branche existante : {e}")
 
-    # ── Pousser le fichier ────────────────────────────
     try:
-        existing         = project.files.get(nom_fichier, ref=nom_branche)
+        existing = project.files.get(nom_fichier, ref=nom_branche)
         existing.content = contenu_tests
-        existing.save(
-            branch         = nom_branche,
-            commit_message = f"🤖 IA: Mise à jour des tests ({nom_fichier})"
-        )
+        existing.save(branch=nom_branche, commit_message=f"🤖 IA: Mise à jour des tests ({nom_fichier})")
         print(f"[TESTS] Fichier mis à jour : {nom_fichier}")
     except Exception:
         try:
             project.files.create({
-                "file_path"     : nom_fichier,
-                "branch"        : nom_branche,
-                "content"       : contenu_tests,
+                "file_path": nom_fichier,
+                "branch": nom_branche,
+                "content": contenu_tests,
                 "commit_message": f"🤖 IA: Ajout des tests générés ({nom_fichier})"
             })
             print(f"[TESTS] Fichier créé : {nom_fichier}")
         except Exception as e:
             raise Exception(f"Impossible de pousser le fichier : {str(e)}")
 
-    return {
-        "branche"    : nom_branche,
-        "fichier"    : nom_fichier,
-        "project_url": project_url
-    }
+    return {"branche": nom_branche, "fichier": nom_fichier, "project_url": project_url}
 
 
 # ══════════════════════════════════════════════════════
@@ -541,20 +684,15 @@ def creer_merge_request(
     branche_src   : str,
     branche_cible : str = "main"
 ) -> dict:
-    """
-    Crée une MR depuis ai/tests/... vers la branche principale.
-
-    Returns:
-        dict { mr_id, mr_url, titre, statut }
-    """
+    """Crée une MR depuis ai/tests/... vers la branche principale."""
     project = get_gitlab_project(token, project_url)
 
     try:
         mr = project.mergerequests.create({
-            "source_branch"       : branche_src,
-            "target_branch"       : branche_cible,
-            "title"               : "🤖 IA: Tests unitaires générés automatiquement",
-            "description"         : """
+            "source_branch": branche_src,
+            "target_branch": branche_cible,
+            "title": "🤖 IA: Tests unitaires générés automatiquement",
+            "description": """
 ## Tests unitaires générés par l'Intelligence Artificielle
 
 Cette MR a été créée automatiquement par la plateforme d'audit GitLab.
@@ -570,17 +708,17 @@ Cette MR a été créée automatiquement par la plateforme d'audit GitLab.
 - [ ] Corriger si nécessaire
 - [ ] Approuver et merger
 
-> Généré automatiquement par **AuditPlatform** · LLM Groq llama-3.3-70b
+> Généré automatiquement par **AuditPlatform** · LLM
             """,
             "remove_source_branch": True,
-            "labels"              : ["IA", "tests-automatiques"]
+            "labels": ["IA", "tests-automatiques"]
         })
         print(f"[TESTS] MR créée : !{mr.iid} → {mr.web_url}")
         return {
-            "mr_id"  : mr.iid,
-            "mr_url" : mr.web_url,
-            "titre"  : mr.title,
-            "statut" : mr.state
+            "mr_id": mr.iid,
+            "mr_url": mr.web_url,
+            "titre": mr.title,
+            "statut": mr.state
         }
     except Exception as e:
         raise Exception(f"Impossible de créer la MR : {str(e)}")

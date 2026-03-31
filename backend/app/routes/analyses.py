@@ -3,6 +3,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 from typing import List
+from app.models.test_genere import TestGenere
+from app.schemas.test_genere import TestGenereResponse
+from app.schemas.merge_request import MergeRequestResponse
 import traceback
 from pydantic import BaseModel as PydanticBaseModel
 import os
@@ -14,10 +17,17 @@ from app.models.depot_analyse import DepotAnalyse
 from app.models.user          import User
 from app.schemas.analyse      import LancerAnalyseRequest
 from app.services.llm_service import analyser_code
+from app.models.issue_gitlab import IssueGitLab
+from app.models.merge_request import MergeRequest
+from fastapi.responses import FileResponse
+from app.services.pdf_service import generer_rapport_pdf
+from app.models.recommandation import Recommandation
 from app.services.gitlab_client import (
     get_project_files,
     get_gitlab_project
 )
+from app.models.export_rapport import ExportRapport
+from app.schemas.export_rapport import ExportRapportCreate
 
 router = APIRouter(prefix="/analyses", tags=["Analyses"])
 
@@ -86,12 +96,18 @@ def get_user_id_from_token(
 def creer_issues_gitlab(
     token          : str,
     project_name   : str,
-    vulnerabilites : list
+    vulnerabilites : list,
+    analyse_id     : int,
+    depot_analyse_id: int,
+    db             : Session
 ):
+    """Crée les issues GitLab ET les sauvegarde en base"""
     try:
         project = get_gitlab_project(token, project_name)
+        
         for vuln in vulnerabilites:
-            project.issues.create({
+            # 1. Créer l'issue dans GitLab
+            gitlab_issue = project.issues.create({
                 "title": (
                     f"[{vuln['severite']}] "
                     f"{vuln['type']} — "
@@ -111,9 +127,30 @@ def creer_issues_gitlab(
                 """,
                 "labels": ["IA", vuln["severite"].lower()]
             })
+            
+            # 2. Sauvegarder en base
+            issue_db = IssueGitLab(
+                analyse_id       = analyse_id,
+                depot_analyse_id = depot_analyse_id,
+                issue_id_gitlab  = gitlab_issue.iid,
+                issue_url        = gitlab_issue.web_url,
+                titre            = gitlab_issue.title,
+                description      = gitlab_issue.description,
+                severite         = vuln['severite'],
+                type_vuln        = vuln['type'],
+                fichier          = vuln['fichier'],
+                ligne            = vuln['ligne'],
+                statut           = gitlab_issue.state,
+                labels           = "IA," + vuln["severite"].lower()
+            )
+            db.add(issue_db)
+            
+        db.commit()
+        print(f"[ISSUES] {len(vulnerabilites)} issue(s) créées et sauvegardées")
+        
     except Exception as e:
         print(f"Erreur création issues GitLab : {e}")
-
+        db.rollback()
 
 # ════════════════════════════════════════════════════════
 # ENDPOINT 1 — Lancer une analyse
@@ -206,14 +243,31 @@ def lancer_analyse(
         db.commit()
         db.refresh(analyse)
 
-        # ── 9. Créer les issues dans GitLab ──────────────
+      # ── 9. Créer les issues dans GitLab ──────────────
+              # ── 9. Créer les issues dans GitLab ──────────────
         if rapport.get("vulnerabilites"):
             creer_issues_gitlab(
-                token          = data.gitlab_token,
-                project_name   = data.project_url,
-                vulnerabilites = rapport["vulnerabilites"]
+                token           = data.gitlab_token,
+                project_name    = data.project_url,
+                vulnerabilites  = rapport["vulnerabilites"],
+                analyse_id      = analyse.id,
+                depot_analyse_id = depot.id,
+                db              = db
             )
-
+        if rapport.get("recommandations"):
+            from app.models.recommandation import Recommandation
+            for rec in rapport["recommandations"]:
+                reco_db = Recommandation(
+                    analyse_id=analyse.id,
+                    titre=rec.get("titre", "Recommandation"),
+                    description=rec.get("description", ""),
+                    priorite=rec.get("priorite", "MOYENNE"),
+                    categorie=rec.get("categorie", "bonnes_pratiques"),
+                    fichier=rec.get("fichier"),
+                    ligne=rec.get("ligne")
+                )
+                db.add(reco_db)
+            db.commit()
     except HTTPException:
         raise
 
@@ -349,6 +403,12 @@ class GenererTestsRequest(PydanticBaseModel):
 # ENDPOINT — Générer les tests + créer MR
 # POST /analyses/generer-tests
 # ════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════
+# ENDPOINT — Générer les tests + créer MR
+# POST /analyses/generer-tests
+# ════════════════════════════════════════════════════════
+
 @router.post("/generer-tests")
 def generer_tests_endpoint(
     data : GenererTestsRequest,
@@ -360,14 +420,17 @@ def generer_tests_endpoint(
     3. Crée une branche ai/tests/...
     4. Pousse le fichier de tests
     5. Crée une MR si demandé
+    6. Sauvegarde le test en base
+    7. Sauvegarde la MR en base
     """
+
     from app.services.test_service import (
         generer_tests_llm,
         creer_branche_et_pousser,
         creer_merge_request
     )
 
-    # ── 1. Récupérer l'analyse en base ───────────────
+    # ── 1. Vérifier l'analyse ─────────────────────────────
     analyse = db.query(Analyse).filter(
         Analyse.id == data.analyse_id
     ).first()
@@ -385,7 +448,7 @@ def generer_tests_endpoint(
         )
 
     try:
-        # ── 2. Récupérer les fichiers ─────────────────
+        # ── 2. Récupérer les fichiers ─────────────────────
         print("[TESTS] Récupération des fichiers...")
         fichiers = get_project_files(
             token        = data.gitlab_token,
@@ -403,25 +466,31 @@ def generer_tests_endpoint(
                 detail      = "Aucun fichier trouvé pour générer les tests"
             )
 
-        # ── 3. Générer les tests via LLM ──────────────
+        # ── 3. Génération via LLM ─────────────────────────
         print("[TESTS] Génération via LLM...")
         resultat_llm = generer_tests_llm(
-            fichiers       = fichiers,
-            vulnerabilites = analyse.vulnerabilites or [],
-            recommandations= analyse.recommandations or []
+            fichiers        = fichiers,
+            vulnerabilites  = analyse.vulnerabilites or [],
+            recommandations = analyse.recommandations or []
         )
 
-        # ── 4. Créer la branche et pousser ───────────
+        if not resultat_llm or "contenu" not in resultat_llm:
+            raise HTTPException(
+                status_code = 500,
+                detail      = "Erreur génération tests LLM"
+            )
+
+        # ── 4. Création branche + push ────────────────────
         print("[TESTS] Création branche et push...")
         resultat_branche = creer_branche_et_pousser(
             token         = data.gitlab_token,
             project_url   = data.project_url,
             branche_base  = data.branche,
-            nom_fichier   = resultat_llm["fichier"],
+            nom_fichier   = resultat_llm.get("fichier", "test_auto_generated.py"),
             contenu_tests = resultat_llm["contenu"]
         )
 
-        # ── 5. Créer la MR si demandé ─────────────────
+        # ── 5. Création MR (optionnel) ────────────────────
         resultat_mr = None
         if data.creer_mr:
             print("[TESTS] Création de la MR...")
@@ -432,12 +501,62 @@ def generer_tests_endpoint(
                 branche_cible = data.branche
             )
 
+        # ── 6. Calcul nombre de tests ─────────────────────
+        contenu = resultat_llm["contenu"]
+        nb_tests = (
+            contenu.count("@Test") or
+            contenu.count("def test_") or
+            contenu.count("it(") or 1
+        )
+
+        # ── 7. Sauvegarde du test en base ─────────────────
+        test_db = TestGenere(
+            analyse_id       = data.analyse_id,
+            depot_analyse_id = analyse.depot_analyse_id,
+            langage          = resultat_llm.get("langage", "unknown"),
+            framework        = resultat_llm.get("framework", ""),
+            nom_fichier      = resultat_branche.get("fichier", "test_auto_generated.py"),
+            contenu          = contenu,
+            nb_tests         = nb_tests,
+            nb_lots          = resultat_llm.get("nb_lots", 1),
+            statut           = "pousse" if resultat_mr else "genere",
+            branche_cible    = resultat_branche["branche"],
+        )
+        db.add(test_db)
+        db.commit()
+        db.refresh(test_db)  # ← récupère l'ID généré
+
+        # ── 8. Sauvegarde de la MR en base (si créée) ─────
+        mr_db = None
+        if resultat_mr:
+            mr_db = MergeRequest(
+                analyse_id       = data.analyse_id,
+                test_id          = test_db.id,
+                depot_analyse_id = analyse.depot_analyse_id,
+                mr_id_gitlab     = resultat_mr["mr_id"],
+                mr_url           = resultat_mr["mr_url"],
+                titre            = resultat_mr["titre"],
+                branche_source   = resultat_branche["branche"],
+                branche_cible    = data.branche,
+                statut           = resultat_mr["statut"],
+                type_mr          = "tests",
+                labels           = "IA,tests-automatiques"
+            )
+            db.add(mr_db)
+            db.commit()
+            db.refresh(mr_db)  # ← facultatif, récupère l'ID
+
+        # ── 9. Retour API propre ──────────────────────────
         return {
-            "statut"  : "succes",
-            "langage" : resultat_llm["langage"],
-            "branche" : resultat_branche["branche"],
-            "fichier" : resultat_branche["fichier"],
-            "mr"      : resultat_mr
+            "message"    : "Tests générés avec succès",
+            "test_id"    : test_db.id,
+            "mr_id"      : mr_db.id if mr_db else None,
+            "nb_tests"   : nb_tests,
+            "fichier"    : test_db.nom_fichier,
+            "branche"    : test_db.branche_cible,
+            "langage"    : test_db.langage,
+            "mr"         : resultat_mr,
+            "analyse_id" : data.analyse_id
         }
 
     except HTTPException:
@@ -449,9 +568,12 @@ def generer_tests_endpoint(
             status_code = 500,
             detail      = str(e)
         )
-    # ENDPOINT 6 — Analyser le diff + merger si propre
+
+        # ════════════════════════════════════════════════════════
+# ENDPOINT — Analyser le diff + merger si propre
 # POST /analyses/analyser-diff
 # ════════════════════════════════════════════════════════
+
 class AnalyserDiffRequest(PydanticBaseModel):
     gitlab_token  : str
     project_url   : str
@@ -459,7 +581,7 @@ class AnalyserDiffRequest(PydanticBaseModel):
     to_branch     : str
     fichiers      : list        # fichiers du diff {path, content/diff}
     owasp_enabled : bool = True
- 
+        
  
 @router.post("/analyser-diff")
 def analyser_diff(
@@ -578,4 +700,106 @@ La fusion de `{data.from_branch}` vers `{data.to_branch}` est autorisée.
         "recommandations"          : recommandations,
         "mr"                       : None
     }
- 
+    # backend/app/routes/analyses.py
+
+
+
+# ════════════════════════════════════════════════════════
+# ENDPOINT — Exporter le rapport en PDF
+# GET /analyses/{analyse_id}/pdf
+# ════════════════════════════════════════════════════════
+# backend/app/routes/analyses.py
+
+# backend/app/routes/analyses.py
+
+
+
+# ════════════════════════════════════════════════════════
+# ENDPOINT — Exporter le rapport en PDF
+# GET /analyses/{analyse_id}/pdf
+# ════════════════════════════════════════════════════════
+# backend/app/routes/analyses.py
+
+# backend/app/routes/analyses.py
+
+@router.get("/{analyse_id}/pdf")
+def exporter_pdf(
+    analyse_id: int,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None),
+    request: Request = None
+):
+    """
+    Exporte le rapport d'analyse au format PDF.
+    """
+    from app.services.pdf_service import generer_rapport_pdf
+    from fastapi.responses import FileResponse
+    from app.models.export_rapport import ExportRapport
+
+    # Récupérer l'utilisateur depuis le token (HEADER, pas URL)
+    user_id = get_user_id_from_token(authorization, db)
+    
+    analyse = db.query(Analyse).filter(Analyse.id == analyse_id).first()
+    if not analyse:
+        raise HTTPException(status_code=404, detail="Analyse introuvable")
+    
+    depot = db.query(DepotAnalyse).filter(DepotAnalyse.id == analyse.depot_analyse_id).first()
+    if not depot or depot.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Accès non autorisé")
+    
+    analyse_dict = {
+        "id": analyse.id,
+        "branche": analyse.branche,
+        "score_qualite": analyse.score_qualite,
+        "score_securite": analyse.score_securite,
+        "score_performance": analyse.score_performance,
+        "vulnerabilites": analyse.vulnerabilites,
+        "recommandations": analyse.recommandations,
+        "owasp_enabled": analyse.owasp_enabled,
+        "modele_llm": analyse.modele_llm,
+        "created_at": str(analyse.created_at)
+    }
+    
+    depot_dict = {
+        "id": depot.id,
+        "nom": depot.nom,
+        "project_url": depot.project_url,
+        "branche": depot.branche
+    }
+    
+    try:
+        pdf_path, taille = generer_rapport_pdf(analyse_dict, depot_dict)
+        
+        # Récupérer l'IP et User Agent avec des valeurs par défaut
+        ip_address = None
+        if request and request.client:
+            ip_address = request.client.host
+        
+        # Alternative: récupérer depuis les headers proxy
+        if not ip_address and request:
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                ip_address = forwarded.split(",")[0].strip()
+        
+        user_agent = request.headers.get("user-agent") if request else None
+        
+        # Enregistrer l'export en base
+        export = ExportRapport(
+            analyse_id=analyse_id,
+            user_id=user_id,
+            format="pdf",
+            chemin_fichier=pdf_path,
+            taille=taille,
+            ip_address=ip_address or "inconnu",
+            user_agent=user_agent or "inconnu"
+        )
+        db.add(export)
+        db.commit()
+        
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=f"rapport_audit_{depot.nom}_{analyse.created_at.strftime('%Y%m%d')}.pdf"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur génération PDF: {str(e)}")

@@ -1,11 +1,17 @@
+// frontend/app/profile/page.tsx
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
+const API = "http://127.0.0.1:8000";
+
 export default function ProfilePage() {
   const [user, setUser] = useState<any>(null);
   const [depotsCount, setDepotsCount] = useState<number>(0);
+  const [analysesCount, setAnalysesCount] = useState<number>(0);
+  const [issuesCount, setIssuesCount] = useState<number>(0);
+  const [mrCount, setMrCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({ username: "", email: "" });
@@ -14,36 +20,68 @@ export default function ProfilePage() {
   const [editSuccess, setEditSuccess] = useState(false);
   const router = useRouter();
 
+  const getHeaders = () => {
+    const token = localStorage.getItem("token");
+    return { Authorization: token ? `Bearer ${token}` : "" };
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       try {
         const token = localStorage.getItem("token");
-        if (!token) return;
+        if (!token) {
+          router.push("/login");
+          return;
+        }
 
         // 1. Profil utilisateur
-        const res = await axios.get("http://127.0.0.1:8000/auth/me", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await axios.get(`${API}/auth/me`, { headers: getHeaders() });
         const userData = res.data;
         setUser(userData);
         setEditForm({ username: userData.username ?? "", email: userData.email ?? "" });
 
-        // 2. Nombre de dépôts réels
-        const userId = userData.id || localStorage.getItem("user_id");
-        if (userId) {
-          localStorage.setItem("user_id", String(userId));
-          try {
-            const depotsRes = await axios.get(
-              `http://127.0.0.1:8000/depots/user/${userId}`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            setDepotsCount(Array.isArray(depotsRes.data) ? depotsRes.data.length : 0);
-          } catch (e: any) {
-            if (e?.response?.status === 404) setDepotsCount(0);
-          }
+        // 2. Nombre de dépôts
+        const userId = userData.id;
+        localStorage.setItem("user_id", String(userId));
+        
+        try {
+          const depotsRes = await axios.get(`${API}/analyses/depots-user/${userId}`, { headers: getHeaders() });
+          setDepotsCount(depotsRes.data.length);
+        } catch {
+          setDepotsCount(0);
         }
-      } catch (err) {
+
+        // 3. Nombre d'analyses
+        try {
+          const analysesRes = await axios.get(`${API}/analyses/depot/${userId}`, { headers: getHeaders() });
+          setAnalysesCount(analysesRes.data.length);
+        } catch {
+          setAnalysesCount(0);
+        }
+
+        // 4. Nombre d'issues
+        try {
+          const issuesRes = await axios.get(`${API}/issues/`, { headers: getHeaders() });
+          setIssuesCount(issuesRes.data.length);
+        } catch {
+          setIssuesCount(0);
+        }
+
+        // 5. Nombre de MR
+        try {
+          const mrRes = await axios.get(`${API}/merge-requests/`, { headers: getHeaders() });
+          setMrCount(mrRes.data.length);
+        } catch {
+          setMrCount(0);
+        }
+
+      } catch (err: any) {
         console.error("Erreur récupération user:", err);
+        if (err.response?.status === 401) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("user_id");
+          router.push("/login");
+        }
       } finally {
         setLoading(false);
       }
@@ -54,7 +92,7 @@ export default function ProfilePage() {
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user_id");
-    router.push("/login"); // ← redirige vers /login
+    router.push("/login");
   };
 
   const handleEditSave = async () => {
@@ -62,11 +100,10 @@ export default function ProfilePage() {
     setEditError(null);
     setEditSuccess(false);
     try {
-      const token = localStorage.getItem("token");
       const res = await axios.put(
-        `http://127.0.0.1:8000/auth/update`,
+        `${API}/auth/update`,
         { username: editForm.username, email: editForm.email },
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getHeaders() }
       );
       setUser((prev: any) => ({ ...prev, ...res.data }));
       setEditSuccess(true);
@@ -78,146 +115,453 @@ export default function ProfilePage() {
     }
   };
 
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "Récemment";
+    return new Date(dateStr).toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  };
+
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-        .page { min-height: 100vh; background: #0d0e12; font-family: 'Inter', sans-serif; color: #c9cad6; padding: 32px; }
+        .page {
+          min-height: 100vh;
+          background: #f8fafc;
+          font-family: 'Inter', sans-serif;
+          color: #1e293b;
+        }
 
-        .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
-        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        /* Topbar */
+        .topbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 20px 32px;
+          background: white;
+          border-bottom: 1px solid #eef2ff;
+          position: sticky;
+          top: 0;
+          z-index: 10;
+        }
+        .topbar-left {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+        }
         .back-btn {
-          background: transparent; border: 1px solid #1c1d26; border-radius: 7px;
-          color: #555; font-size: 16px; width: 34px; height: 34px; cursor: pointer;
-          display: flex; align-items: center; justify-content: center; transition: all 0.15s;
+          background: #f1f5f9;
+          border: none;
+          border-radius: 10px;
+          padding: 8px 16px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          color: #475569;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          gap: 6px;
         }
-        .back-btn:hover { border-color: #333; color: #aaa; }
-        .page-title { font-size: 20px; font-weight: 700; color: #fff; }
-        .page-sub   { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; margin-top: 3px; }
-
-        .topbar-actions { display: flex; gap: 10px; }
-
-        .btn-edit {
-          padding: 8px 18px; background: transparent;
-          border: 1px solid #6c63ff40; border-radius: 7px;
-          color: #9b91ff; font-family: 'Inter', sans-serif;
-          font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        .back-btn:hover {
+          background: #e2e8f0;
+          color: #0f172a;
         }
-        .btn-edit:hover { background: #6c63ff15; border-color: #6c63ff80; color: #fff; }
-
-        .btn-logout {
-          padding: 8px 18px; background: transparent;
-          border: 1px solid #ff6b6b30; border-radius: 7px;
-          color: #ff6b6b; font-family: 'Inter', sans-serif;
-          font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        .title-section h1 {
+          font-size: 24px;
+          font-weight: 700;
+          color: #0f172a;
+          letter-spacing: -0.02em;
+          margin: 0 0 4px 0;
         }
-        .btn-logout:hover { background: #ff6b6b10; border-color: #ff6b6b55; }
-
-        .layout { display: grid; grid-template-columns: 280px 1fr; gap: 20px; max-width: 900px; }
-
-        .card { background: #111218; border: 1px solid #1c1d26; border-radius: 12px; padding: 24px; }
-
-        .profile-card { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 14px; }
-
-        .avatar-ring {
-          width: 80px; height: 80px; border-radius: 50%;
-          background: linear-gradient(135deg, #6c63ff, #00d4aa);
-          display: flex; align-items: center; justify-content: center;
-          font-size: 28px; font-weight: 700; color: #000;
+        .title-section p {
+          font-size: 13px;
+          color: #64748b;
+          margin: 0;
         }
-        .profile-name  { font-size: 18px; font-weight: 700; color: #fff; }
-        .profile-role  {
-          display: inline-flex; align-items: center; font-size: 10px;
-          font-family: 'JetBrains Mono', monospace; background: #6c63ff15;
-          color: #9b91ff; border: 1px solid #6c63ff25; border-radius: 20px; padding: 3px 12px;
+        .topbar-actions {
+          display: flex;
+          gap: 12px;
         }
-        .divider { height: 1px; background: #1c1d26; width: 100%; }
-        .stat-row { display: flex; justify-content: space-around; width: 100%; gap: 8px; }
-        .mini-stat { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-        .mini-val  { font-size: 20px; font-weight: 700; color: #fff; }
-        .mini-lbl  { font-size: 10px; color: #444; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em; text-align: center; }
-        .profile-joined { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; }
+        .btn-secondary {
+          background: #f1f5f9;
+          border: none;
+          border-radius: 10px;
+          padding: 8px 18px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          color: #475569;
+          transition: all 0.2s;
+        }
+        .btn-secondary:hover {
+          background: #e2e8f0;
+          color: #0f172a;
+        }
+        .btn-danger {
+          background: #fef2f2;
+          border: none;
+          border-radius: 10px;
+          padding: 8px 18px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          color: #ef4444;
+          transition: all 0.2s;
+        }
+        .btn-danger:hover {
+          background: #fee2e2;
+        }
 
-        .section-label { font-size: 10px; font-weight: 600; color: #444; text-transform: uppercase; letter-spacing: 0.1em; font-family: 'JetBrains Mono', monospace; margin-bottom: 16px; }
+        /* Layout */
+        .layout {
+          max-width: 1100px;
+          margin: 0 auto;
+          padding: 32px;
+          display: grid;
+          grid-template-columns: 320px 1fr;
+          gap: 32px;
+        }
 
-        .info-list { display: flex; flex-direction: column; gap: 12px; margin-bottom: 24px; }
+        /* Cards */
+        .card {
+          background: white;
+          border: 1px solid #eef2ff;
+          border-radius: 24px;
+          padding: 28px;
+        }
+
+        /* Profile Card */
+        .profile-card {
+          text-align: center;
+        }
+        .avatar {
+          width: 100px;
+          height: 100px;
+          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin: 0 auto 20px;
+          font-size: 36px;
+          font-weight: 700;
+          color: white;
+          box-shadow: 0 8px 20px rgba(99,102,241,0.2);
+        }
+        .profile-name {
+          font-size: 20px;
+          font-weight: 700;
+          color: #0f172a;
+          margin-bottom: 6px;
+        }
+        .profile-role {
+          display: inline-block;
+          background: #eef2ff;
+          color: #6366f1;
+          font-size: 11px;
+          font-weight: 600;
+          padding: 4px 12px;
+          border-radius: 30px;
+          margin-bottom: 20px;
+        }
+        .divider {
+          height: 1px;
+          background: #f1f5f9;
+          margin: 20px 0;
+        }
+        .stats-row {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 16px;
+          margin: 20px 0;
+        }
+        .stat-item {
+          text-align: center;
+          padding: 12px;
+          background: #f8fafc;
+          border-radius: 16px;
+        }
+        .stat-value {
+          font-size: 28px;
+          font-weight: 700;
+          color: #0f172a;
+        }
+        .stat-label {
+          font-size: 11px;
+          color: #64748b;
+          margin-top: 4px;
+        }
+        .profile-date {
+          font-size: 11px;
+          color: #94a3b8;
+          font-family: monospace;
+        }
+
+        /* Info Card */
+        .section-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #0f172a;
+          margin-bottom: 20px;
+          padding-bottom: 12px;
+          border-bottom: 2px solid #f1f5f9;
+        }
+        .info-list {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
         .info-row {
-          display: flex; align-items: center; padding: 12px 14px;
-          background: #0d0e12; border: 1px solid #1c1d26; border-radius: 8px; gap: 12px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px;
+          background: #f8fafc;
+          border-radius: 16px;
         }
-        .info-icon    { font-size: 14px; width: 20px; text-align: center; color: #444; flex-shrink: 0; }
-        .info-content { flex: 1; }
-        .info-label   { font-size: 10px; color: #444; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
-        .info-value   { font-size: 13px; color: #e8e8f0; font-family: 'JetBrains Mono', monospace; }
-        .info-badge   { font-size: 10px; font-family: 'JetBrains Mono', monospace; padding: 2px 8px; border-radius: 5px; flex-shrink: 0; }
-        .badge-active   { background: #00d4aa10; color: #00d4aa; border: 1px solid #00d4aa20; }
-        .badge-gitlab   { background: #ff6b3510; color: #ff9a70; border: 1px solid #ff6b3520; }
-        .badge-verified { background: #6c63ff10; color: #9b91ff; border: 1px solid #6c63ff20; }
-
-        .activity-list { display: flex; flex-direction: column; gap: 8px; }
-        .activity-row  { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #0d0e12; border: 1px solid #1c1d26; border-radius: 8px; }
-        .activity-dot  { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-        .activity-text { font-size: 12px; color: #888; flex: 1; }
-        .activity-text span { color: #c9cad6; font-weight: 500; }
-        .activity-time { font-size: 10px; color: #333; font-family: 'JetBrains Mono', monospace; }
-
-        .loading {
-          min-height: 100vh; display: flex; align-items: center; justify-content: center;
-          background: #0d0e12; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #444;
+        .info-icon {
+          font-size: 20px;
+          width: 40px;
+          height: 40px;
+          background: white;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .info-content {
+          flex: 1;
+        }
+        .info-label {
+          font-size: 10px;
+          font-weight: 600;
+          color: #94a3b8;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin-bottom: 4px;
+        }
+        .info-value {
+          font-size: 14px;
+          font-weight: 600;
+          color: #0f172a;
+          font-family: monospace;
+        }
+        .info-badge {
+          font-size: 10px;
+          font-weight: 500;
+          padding: 4px 10px;
+          border-radius: 20px;
+        }
+        .badge-verified {
+          background: #eef2ff;
+          color: #6366f1;
+        }
+        .badge-active {
+          background: #ecfdf5;
+          color: #10b981;
+        }
+        .badge-gitlab {
+          background: #fef3c7;
+          color: #f59e0b;
         }
 
-        /* MODAL */
+        /* Activity List */
+        .activity-list {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .activity-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px;
+          background: #f8fafc;
+          border-radius: 16px;
+        }
+        .activity-dot {
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+        }
+        .activity-text {
+          flex: 1;
+          font-size: 13px;
+          color: #475569;
+        }
+        .activity-text strong {
+          color: #0f172a;
+        }
+        .activity-time {
+          font-size: 10px;
+          color: #94a3b8;
+          font-family: monospace;
+        }
+
+        /* Stats Grid supplémentaires */
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+        .stat-card {
+          background: #f8fafc;
+          border-radius: 20px;
+          padding: 16px;
+          text-align: center;
+        }
+        .stat-card-value {
+          font-size: 28px;
+          font-weight: 700;
+        }
+        .stat-card-label {
+          font-size: 11px;
+          color: #64748b;
+          margin-top: 4px;
+        }
+
+        /* Modal */
         .modal-overlay {
-          position: fixed; inset: 0; background: #00000090; z-index: 100;
-          display: flex; align-items: center; justify-content: center; padding: 20px;
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.5);
+          backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 100;
+          padding: 20px;
         }
         .modal {
-          background: #111218; border: 1px solid #1c1d26; border-radius: 14px;
-          padding: 28px; width: 100%; max-width: 420px;
+          background: white;
+          border-radius: 24px;
+          max-width: 480px;
+          width: 100%;
+          padding: 28px;
+          box-shadow: 0 20px 35px -12px rgba(0,0,0,0.2);
         }
-        .modal-title { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px; }
-        .modal-sub   { font-size: 11px; color: #444; font-family: 'JetBrains Mono', monospace; margin-bottom: 24px; }
-
-        .modal-field { margin-bottom: 14px; }
+        .modal-title {
+          font-size: 20px;
+          font-weight: 700;
+          color: #0f172a;
+          margin-bottom: 4px;
+        }
+        .modal-sub {
+          font-size: 13px;
+          color: #64748b;
+          margin-bottom: 24px;
+        }
+        .modal-field {
+          margin-bottom: 20px;
+        }
         .modal-label {
-          font-size: 10px; font-weight: 600; color: #555; text-transform: uppercase;
-          letter-spacing: 0.08em; font-family: 'JetBrains Mono', monospace;
-          display: block; margin-bottom: 6px;
+          display: block;
+          font-size: 12px;
+          font-weight: 600;
+          color: #334155;
+          margin-bottom: 6px;
         }
         .modal-input {
-          width: 100%; background: #0d0e12; border: 1px solid #1c1d26; border-radius: 8px;
-          padding: 10px 14px; color: #e8e8f0; font-family: 'JetBrains Mono', monospace;
-          font-size: 13px; outline: none; transition: border-color 0.15s;
+          width: 100%;
+          padding: 12px 14px;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          font-size: 14px;
+          transition: all 0.2s;
         }
-        .modal-input:focus { border-color: #6c63ff55; }
-
-        .modal-error   { font-size: 11px; color: #ff6b6b; font-family: 'JetBrains Mono', monospace; margin-bottom: 12px; }
-        .modal-success { font-size: 11px; color: #00d4aa; font-family: 'JetBrains Mono', monospace; margin-bottom: 12px; }
-
-        .modal-actions { display: flex; gap: 8px; margin-top: 20px; }
+        .modal-input:focus {
+          outline: none;
+          border-color: #6366f1;
+          box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+        }
+        .modal-error {
+          background: #fef2f2;
+          border: 1px solid #fee2e2;
+          border-radius: 10px;
+          padding: 10px 12px;
+          font-size: 12px;
+          color: #ef4444;
+          margin-bottom: 20px;
+        }
+        .modal-success {
+          background: #ecfdf5;
+          border: 1px solid #bbf7d0;
+          border-radius: 10px;
+          padding: 10px 12px;
+          font-size: 12px;
+          color: #10b981;
+          margin-bottom: 20px;
+        }
+        .modal-actions {
+          display: flex;
+          gap: 12px;
+        }
         .modal-cancel {
-          flex: 1; padding: 9px; background: transparent; border: 1px solid #1c1d26;
-          border-radius: 7px; color: #666; font-family: 'Inter', sans-serif;
-          font-size: 13px; cursor: pointer; transition: all 0.15s;
+          flex: 1;
+          padding: 10px;
+          background: #f1f5f9;
+          border: none;
+          border-radius: 12px;
+          font-size: 14px;
+          font-weight: 500;
+          cursor: pointer;
         }
-        .modal-cancel:hover { border-color: #333; color: #aaa; }
         .modal-confirm {
-          flex: 2; padding: 9px; background: #6c63ff; border: none; border-radius: 7px;
-          color: #fff; font-family: 'Inter', sans-serif; font-size: 13px;
-          font-weight: 600; cursor: pointer; transition: background 0.15s;
+          flex: 2;
+          padding: 10px;
+          background: #0f172a;
+          border: none;
+          border-radius: 12px;
+          color: white;
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
         }
-        .modal-confirm:hover { background: #5b52e0; }
-        .modal-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
+        .modal-confirm:disabled {
+          background: #94a3b8;
+          cursor: not-allowed;
+        }
+
+        .loading {
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #64748b;
+        }
+        .spinner {
+          width: 24px;
+          height: 24px;
+          border: 2px solid #e2e8f0;
+          border-top-color: #6366f1;
+          border-radius: 50%;
+          animation: spin 0.6s linear infinite;
+          margin-right: 12px;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 900px) {
+          .layout { grid-template-columns: 1fr; padding: 20px; }
+          .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
       `}</style>
 
       {loading ? (
-        <div className="loading">chargement...</div>
+        <div className="loading">
+          <div className="spinner" />
+          Chargement du profil...
+        </div>
       ) : !user ? (
         <div className="loading">
-          Impossible de charger le profil.{" "}
-          <button className="back-btn" style={{ marginLeft: 12 }} onClick={() => router.push("/dashboard")}>← Retour</button>
+          Impossible de charger le profil
+          <button className="back-btn" style={{ marginLeft: 16 }} onClick={() => router.push("/dashboard")}>
+            Retour
+          </button>
         </div>
       ) : (
         <div className="page">
@@ -225,17 +569,19 @@ export default function ProfilePage() {
           {/* Topbar */}
           <div className="topbar">
             <div className="topbar-left">
-              <button className="back-btn" onClick={() => router.push("/dashboard")}>←</button>
-              <div>
-                <div className="page-title">Mon profil</div>
-                <div className="page-sub">Informations du compte</div>
+              <button className="back-btn" onClick={() => router.push("/dashboard")}>
+                ← Tableau de bord
+              </button>
+              <div className="title-section">
+                <h1>Mon profil</h1>
+                <p>Gérez vos informations personnelles</p>
               </div>
             </div>
             <div className="topbar-actions">
-              <button className="btn-edit" onClick={() => { setEditOpen(true); setEditError(null); setEditSuccess(false); }}>
+              <button className="btn-secondary" onClick={() => { setEditOpen(true); setEditError(null); setEditSuccess(false); }}>
                 ✎ Modifier
               </button>
-              <button className="btn-logout" onClick={handleLogout}>
+              <button className="btn-danger" onClick={handleLogout}>
                 Déconnexion
               </button>
             </div>
@@ -243,110 +589,157 @@ export default function ProfilePage() {
 
           <div className="layout">
 
-            {/* Colonne gauche */}
+            {/* Colonne gauche - Carte profil */}
             <div className="card profile-card">
-              <div className="avatar-ring">
+              <div className="avatar">
                 {user.username?.[0]?.toUpperCase() ?? "U"}
               </div>
-              <div>
-                <div className="profile-name">{user.username}</div>
-                <div style={{ marginTop: 6 }}>
-                  <span className="profile-role">admin</span>
+              <div className="profile-name">{user.username}</div>
+              <div className="profile-role">
+                {user.role === "admin" ? "Administrateur" : "Utilisateur"}
+              </div>
+
+              <div className="stats-row">
+                <div className="stat-item">
+                  <div className="stat-value">{depotsCount}</div>
+                  <div className="stat-label">Projets</div>
+                </div>
+                <div className="stat-item">
+                  <div className="stat-value">{analysesCount}</div>
+                  <div className="stat-label">Analyses</div>
                 </div>
               </div>
-              <div className="divider" />
-              <div className="stat-row">
-                <div className="mini-stat">
-                  <div className="mini-val" style={{ color: depotsCount > 0 ? "#00d4aa" : "#fff" }}>
-                    {depotsCount}
-                  </div>
-                  <div className="mini-lbl">Dépôts</div>
+
+              <div className="stats-row">
+                <div className="stat-item">
+                  <div className="stat-value">{issuesCount}</div>
+                  <div className="stat-label">Issues</div>
                 </div>
-                <div className="mini-stat">
-                  <div className="mini-val">0</div>
-                  <div className="mini-lbl">Analyses</div>
-                </div>
-                <div className="mini-stat">
-                  <div className="mini-val">0</div>
-                  <div className="mini-lbl">Issues</div>
+                <div className="stat-item">
+                  <div className="stat-value">{mrCount}</div>
+                  <div className="stat-label">Merge Requests</div>
                 </div>
               </div>
+
               <div className="divider" />
-              <div className="profile-joined">
-                Membre depuis {new Date().toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
+
+              <div className="profile-date">
+                Membre depuis {formatDate(user.created_at)}
               </div>
             </div>
 
             {/* Colonne droite */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
 
+              {/* Informations du compte */}
               <div className="card">
-                <div className="section-label">Informations du compte</div>
+                <div className="section-title">Informations du compte</div>
                 <div className="info-list">
                   <div className="info-row">
-                    <span className="info-icon">◈</span>
+                    <div className="info-icon">🆔</div>
                     <div className="info-content">
                       <div className="info-label">Identifiant</div>
                       <div className="info-value">#{user.id}</div>
                     </div>
                   </div>
                   <div className="info-row">
-                    <span className="info-icon">@</span>
+                    <div className="info-icon">👤</div>
                     <div className="info-content">
                       <div className="info-label">Nom d'utilisateur</div>
                       <div className="info-value">{user.username}</div>
                     </div>
-                    <span className="info-badge badge-verified">vérifié</span>
+                    <span className="info-badge badge-verified">✓ Vérifié</span>
                   </div>
                   <div className="info-row">
-                    <span className="info-icon">✉</span>
+                    <div className="info-icon">📧</div>
                     <div className="info-content">
                       <div className="info-label">Adresse email</div>
                       <div className="info-value">{user.email}</div>
                     </div>
-                    <span className="info-badge badge-active">actif</span>
+                    <span className="info-badge badge-active">Actif</span>
                   </div>
                   <div className="info-row">
-                    <span className="info-icon">⊙</span>
+                    <div className="info-icon">🔐</div>
                     <div className="info-content">
                       <div className="info-label">Connexion via</div>
                       <div className="info-value">GitLab OAuth</div>
                     </div>
-                    <span className="info-badge badge-gitlab">gitlab</span>
+                    <span className="info-badge badge-gitlab">GitLab</span>
                   </div>
                 </div>
               </div>
 
+              {/* Statistiques détaillées */}
               <div className="card">
-                <div className="section-label">Activité récente</div>
-                <div className="activity-list">
-                  {[
-                    { color: "#6c63ff", text: <span>Connexion via <span>GitLab OAuth</span></span>, time: "maintenant" },
-                    { color: "#00d4aa", text: <span>Compte <span>créé</span> avec succès</span>, time: "aujourd'hui" },
-                  ].map((item, i) => (
-                    <div className="activity-row" key={i}>
-                      <div className="activity-dot" style={{ background: item.color }} />
-                      <div className="activity-text">{item.text}</div>
-                      <div className="activity-time">{item.time}</div>
-                    </div>
-                  ))}
-                  <div className="activity-row" style={{ opacity: 0.3 }}>
-                    <div className="activity-dot" style={{ background: "#333" }} />
-                    <div className="activity-text">Aucune autre activité enregistrée</div>
-                    <div className="activity-time">—</div>
+                <div className="section-title">📊 Statistiques</div>
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <div className="stat-card-value" style={{ color: "#6366f1" }}>{depotsCount}</div>
+                    <div className="stat-card-label">Projets analysés</div>
                   </div>
+                  <div className="stat-card">
+                    <div className="stat-card-value" style={{ color: "#10b981" }}>{analysesCount}</div>
+                    <div className="stat-card-label">Analyses IA</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-card-value" style={{ color: "#f59e0b" }}>{issuesCount}</div>
+                    <div className="stat-card-label">Issues GitLab</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-card-value" style={{ color: "#ef4444" }}>{mrCount}</div>
+                    <div className="stat-card-label">Merge Requests</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Activité récente */}
+              <div className="card">
+                <div className="section-title">🕐 Activité récente</div>
+                <div className="activity-list">
+                  <div className="activity-item">
+                    <div className="activity-dot" style={{ background: "#6366f1" }} />
+                    <div className="activity-text">
+                      Connexion via <strong>GitLab OAuth</strong>
+                    </div>
+                    <div className="activity-time">Maintenant</div>
+                  </div>
+                  <div className="activity-item">
+                    <div className="activity-dot" style={{ background: "#10b981" }} />
+                    <div className="activity-text">
+                      Compte <strong>créé</strong> avec succès
+                    </div>
+                    <div className="activity-time">{formatDate(user.created_at)}</div>
+                  </div>
+                  {analysesCount > 0 && (
+                    <div className="activity-item">
+                      <div className="activity-dot" style={{ background: "#f59e0b" }} />
+                      <div className="activity-text">
+                        <strong>{analysesCount}</strong> analyse{analysesCount > 1 ? "s" : ""} réalisée{analysesCount > 1 ? "s" : ""}
+                      </div>
+                      <div className="activity-time">Récemment</div>
+                    </div>
+                  )}
+                  {issuesCount > 0 && (
+                    <div className="activity-item">
+                      <div className="activity-dot" style={{ background: "#ef4444" }} />
+                      <div className="activity-text">
+                        <strong>{issuesCount}</strong> issue{issuesCount > 1 ? "s" : ""} GitLab créée{issuesCount > 1 ? "s" : ""}
+                      </div>
+                      <div className="activity-time">Récemment</div>
+                    </div>
+                  )}
                 </div>
               </div>
 
             </div>
           </div>
 
-          {/* MODAL MODIFIER */}
+          {/* Modal d'édition */}
           {editOpen && (
             <div className="modal-overlay" onClick={() => setEditOpen(false)}>
               <div className="modal" onClick={e => e.stopPropagation()}>
                 <div className="modal-title">✎ Modifier le profil</div>
-                <div className="modal-sub">Mettez à jour vos informations</div>
+                <div className="modal-sub">Mettez à jour vos informations personnelles</div>
 
                 <div className="modal-field">
                   <label className="modal-label">Nom d'utilisateur</label>
@@ -370,7 +763,7 @@ export default function ProfilePage() {
                   />
                 </div>
 
-                {editError   && <div className="modal-error">✕ {editError}</div>}
+                {editError && <div className="modal-error">⚠️ {editError}</div>}
                 {editSuccess && <div className="modal-success">✓ Profil mis à jour avec succès</div>}
 
                 <div className="modal-actions">

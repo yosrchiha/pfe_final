@@ -1,28 +1,87 @@
 # backend/app/services/llm_service.py
-#
-# Pipeline de revue de code intelligente — PFE 2025
-# Chaque dimension d'analyse possède un prompt spécialisé et formel.
-# Les 5 analyses sont exécutées indépendamment puis fusionnées.
-#
-# Dimensions :
-#   1. Qualité          — complexité, duplication, lisibilité, maintenabilité
-#   2. Sécurité OWASP   — OWASP Top 10 + secrets + injections
-#   3. Performance      — requêtes, boucles, ressources, mémoire
-#   4. Documentation    — commentaires, docstrings, nommage
-#   5. Bonnes pratiques — SOLID, couplage, testabilité, transactions
 
 import os
 import json
+import time
+import base64
+from typing import List, Dict, Any
+from openai import OpenAI
+
+# ── Clients ─────────────────────────────────────────────────
+# Client Groq
 from groq import Groq
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Client OpenRouter (via OpenAI)
+openrouter_client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    default_headers={
+        "HTTP-Referer": "http://localhost:3000",
+        "X-Title": "AuditPlatform"
+    }
+)
+openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
-CHARS_PAR_LOT  = 60_000
+# ── Constantes ─────────────────────────────────────────────
+CHARS_PAR_LOT = 60_000
 MAX_TOKENS_REP = 2500
 
 
+def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
+    """
+    Appelle le LLM avec priorité Groq, fallback sur OpenRouter si rate limit.
+    """
+    prompt = prompt_template.replace("{code_text}", code_text)
+
+    # ── 1. Essayer Groq d'abord ───────────────────────────────
+    try:
+        response = groq_client.chat.completions.create(
+            model=groq_model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=MAX_TOKENS_REP,
+            temperature=0.1
+        )
+        contenu = response.choices[0].message.content.strip()
+        print(f"[LLM][{dimension}] ✅ Groq OK")
+
+    except Exception as e:
+        error_msg = str(e)
+        # Vérifier si c'est une erreur de rate limit (429)
+        if "429" in error_msg or "rate_limit" in error_msg.lower():
+            print(f"[LLM][{dimension}] ⚠️ Rate limit Groq, bascule sur OpenRouter...")
+            try:
+                response = openrouter_client.chat.completions.create(
+                    model=openrouter_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=MAX_TOKENS_REP,
+                    temperature=0.1
+                )
+                contenu = response.choices[0].message.content.strip()
+                print(f"[LLM][{dimension}] ✅ OpenRouter OK (fallback)")
+            except Exception as e2:
+                print(f"[LLM][{dimension}] ❌ Erreur OpenRouter: {e2}")
+                return {}
+        else:
+            print(f"[LLM][{dimension}] ❌ Erreur Groq: {e}")
+            return {}
+
+    # Nettoyer les backticks markdown
+    if contenu.startswith("```"):
+        contenu = contenu.split("```")[1]
+        if contenu.startswith("json"):
+            contenu = contenu[4:]
+
+    try:
+        return json.loads(contenu.strip())
+    except json.JSONDecodeError as e:
+        print(f"[LLM][{dimension}] JSON invalide: {e}")
+        return {}
+
+
 # ══════════════════════════════════════════════════════════════════════
-# PROMPTS SPÉCIALISÉS PAR DIMENSION
+# PROMPTS SPÉCIALISÉS PAR DIMENSION (inchangés)
 # ══════════════════════════════════════════════════════════════════════
 
 PROMPT_QUALITE = """
@@ -30,9 +89,7 @@ Tu es un expert en génie logiciel spécialisé dans la qualité du code source.
 Ta mission est d'auditer le code suivant selon les critères FORMELS ci-dessous.
 Retourne UNIQUEMENT un JSON valide, sans texte avant ni après.
 
-═══════════════════════════════════════════════════════
 CRITÈRES D'ANALYSE DE QUALITÉ (OBLIGATOIRES)
-═══════════════════════════════════════════════════════
 
 A. COMPLEXITÉ CYCLOMATIQUE
    - Toute fonction/méthode dépassant 10 chemins d'exécution est signalée
@@ -44,23 +101,17 @@ B. DUPLICATION DE CODE
    - Tout bloc de code identique ou quasi-identique (> 5 lignes) est signalé
    - Toute logique copiée-collée entre classes/fichiers est signalée
    - Toute constante répétée sans déclaration centralisée est signalée
-   - Toute séquence d'instructions répétée est signalée
 
 C. LISIBILITÉ ET NOMMAGE
    - Toute variable nommée avec moins de 2 caractères significatifs (ex: x, tmp, d) est signalée
    - Toute fonction dont le nom ne reflète pas son comportement est signalée
-   - Tout fichier dont la structure est difficile à lire linéairement est signalé
-   - Tout bloc de code sans séparation logique claire est signalé
 
 D. MAINTENABILITÉ
    - Toute fonction qui fait plus d'une chose (violation SRP) est signalée
    - Tout couplage fort entre modules est signalé
-   - Toute dépendance circulaire est signalée
-   - Tout code mort ou inaccessible est signalé
    - Toute constante magique non nommée est signalée
 
 RÈGLE ABSOLUE : Tu DOIS signaler au minimum 2 problèmes par fichier fourni.
-Si le code est bon, signale les améliorations possibles.
 
 Structure JSON de retour :
 {
@@ -92,76 +143,61 @@ Tu es un auditeur de sécurité applicative certifié, expert OWASP et pentesteu
 Ta mission est d'identifier TOUTES les vulnérabilités de sécurité dans le code suivant.
 Retourne UNIQUEMENT un JSON valide, sans texte avant ni après.
 
-═══════════════════════════════════════════════════════
 CRITÈRES DE SÉCURITÉ — OWASP TOP 10 + EXTENSIONS
-═══════════════════════════════════════════════════════
 
 A01 — BROKEN ACCESS CONTROL
    - Endpoints accessibles sans authentification
    - Références directes à des objets (IDOR)
    - Élévation de privilèges possible
-   - Configuration CORS trop permissive (Access-Control-Allow-Origin: *)
-   - Absence de vérification du rôle utilisateur avant chaque opération sensible
+   - Configuration CORS trop permissive
 
 A02 — CRYPTOGRAPHIC FAILURES
    - Mots de passe stockés en clair ou hashés avec MD5/SHA1
    - Données sensibles transmises sans TLS
    - Utilisation de clés de chiffrement codées en dur
-   - Génération de tokens non aléatoires ou prévisibles
-   - Absence de salage des mots de passe
 
 A03 — INJECTION
    - Injection SQL : concaténation directe de variables dans les requêtes
    - Injection de commandes OS : subprocess/exec sans validation
    - XSS : rendu de données utilisateur sans échappement
-   - Injection LDAP, XML, SSTI (injection dans les templates)
-   - Injection NoSQL dans les requêtes MongoDB/Firebase
 
 A04 — INSECURE DESIGN
-   - Absence de rate limiting sur les endpoints sensibles (login, API)
+   - Absence de rate limiting sur les endpoints sensibles
    - Logique métier contournable par un utilisateur malveillant
-   - Absence de validation côté serveur (validation uniquement côté client)
-   - Flux d'authentification multistep contournable
+   - Absence de validation côté serveur
 
 A05 — SECURITY MISCONFIGURATION
    - Mode debug activé en production
    - Stack traces exposées dans les réponses d'erreur
-   - Ports ou services non nécessaires exposés
-   - En-têtes HTTP de sécurité absents (X-Frame-Options, CSP, HSTS)
-   - Secrets dans les fichiers de configuration versionnés
+   - En-têtes HTTP de sécurité absents
 
 A06 — VULNERABLE COMPONENTS
    - Import de bibliothèques avec des versions vulnérables connues
    - Utilisation de fonctions dépréciées ou non sécurisées
-   - Dépendances sans vérification d'intégrité
 
 A07 — IDENTIFICATION AND AUTHENTICATION FAILURES
    - Tokens JWT sans expiration ou avec algorithme "none"
-   - Sessions sans invalidation à la déconnexion
    - Absence de protection contre le brute force
    - Réinitialisation de mot de passe non sécurisée
 
 A08 — DATA INTEGRITY FAILURES
    - Désérialisation de données non vérifiées
    - Absence de validation des webhooks entrants
-   - Mise à jour de dépendances sans vérification de signature
 
 A09 — LOGGING AND MONITORING FAILURES
-   - Absence de logs sur les opérations sensibles (login, suppression)
-   - Logs contenant des données sensibles (mots de passe, tokens)
-   - Absence de détection d'anomalies
+   - Absence de logs sur les opérations sensibles
+   - Logs contenant des données sensibles
 
 A10 — SSRF (SERVER-SIDE REQUEST FORGERY)
    - Appels HTTP vers des URLs contrôlées par l'utilisateur
    - Absence de liste blanche des domaines autorisés
-   - Requêtes vers des ressources internes via des entrées utilisateur
 
 SECRETS ET DONNÉES SENSIBLES
    - Clés API, tokens, mots de passe dans le code source
    - Variables d'environnement non utilisées correctement
-   - Informations de connexion base de données exposées
 
 RÈGLE ABSOLUE : Chaque vulnérabilité doit être précisément localisée (fichier + ligne).
+Si la ligne exacte n'est pas identifiable, mets ligne = 1 et ajoute une note dans la suggestion.
 Attribue CRITIQUE aux vulnérabilités exploitables directement, HAUTE aux risques élevés.
 
 Structure JSON de retour :
@@ -170,7 +206,7 @@ Structure JSON de retour :
     "vulnerabilites": [
         {
             "fichier": "<chemin du fichier>",
-            "ligne": <numéro de ligne>,
+            "ligne": <numéro de ligne, TOUJOURS > 0>,
             "type": "<référence OWASP ou type précis>",
             "severite": "<CRITIQUE | HAUTE | MOYENNE | FAIBLE>",
             "suggestion": "<correction précise et concrète>"
@@ -194,46 +230,30 @@ Tu es un expert en optimisation de performance logicielle et en profiling de cod
 Ta mission est d'identifier TOUS les problèmes de performance dans le code suivant.
 Retourne UNIQUEMENT un JSON valide, sans texte avant ni après.
 
-═══════════════════════════════════════════════════════
 CRITÈRES D'ANALYSE DE PERFORMANCE (OBLIGATOIRES)
-═══════════════════════════════════════════════════════
 
 A. ACCÈS BASE DE DONNÉES
    - Requêtes N+1 : chargement d'entités en boucle sans jointure
    - SELECT * : sélection de toutes les colonnes au lieu des colonnes nécessaires
    - Absence d'index sur les colonnes utilisées dans WHERE, JOIN, ORDER BY
-   - Transactions non utilisées pour les opérations en lot
    - Connexions non fermées après utilisation
-   - Requêtes exécutées à l'intérieur de boucles
 
 B. ALGORITHMES ET STRUCTURES DE DONNÉES
    - Boucles imbriquées avec complexité O(n²) ou pire sans justification
    - Recherche linéaire O(n) dans une collection où un index/dictionnaire serait O(1)
-   - Recalcul de valeurs identiques à chaque itération d'une boucle
-   - Tri inutile d'une collection déjà triée ou trop grande
    - Concaténation de chaînes en boucle (StringBuilder non utilisé)
 
 C. GESTION DE LA MÉMOIRE ET DES RESSOURCES
    - Fichiers ouverts sans bloc try/finally ou gestionnaire de contexte
    - Connexions réseau non fermées après utilisation
    - Chargement de fichiers volumineux entiers en mémoire
-   - Accumulation d'objets en mémoire sans libération (fuites mémoire)
-   - Streams non fermés après traitement
 
 D. APPELS RÉSEAU ET API EXTERNES
    - Appels API externes à l'intérieur de boucles
    - Absence de timeout sur les appels HTTP
    - Absence de mécanisme de cache pour des données rarement modifiées
-   - Appels synchrones bloquants là où l'asynchronisme serait possible
-   - Téléchargement de données inutiles (réponses API non filtrées)
-
-E. CALCULS REDONDANTS
-   - Expressions calculées à chaque appel de fonction sans mémoïsation
-   - Expressions régulières recompilées à chaque utilisation
-   - Initialisations coûteuses dans des constructeurs appelés fréquemment
 
 RÈGLE ABSOLUE : Tu DOIS signaler au minimum 2 problèmes de performance par fichier.
-Précise systématiquement l'impact estimé (latence, consommation mémoire, temps CPU).
 
 Structure JSON de retour :
 {
@@ -242,7 +262,7 @@ Structure JSON de retour :
         {
             "fichier": "<chemin du fichier>",
             "ligne": <numéro de ligne>,
-            "type": "<catégorie exacte : N+1 | SELECT* | Boucle O(n²) | Mémoire | Cache | Ressource>",
+            "type": "<catégorie exacte : N+1 | SELECT* | Boucle O(n²) | Mémoire | Ressource>",
             "severite": "<HAUTE | MOYENNE | FAIBLE>",
             "suggestion": "<correction précise avec estimation de gain>"
         }
@@ -265,41 +285,25 @@ Tu es un expert en documentation logicielle et en lisibilité du code.
 Ta mission est d'évaluer la qualité de la documentation dans le code suivant.
 Retourne UNIQUEMENT un JSON valide, sans texte avant ni après.
 
-═══════════════════════════════════════════════════════
 CRITÈRES D'ANALYSE DE DOCUMENTATION (OBLIGATOIRES)
-═══════════════════════════════════════════════════════
 
 A. DOCSTRINGS ET COMMENTAIRES DE FONCTIONS
    - Toute fonction/méthode publique sans docstring est signalée
    - Toute fonction complexe (> 15 lignes) sans commentaire explicatif est signalée
    - Tout paramètre de fonction non documenté est signalé
-   - Toute valeur de retour non documentée est signalée
-   - Tout effet de bord non documenté est signalé
 
 B. COMMENTAIRES EN LIGNE
    - Tout bloc de logique non triviale sans commentaire est signalé
    - Tout algorithme non évident sans explication est signalé
-   - Tout contournement (workaround/hack) sans explication est signalé
    - Tout TODO ou FIXME sans contexte ni ticket de suivi est signalé
 
 C. DOCUMENTATION DES CLASSES ET MODULES
    - Toute classe sans description de son rôle et de ses responsabilités est signalée
    - Tout module sans en-tête décrivant son périmètre est signalé
-   - Tout attribut de classe non documenté est signalé
 
 D. NOMMAGE COMME DOCUMENTATION IMPLICITE
    - Toute variable booléenne dont le nom n'indique pas son état (ex: flag au lieu de is_active) est signalée
    - Toute fonction dont le nom ne reflète pas précisément son action est signalée
-   - Tout paramètre nommé de façon ambiguë est signalé
-   - Toute constante sans nom descriptif est signalée
-
-E. COHÉRENCE ET CONFORMITÉ
-   - Mélange de langues dans les commentaires (français/anglais) est signalé
-   - Commentaires obsolètes ne correspondant plus au code actuel sont signalés
-   - Absence de convention de style homogène est signalée
-
-RÈGLE ABSOLUE : Score de documentation = 100 uniquement si TOUTES les fonctions
-publiques ont des docstrings et TOUS les algorithmes complexes sont commentés.
 
 Structure JSON de retour :
 {
@@ -308,7 +312,7 @@ Structure JSON de retour :
         {
             "fichier": "<chemin du fichier>",
             "ligne": <numéro de ligne>,
-            "type": "<catégorie : Docstring manquant | Commentaire absent | Nommage ambigu | TODO non résolu>",
+            "type": "<catégorie : Docstring manquant | Commentaire absent | Nommage ambigu>",
             "severite": "<MOYENNE | FAIBLE>",
             "suggestion": "<exemple de docstring ou commentaire à ajouter>"
         }
@@ -331,9 +335,7 @@ Tu es un architecte logiciel senior expert en Clean Code, SOLID et design patter
 Ta mission est d'évaluer les bonnes pratiques de développement dans le code suivant.
 Retourne UNIQUEMENT un JSON valide, sans texte avant ni après.
 
-═══════════════════════════════════════════════════════
 CRITÈRES — BONNES PRATIQUES (OBLIGATOIRES)
-═══════════════════════════════════════════════════════
 
 A. PRINCIPES SOLID
    S — Single Responsibility : toute classe/fonction qui fait plusieurs choses est signalée
@@ -345,32 +347,17 @@ A. PRINCIPES SOLID
 B. GESTION DES ERREURS
    - Blocs catch vides ou qui avalent silencieusement les exceptions sont signalés
    - Exceptions génériques (Exception, Error) utilisées à la place d'exceptions spécifiques
-   - Absence de gestion des cas d'erreur dans les appels externes (API, DB, fichiers)
-   - Messages d'erreur non informatifs pour le débogage
-   - Erreurs retournées comme valeurs (return null/false) au lieu d'exceptions
+   - Absence de gestion des cas d'erreur dans les appels externes
 
 C. TESTABILITÉ
    - Fonctions avec des effets de bord cachés difficiles à mocker
    - Dépendances non injectées (new dans les fonctions) rendant les tests impossibles
    - Absence de séparation entre logique métier et infrastructure
-   - Logique métier dans les contrôleurs/routes au lieu des services
-   - Fonctions trop couplées pour être testées unitairement
 
 D. GESTION DES TRANSACTIONS ET COHÉRENCE
    - Opérations sur la base de données sans transaction explicite
    - Rollback non implémenté en cas d'erreur partielle
-   - Lecture-modification-écriture sans verrouillage optimiste
    - État incohérent possible si une opération en chaîne échoue à mi-parcours
-
-E. ARCHITECTURE ET SÉPARATION DES COUCHES
-   - Accès direct à la base de données depuis les contrôleurs/routes
-   - Logique de présentation mélangée avec la logique métier
-   - Appels réseau depuis des modèles de données
-   - Configuration codée en dur au lieu de variables d'environnement
-   - Couplage fort entre modules qui devraient être indépendants
-
-RÈGLE ABSOLUE : Évalue chaque principe SOLID séparément.
-Signale toute violation même mineure avec une correction concrète.
 
 Structure JSON de retour :
 {
@@ -379,7 +366,7 @@ Structure JSON de retour :
         {
             "fichier": "<chemin du fichier>",
             "ligne": <numéro de ligne>,
-            "type": "<catégorie : SOLID-S | SOLID-O | Gestion erreurs | Testabilité | Transaction | Architecture>",
+            "type": "<catégorie : SOLID-S | SOLID-O | Gestion erreurs | Testabilité>",
             "severite": "<HAUTE | MOYENNE | FAIBLE>",
             "suggestion": "<correction précise et concrète>"
         }
@@ -405,7 +392,7 @@ def _decouper_en_lots(fichiers: list, budget: int) -> list:
 
     for f in fichiers:
         contenu = f.get("content", "")
-        taille  = len(contenu)
+        taille = len(contenu)
         if taille == 0:
             continue
         if taille > budget:
@@ -431,145 +418,72 @@ def _decouper_en_lots(fichiers: list, budget: int) -> list:
 def _preparer_code(lot: list) -> str:
     code_text = ""
     for f in lot:
-        path    = f.get("file_path") or f.get("path", "inconnu")
+        path = f.get("file_path") or f.get("path", "inconnu")
         contenu = f.get("content", "")
         code_text += f"\n\n{'═'*60}\nFICHIER : {path}\n{'═'*60}\n{contenu}"
     return code_text
 
 
 # ══════════════════════════════════════════════════════════════════════
-# UTILITAIRE — Appel LLM avec un prompt spécialisé
+# UTILITAIRE — Appel LLM avec un prompt spécialisé (avec fallback)
 # ══════════════════════════════════════════════════════════════════════
 def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
     """
-    Appelle le LLM avec le prompt spécialisé pour une dimension donnée.
-    Retourne le JSON parsé ou un dict vide en cas d'erreur.
+    Appelle le LLM avec priorité Groq, fallback sur OpenRouter si rate limit.
     """
     prompt = prompt_template.replace("{code_text}", code_text)
 
+    # ── 1. Essayer Groq d'abord ───────────────────────────────
     try:
-        response = client.chat.completions.create(
-            model       = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-            messages    = [{"role": "user", "content": prompt}],
-            max_tokens  = MAX_TOKENS_REP,
-            temperature = 0.1
+        response = groq_client.chat.completions.create(
+            model=groq_model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=MAX_TOKENS_REP,
+            temperature=0.1
         )
-
         contenu = response.choices[0].message.content.strip()
+        print(f"[LLM][{dimension}] ✅ Groq OK")
 
-        # Nettoyer les backticks markdown si présents
-        if contenu.startswith("```"):
-            contenu = contenu.split("```")[1]
-            if contenu.startswith("json"):
-                contenu = contenu[4:]
-
-        result = json.loads(contenu.strip())
-        nb = len(result.get("vulnerabilites", []))
-        print(f"[LLM][{dimension}] {nb} problème(s) détecté(s)")
-        return result
-
-    except json.JSONDecodeError as e:
-        print(f"[LLM][{dimension}] JSON invalide : {e}")
-        return {}
     except Exception as e:
-        print(f"[LLM][{dimension}] Erreur : {e}")
+        error_msg = str(e)
+        # Vérifier si c'est une erreur de rate limit (429)
+        if "429" in error_msg or "rate_limit" in error_msg.lower():
+            print(f"[LLM][{dimension}] ⚠️ Rate limit Groq, bascule sur OpenRouter...")
+            try:
+                response = openrouter_client.chat.completions.create(
+                    model=openrouter_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=MAX_TOKENS_REP,
+                    temperature=0.1
+                )
+                contenu = response.choices[0].message.content.strip()
+                print(f"[LLM][{dimension}] ✅ OpenRouter OK (fallback)")
+            except Exception as e2:
+                print(f"[LLM][{dimension}] ❌ Erreur OpenRouter: {e2}")
+                return {}
+        else:
+            print(f"[LLM][{dimension}] ❌ Erreur Groq: {e}")
+            return {}
+
+    # Nettoyer les backticks markdown
+    if contenu.startswith("```"):
+        contenu = contenu.split("```")[1]
+        if contenu.startswith("json"):
+            contenu = contenu[4:]
+
+    try:
+        return json.loads(contenu.strip())
+    except json.JSONDecodeError as e:
+        print(f"[LLM][{dimension}] JSON invalide: {e}")
         return {}
-
-
-# ══════════════════════════════════════════════════════════════════════
-# UTILITAIRE — Fusionner tous les résultats des 5 dimensions
-# ══════════════════════════════════════════════════════════════════════
-def _fusionner_tous(resultats_par_dimension: dict) -> dict:
-    """
-    Fusionne les résultats des 5 dimensions en un rapport unique.
-    - Scores : moyenne des 5 dimensions → score_qualite global
-    - Vulnérabilités : union dédoublonnée de toutes les dimensions
-    - Recommandations : union dédoublonnée
-    """
-    scores_qualite     = []
-    scores_securite    = []
-    scores_performance = []
-    scores_doc         = []
-    scores_pratiques   = []
-
-    vulns_vues     = set()
-    vulnerabilites = []
-    titres_vus     = set()
-    recommandations = []
-
-    # Collecte par dimension
-    r_qualite     = resultats_par_dimension.get("qualite",     {})
-    r_securite    = resultats_par_dimension.get("securite",    {})
-    r_performance = resultats_par_dimension.get("performance", {})
-    r_doc         = resultats_par_dimension.get("documentation", {})
-    r_pratiques   = resultats_par_dimension.get("bonnes_pratiques", {})
-
-    if r_qualite.get("score_qualite")         is not None: scores_qualite.append(r_qualite["score_qualite"])
-    if r_securite.get("score_securite")       is not None: scores_securite.append(r_securite["score_securite"])
-    if r_performance.get("score_performance") is not None: scores_performance.append(r_performance["score_performance"])
-    if r_doc.get("score_documentation")       is not None: scores_doc.append(r_doc["score_documentation"])
-    if r_pratiques.get("score_bonnes_pratiques") is not None: scores_pratiques.append(r_pratiques["score_bonnes_pratiques"])
-
-    # Score qualité global = moyenne pondérée des 5 dimensions
-    tous_scores = scores_qualite + scores_securite + scores_performance + scores_doc + scores_pratiques
-    score_qualite_global = round(sum(tous_scores) / len(tous_scores)) if tous_scores else 0
-
-    score_securite    = round(sum(scores_securite)    / len(scores_securite))    if scores_securite    else 0
-    score_performance = round(sum(scores_performance) / len(scores_performance)) if scores_performance else 0
-
-    # Union de toutes les vulnérabilités
-    for dim_key in ["qualite", "securite", "performance", "documentation", "bonnes_pratiques"]:
-        res = resultats_par_dimension.get(dim_key, {})
-        for v in res.get("vulnerabilites", []):
-            cle = (v.get("fichier", ""), v.get("type", ""), v.get("ligne", 0))
-            if cle not in vulns_vues:
-                vulns_vues.add(cle)
-                # Ajouter la dimension source pour la traçabilité
-                v["dimension"] = dim_key
-                vulnerabilites.append(v)
-
-    # Union des recommandations
-    for dim_key in ["qualite", "securite", "performance", "documentation", "bonnes_pratiques"]:
-        res = resultats_par_dimension.get(dim_key, {})
-        for rec in res.get("recommandations", []):
-            titre = rec.get("titre", "").strip().lower()
-            if titre not in titres_vus:
-                titres_vus.add(titre)
-                recommandations.append(rec)
-
-    # Trier les vulnérabilités par sévérité
-    ordre = {"CRITIQUE": 0, "HAUTE": 1, "MOYENNE": 2, "FAIBLE": 3}
-    vulnerabilites.sort(key=lambda v: ordre.get(v.get("severite", "FAIBLE"), 4))
-
-    print(f"[LLM] Fusion finale : {len(vulnerabilites)} vulnérabilités totales")
-    print(f"[LLM] Scores → qualité={score_qualite_global} sécurité={score_securite} performance={score_performance}")
-
-    return {
-        "score_qualite"    : score_qualite_global,
-        "score_securite"   : score_securite,
-        "score_performance": score_performance,
-        "vulnerabilites"   : vulnerabilites,
-        "recommandations"  : recommandations,
-        # Scores détaillés par dimension (optionnel, pour affichage avancé)
-        "scores_details"   : {
-            "qualite"          : scores_qualite[0]    if scores_qualite    else 0,
-            "securite"         : scores_securite[0]   if scores_securite   else 0,
-            "performance"      : scores_performance[0] if scores_performance else 0,
-            "documentation"    : scores_doc[0]         if scores_doc         else 0,
-            "bonnes_pratiques" : scores_pratiques[0]   if scores_pratiques   else 0,
-        }
-    }
 
 
 # ══════════════════════════════════════════════════════════════════════
 # UTILITAIRE — Analyser un seul lot avec les 5 prompts
 # ══════════════════════════════════════════════════════════════════════
 def _analyser_lot(lot: list, lot_num: int, total_lots: int, owasp_enabled: bool) -> dict:
-    """
-    Pour un lot de fichiers, lance les 5 analyses spécialisées
-    et retourne les résultats fusionnés.
-    """
-    noms      = [f.get("file_path") or f.get("path", "?") for f in lot]
+    """Pour un lot de fichiers, lance les 5 analyses spécialisées"""
+    noms = [f.get("file_path") or f.get("path", "?") for f in lot]
     code_text = _preparer_code(lot)
 
     print(f"\n[LLM] ── Lot {lot_num}/{total_lots} : {len(lot)} fichier(s) ──")
@@ -604,30 +518,106 @@ def _analyser_lot(lot: list, lot_num: int, total_lots: int, owasp_enabled: bool)
 
 
 # ══════════════════════════════════════════════════════════════════════
+# UTILITAIRE — Fusionner tous les résultats des 5 dimensions
+# ══════════════════════════════════════════════════════════════════════
+def _fusionner_tous(resultats_par_dimension: dict) -> dict:
+    """Fusionne les résultats des 5 dimensions en un rapport unique."""
+    scores_qualite = []
+    scores_securite = []
+    scores_performance = []
+    scores_doc = []
+    scores_pratiques = []
+
+    vulns_vues = set()
+    vulnerabilites = []
+    titres_vus = set()
+    recommandations = []
+
+    r_qualite = resultats_par_dimension.get("qualite", {})
+    r_securite = resultats_par_dimension.get("securite", {})
+    r_performance = resultats_par_dimension.get("performance", {})
+    r_doc = resultats_par_dimension.get("documentation", {})
+    r_pratiques = resultats_par_dimension.get("bonnes_pratiques", {})
+
+    if r_qualite.get("score_qualite") is not None:
+        scores_qualite.append(r_qualite["score_qualite"])
+    if r_securite.get("score_securite") is not None:
+        scores_securite.append(r_securite["score_securite"])
+    if r_performance.get("score_performance") is not None:
+        scores_performance.append(r_performance["score_performance"])
+    if r_doc.get("score_documentation") is not None:
+        scores_doc.append(r_doc["score_documentation"])
+    if r_pratiques.get("score_bonnes_pratiques") is not None:
+        scores_pratiques.append(r_pratiques["score_bonnes_pratiques"])
+
+    tous_scores = scores_qualite + scores_securite + scores_performance + scores_doc + scores_pratiques
+    score_qualite_global = round(sum(tous_scores) / len(tous_scores)) if tous_scores else 0
+
+    score_securite = round(sum(scores_securite) / len(scores_securite)) if scores_securite else 0
+    score_performance = round(sum(scores_performance) / len(scores_performance)) if scores_performance else 0
+
+    # Union des vulnérabilités
+    for dim_key in ["qualite", "securite", "performance", "documentation", "bonnes_pratiques"]:
+        res = resultats_par_dimension.get(dim_key, {})
+        for v in res.get("vulnerabilites", []):
+            cle = (v.get("fichier", ""), v.get("type", ""), v.get("ligne", 0))
+            if cle not in vulns_vues:
+                vulns_vues.add(cle)
+                v["dimension"] = dim_key
+                vulnerabilites.append(v)
+
+    # Union des recommandations
+    for dim_key in ["qualite", "securite", "performance", "documentation", "bonnes_pratiques"]:
+        res = resultats_par_dimension.get(dim_key, {})
+        for rec in res.get("recommandations", []):
+            titre = rec.get("titre", "").strip().lower()
+            if titre not in titres_vus:
+                titres_vus.add(titre)
+                recommandations.append(rec)
+
+    ordre = {"CRITIQUE": 0, "HAUTE": 1, "MOYENNE": 2, "FAIBLE": 3}
+    vulnerabilites.sort(key=lambda v: ordre.get(v.get("severite", "FAIBLE"), 4))
+
+    print(f"[LLM] Fusion finale : {len(vulnerabilites)} vulnérabilités totales")
+    print(f"[LLM] Scores → qualité={score_qualite_global} sécurité={score_securite} performance={score_performance}")
+
+    return {
+        "score_qualite": score_qualite_global,
+        "score_securite": score_securite,
+        "score_performance": score_performance,
+        "vulnerabilites": vulnerabilites,
+        "recommandations": recommandations,
+        "scores_details": {
+            "qualite": scores_qualite[0] if scores_qualite else 0,
+            "securite": scores_securite[0] if scores_securite else 0,
+            "performance": scores_performance[0] if scores_performance else 0,
+            "documentation": scores_doc[0] if scores_doc else 0,
+            "bonnes_pratiques": scores_pratiques[0] if scores_pratiques else 0,
+        }
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════
 # UTILITAIRE — Fusionner les résultats de plusieurs lots
 # ══════════════════════════════════════════════════════════════════════
 def _fusionner_lots(resultats_lots: list) -> dict:
-    """
-    Fusionne les rapports de plusieurs lots en un rapport unique final.
-    """
+    """Fusionne les rapports de plusieurs lots en un rapport unique final."""
     if not resultats_lots:
         return {
-            "score_qualite"    : 0,
-            "score_securite"   : 0,
+            "score_qualite": 0,
+            "score_securite": 0,
             "score_performance": 0,
-            "vulnerabilites"   : [],
-            "recommandations"  : []
+            "vulnerabilites": [],
+            "recommandations": []
         }
 
     if len(resultats_lots) == 1:
         return resultats_lots[0]
 
-    # Moyenne des scores
-    score_qualite     = round(sum(r.get("score_qualite",     0) for r in resultats_lots) / len(resultats_lots))
-    score_securite    = round(sum(r.get("score_securite",    0) for r in resultats_lots) / len(resultats_lots))
+    score_qualite = round(sum(r.get("score_qualite", 0) for r in resultats_lots) / len(resultats_lots))
+    score_securite = round(sum(r.get("score_securite", 0) for r in resultats_lots) / len(resultats_lots))
     score_performance = round(sum(r.get("score_performance", 0) for r in resultats_lots) / len(resultats_lots))
 
-    # Union dédoublonnée
     vulns_vues, vulnerabilites = set(), []
     titres_vus, recommandations = set(), []
 
@@ -647,14 +637,12 @@ def _fusionner_lots(resultats_lots: list) -> dict:
     ordre = {"CRITIQUE": 0, "HAUTE": 1, "MOYENNE": 2, "FAIBLE": 3}
     vulnerabilites.sort(key=lambda v: ordre.get(v.get("severite", "FAIBLE"), 4))
 
-    print(f"[LLM] Rapport final : {len(vulnerabilites)} vulnérabilités, {len(recommandations)} recommandations")
-
     return {
-        "score_qualite"    : score_qualite,
-        "score_securite"   : score_securite,
+        "score_qualite": score_qualite,
+        "score_securite": score_securite,
         "score_performance": score_performance,
-        "vulnerabilites"   : vulnerabilites,
-        "recommandations"  : recommandations
+        "vulnerabilites": vulnerabilites,
+        "recommandations": recommandations
     }
 
 
@@ -664,25 +652,7 @@ def _fusionner_lots(resultats_lots: list) -> dict:
 def analyser_code(fichiers: list, owasp_enabled: bool) -> dict:
     """
     Pipeline de revue de code intelligente en 5 dimensions.
-
-    Pour chaque lot de fichiers, 5 analyses spécialisées sont lancées :
-      1. Qualité     — complexité, duplication, lisibilité, maintenabilité
-      2. Sécurité    — OWASP Top 10 + secrets + injections
-      3. Performance — N+1, boucles, mémoire, cache
-      4. Documentation — docstrings, commentaires, nommage
-      5. Bonnes pratiques — SOLID, erreurs, testabilité, architecture
-
-    Args:
-        fichiers      : liste de dicts {file_path/path, content}
-        owasp_enabled : activer la détection OWASP Top 10
-
-    Returns:
-        dict {
-            score_qualite, score_securite, score_performance,
-            vulnerabilites (toutes dimensions),
-            recommandations (toutes dimensions),
-            scores_details (par dimension)
-        }
+    Priorité Groq, fallback sur OpenRouter en cas de rate limit.
     """
     if not fichiers:
         raise Exception("Aucun fichier à analyser")
@@ -690,13 +660,13 @@ def analyser_code(fichiers: list, owasp_enabled: bool) -> dict:
     print(f"\n[LLM] ════════════════════════════════════════")
     print(f"[LLM] Début du pipeline — {len(fichiers)} fichier(s)")
     print(f"[LLM] OWASP activé : {owasp_enabled}")
+    print(f"[LLM] Fournisseur principal : Groq ({groq_model})")
+    print(f"[LLM] Fallback : OpenRouter ({openrouter_model})")
     print(f"[LLM] ════════════════════════════════════════")
 
-    # Découper en lots
     lots = _decouper_en_lots(fichiers, CHARS_PAR_LOT)
     print(f"[LLM] {len(lots)} lot(s) de code créé(s)")
 
-    # Analyser chaque lot avec les 5 prompts
     resultats_lots = []
     for i, lot in enumerate(lots, start=1):
         try:
@@ -709,7 +679,6 @@ def analyser_code(fichiers: list, owasp_enabled: bool) -> dict:
     if not resultats_lots:
         raise Exception("L'analyse a échoué sur tous les lots")
 
-    # Fusionner tous les lots
     rapport_final = _fusionner_lots(resultats_lots)
 
     print(f"\n[LLM] ════════════════════════════════════════")

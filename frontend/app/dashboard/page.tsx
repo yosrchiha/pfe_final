@@ -1,3 +1,4 @@
+// frontend/app/dashboard/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -27,21 +28,13 @@ interface Analyse {
   created_at        : string;
 }
 
-interface Depot {
-  id: number;
-  nom: string;
-  url_branche_principale: string;
-  proprietaire_id: number;
-}
-
 const menuItems = [
-  { key: "dashboard",      label: "Vue d'ensemble",  icon: "▦" },
-  { key: "repositories",   label: "Dépôts",          icon: "◈" },
-  { key: "analyses",       label: "Analyses",        icon: "◎" },
-  { key: "issues",         label: "Issues",          icon: "◇" },
-  { key: "merge_requests", label: "Merge Requests",  icon: "⟁" },
-  { key: "pipelines",      label: "Pipelines",       icon: "⊞" },
-  { key: "settings",       label: "Configuration",   icon: "⊙" },
+  { key: "dashboard",      label: "Tableau de bord",  icon: "▦", href: "/dashboard" },
+  { key: "repositories",   label: "Dépôts",          icon: "◈", href: "/depots" },
+  { key: "analyses",       label: "Analyse",         icon: "◎", href: "/analyse" },
+  { key: "tests",          label: "Tests",           icon: "🧪", href: "/TestsPaage" },
+  { key: "issues",         label: "Issues",          icon: "◇", href: "/issues" },
+  { key: "merge_requests", label: "Merge Requests",  icon: "⟁", href: "/merge-requests" },
 ];
 
 export default function Dashboard() {
@@ -50,7 +43,6 @@ export default function Dashboard() {
 
   const [username,     setUsername]     = useState("Utilisateur");
   const [activeMenu,   setActiveMenu]   = useState("dashboard");
-  const [depots,       setDepots]       = useState<Depot[]>([]);
   const [projets,      setProjets]      = useState<DepotAnalyse[]>([]);
   const [analyses,     setAnalyses]     = useState<Analyse[]>([]);
   const [projetActif,  setProjetActif]  = useState<DepotAnalyse | null>(null);
@@ -75,19 +67,11 @@ export default function Dashboard() {
         setUsername(res.data.username ?? "Utilisateur");
         localStorage.setItem("user_id", String(res.data.id));
         fetchProjets(res.data.id);
-      } catch {}
+      } catch {
+        router.push("/login");
+      }
     };
     fetchUser();
-  }, []);
-
-  useEffect(() => {
-    const fetchDepots = async () => {
-      try {
-        const res = await axios.get(`${API}/depots/`, { headers: headers() });
-        setDepots(res.data);
-      } catch {}
-    };
-    fetchDepots();
   }, []);
 
   const fetchProjets = async (userId: number) => {
@@ -128,214 +112,661 @@ export default function Dashboard() {
     ? Math.round(analyses.reduce((a, b) => a + (b.score_qualite || 0), 0) / analyses.length)
     : 0;
 
-  const c = (s: number) => {
-    if (!s && s !== 0) return "#3a3f60";
-    if (s >= 75) return "#00d4aa";
-    if (s >= 50) return "#ffd166";
-    return "#ff6b6b";
+  const colorScore = (s: number) => {
+    if (!s && s !== 0) return "#94a3b8";
+    if (s >= 75) return "#10b981";
+    if (s >= 50) return "#f59e0b";
+    return "#ef4444";
   };
 
-  const cSev = (s: string) => {
-    if (s === "CRITIQUE") return "#ff6b6b";
+  const colorSeverite = (s: string) => {
+    if (s === "CRITIQUE") return "#ef4444";
     if (s === "HAUTE")    return "#f97316";
-    if (s === "MOYENNE")  return "#ffd166";
-    return "#00d4aa";
+    if (s === "MOYENNE")  return "#eab308";
+    return "#10b981";
   };
 
   const stats = [
-    { label: "Projets analysés",  val: projets.length,                    col: "#6c63ff" },
-    { label: "Analyses totales",  val: analyses.length,                   col: "#00d4aa" },
-    { label: "Score moyen",       val: scoreMoyen ? `${scoreMoyen}%` : "—", col: c(scoreMoyen) },
-    { label: "Vulnérabilités",    val: totalVulns,                        col: totalVulns > 0 ? "#ff6b6b" : "#00d4aa" },
+    { label: "Projets analysés",  value: projets.length, icon: "📁", color: "#6366f1" },
+    { label: "Analyses totales",  value: analyses.length, icon: "🔍", color: "#10b981" },
+    { label: "Score moyen",       value: scoreMoyen ? `${scoreMoyen}%` : "—", icon: "⭐", color: colorScore(scoreMoyen) },
+    { label: "Vulnérabilités",    value: totalVulns, icon: "⚠️", color: totalVulns > 0 ? "#ef4444" : "#10b981" },
   ];
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-        :root {
-          --bg      : #070810;
-          --surface : #0d0f1c;
-          --card    : #111428;
-          --border  : #1e2240;
-          --border2 : #2a2f55;
-          --accent  : #6c63ff;
-          --green   : #00d4aa;
-          --red     : #ff6b6b;
-          --yellow  : #ffd166;
-          --text    : #e8eaf6;
-          --text2   : #7880a0;
-          --text3   : #3a3f60;
-          --mono    : 'JetBrains Mono', monospace;
-          --display : 'Syne', sans-serif;
+        .dashboard {
+          min-height: 100vh;
+          background: #f8fafc;
+          font-family: 'Inter', sans-serif;
+          color: #1e293b;
+          display: flex;
         }
 
-        body { background: var(--bg); }
-
-        .root { display: flex; height: 100vh; background: var(--bg); font-family: var(--display); color: var(--text); overflow: hidden; }
-
         /* SIDEBAR */
-        .sidebar { width: 220px; min-width: 220px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
-        .logo-area { padding: 22px 18px 20px; border-bottom: 1px solid var(--border); }
-        .logo-row { display: flex; align-items: center; gap: 10px; }
-        .logo-box { width: 34px; height: 34px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), var(--green)); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; color: #fff; flex-shrink: 0; box-shadow: 0 4px 14px #6c63ff30; }
-        .logo-name { font-size: 13px; font-weight: 700; color: var(--text); }
-        .logo-sub  { font-size: 9px; color: var(--text3); font-family: var(--mono); margin-top: 1px; }
-        .nav { padding: 14px 10px; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-        .nav-lbl { font-size: 8px; font-weight: 600; color: var(--text3); font-family: var(--mono); letter-spacing: 0.12em; text-transform: uppercase; padding: 0 8px 8px; }
-        .nav-btn { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 7px; background: transparent; border: none; color: var(--text3); font-family: var(--display); font-size: 12px; font-weight: 500; cursor: pointer; width: 100%; text-align: left; transition: all 0.15s; }
-        .nav-btn:hover { background: #ffffff06; color: var(--text2); }
-        .nav-btn.active { background: #6c63ff12; color: var(--text); box-shadow: inset 3px 0 0 var(--accent); }
-        .nav-icon { font-size: 13px; width: 18px; text-align: center; flex-shrink: 0; }
-        .sidebar-foot { padding: 12px 10px; border-top: 1px solid var(--border); }
-        .user-pill { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s; margin-bottom: 6px; }
-        .user-pill:hover { background: #ffffff06; }
-        .avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, var(--accent), var(--green)); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }
-        .u-name { font-size: 12px; font-weight: 600; color: var(--text2); }
-        .u-role { font-size: 9px; color: var(--text3); font-family: var(--mono); }
-        .btn-logout { width: 100%; padding: 8px 10px; display: flex; align-items: center; gap: 8px; background: transparent; border: 1px solid #ff6b6b18; border-radius: 7px; color: var(--red); font-family: var(--display); font-size: 11px; cursor: pointer; transition: all 0.15s; }
-        .btn-logout:hover { background: #ff6b6b08; border-color: #ff6b6b35; }
+        .sidebar {
+          width: 260px;
+          background: white;
+          border-right: 1px solid #eef2ff;
+          display: flex;
+          flex-direction: column;
+          position: sticky;
+          top: 0;
+          height: 100vh;
+        }
+        .logo-area {
+          padding: 24px 20px;
+          border-bottom: 1px solid #f1f5f9;
+        }
+        .logo {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .logo-icon {
+          width: 40px;
+          height: 40px;
+          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 700;
+          font-size: 18px;
+          color: white;
+        }
+        .logo-text {
+          font-size: 18px;
+          font-weight: 700;
+          color: #0f172a;
+          letter-spacing: -0.02em;
+        }
+        .logo-sub {
+          font-size: 10px;
+          color: #64748b;
+          margin-top: 2px;
+        }
+        .nav {
+          flex: 1;
+          padding: 24px 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .nav-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 12px;
+          border-radius: 10px;
+          background: transparent;
+          border: none;
+          width: 100%;
+          text-align: left;
+          font-size: 14px;
+          font-weight: 500;
+          color: #475569;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .nav-item:hover {
+          background: #f8fafc;
+          color: #0f172a;
+        }
+        .nav-item.active {
+          background: #eef2ff;
+          color: #6366f1;
+        }
+        .nav-icon {
+          font-size: 18px;
+          width: 28px;
+        }
+        .user-section {
+          padding: 20px;
+          border-top: 1px solid #f1f5f9;
+        }
+        .user-card {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 12px;
+          cursor: pointer;
+          padding: 8px;
+          border-radius: 12px;
+          transition: background 0.2s;
+        }
+        .user-card:hover {
+          background: #f8fafc;
+        }
+        .user-avatar {
+          width: 40px;
+          height: 40px;
+          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 600;
+          font-size: 16px;
+          color: white;
+        }
+        .user-info {
+          flex: 1;
+        }
+        .user-name {
+          font-size: 14px;
+          font-weight: 600;
+          color: #0f172a;
+        }
+        .user-email {
+          font-size: 11px;
+          color: #64748b;
+        }
+        .logout-btn {
+          width: 100%;
+          padding: 8px 12px;
+          background: #f1f5f9;
+          border: none;
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 500;
+          color: #ef4444;
+          cursor: pointer;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+        }
+        .logout-btn:hover {
+          background: #fee2e2;
+        }
 
         /* MAIN */
-        .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-        .topbar { display: flex; align-items: center; justify-content: space-between; padding: 14px 26px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
-        .page-title { font-size: 16px; font-weight: 700; color: var(--text); }
-        .page-sub   { font-size: 10px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
-        .topbar-btns { display: flex; gap: 8px; }
-        .btn-primary { padding: 7px 16px; background: var(--accent); border: none; border-radius: 7px; color: #fff; font-family: var(--display); font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
-        .btn-primary:hover { background: #5b52e0; }
-        .btn-ghost { padding: 7px 16px; background: transparent; border: 1px solid var(--border2); border-radius: 7px; color: var(--text2); font-family: var(--display); font-size: 12px; cursor: pointer; transition: all 0.15s; }
-        .btn-ghost:hover { border-color: var(--accent); color: var(--text); }
+        .main {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .topbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 20px 32px;
+          background: white;
+          border-bottom: 1px solid #eef2ff;
+        }
+        .page-title {
+          font-size: 24px;
+          font-weight: 700;
+          color: #0f172a;
+          letter-spacing: -0.02em;
+        }
+        .page-date {
+          font-size: 13px;
+          color: #64748b;
+          margin-top: 4px;
+        }
+        .topbar-btns {
+          display: flex;
+          gap: 12px;
+        }
+        .btn-primary {
+          padding: 10px 20px;
+          background: #0f172a;
+          border: none;
+          border-radius: 12px;
+          color: white;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .btn-primary:hover {
+          background: #1e293b;
+          transform: translateY(-1px);
+        }
+        .btn-secondary {
+          padding: 10px 20px;
+          background: #f1f5f9;
+          border: none;
+          border-radius: 12px;
+          color: #475569;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .btn-secondary:hover {
+          background: #e2e8f0;
+        }
 
-        .content { flex: 1; overflow-y: auto; padding: 22px 26px; }
-        .content::-webkit-scrollbar { width: 4px; }
-        .content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+        /* CONTENT */
+        .content {
+          flex: 1;
+          overflow-y: auto;
+          padding: 24px 32px;
+        }
+        .content::-webkit-scrollbar {
+          width: 6px;
+        }
+        .content::-webkit-scrollbar-track {
+          background: #f1f5f9;
+          border-radius: 3px;
+        }
+        .content::-webkit-scrollbar-thumb {
+          background: #cbd5e1;
+          border-radius: 3px;
+        }
 
         /* STATS */
-        .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
-        .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; position: relative; overflow: hidden; }
-        .stat-card::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--ac); }
-        .stat-num { font-size: 28px; font-weight: 800; color: var(--ac); font-family: var(--mono); line-height: 1; margin-bottom: 5px; }
-        .stat-lbl { font-size: 9px; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 20px;
+          margin-bottom: 32px;
+        }
+        .stat-card {
+          background: white;
+          border: 1px solid #eef2ff;
+          border-radius: 20px;
+          padding: 20px;
+          transition: all 0.2s;
+        }
+        .stat-card:hover {
+          border-color: #e2e8f0;
+          transform: translateY(-2px);
+        }
+        .stat-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .stat-icon {
+          font-size: 28px;
+        }
+        .stat-value {
+          font-size: 32px;
+          font-weight: 700;
+          color: #0f172a;
+          margin-bottom: 4px;
+        }
+        .stat-label {
+          font-size: 12px;
+          color: #64748b;
+          font-weight: 500;
+        }
 
-        /* GRID */
-        .dash-grid { display: grid; grid-template-columns: 250px 1fr; gap: 14px; height: calc(100vh - 198px); }
+        /* DASHBOARD GRID */
+        .dashboard-grid {
+          display: grid;
+          grid-template-columns: 280px 1fr;
+          gap: 24px;
+          height: calc(100vh - 180px);
+        }
 
-        /* PROJETS */
-        .projets-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-        .panel-head { padding: 13px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-        .panel-head-title { font-size: 9px; font-weight: 700; color: var(--text2); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.1em; }
-        .panel-count { font-size: 9px; color: var(--text3); font-family: var(--mono); background: var(--surface); padding: 2px 7px; border-radius: 10px; border: 1px solid var(--border); }
-        .projets-scroll { flex: 1; overflow-y: auto; }
-        .projets-scroll::-webkit-scrollbar { width: 3px; }
-        .projets-scroll::-webkit-scrollbar-thumb { background: var(--border); }
-        .projet-item { padding: 12px 14px; cursor: pointer; border-bottom: 1px solid var(--border); transition: all 0.15s; border-left: 3px solid transparent; }
-        .projet-item:last-child { border-bottom: none; }
-        .projet-item:hover { background: #ffffff04; }
-        .projet-item.actif { background: #6c63ff08; border-left-color: var(--accent); }
-        .projet-nom { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .projet-url { font-size: 9px; color: var(--text3); font-family: var(--mono); margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .projet-tags { display: flex; gap: 5px; }
-        .tag { font-size: 8px; font-family: var(--mono); padding: 2px 7px; border-radius: 10px; font-weight: 500; }
-        .tag-branch { color: var(--green); background: #00d4aa0d; border: 1px solid #00d4aa20; }
-        .tag-date   { color: var(--text3); background: var(--surface); border: 1px solid var(--border); }
+        /* PROJETS PANEL */
+        .projets-panel {
+          background: white;
+          border: 1px solid #eef2ff;
+          border-radius: 20px;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+        .panel-header {
+          padding: 16px 20px;
+          border-bottom: 1px solid #f1f5f9;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .panel-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .panel-badge {
+          background: #f1f5f9;
+          padding: 4px 10px;
+          border-radius: 20px;
+          font-size: 11px;
+          font-weight: 500;
+          color: #475569;
+        }
+        .projets-list {
+          flex: 1;
+          overflow-y: auto;
+        }
+        .projet-item {
+          padding: 14px 16px;
+          cursor: pointer;
+          border-bottom: 1px solid #f8fafc;
+          transition: all 0.2s;
+          border-left: 3px solid transparent;
+        }
+        .projet-item:hover {
+          background: #faf9fe;
+        }
+        .projet-item.active {
+          background: #eef2ff;
+          border-left-color: #6366f1;
+        }
+        .projet-name {
+          font-size: 14px;
+          font-weight: 600;
+          color: #0f172a;
+          margin-bottom: 4px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .projet-url {
+          font-size: 11px;
+          color: #64748b;
+          font-family: monospace;
+          margin-bottom: 8px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .projet-meta {
+          display: flex;
+          gap: 6px;
+        }
+        .meta-tag {
+          font-size: 10px;
+          padding: 2px 8px;
+          background: #f1f5f9;
+          border-radius: 12px;
+          color: #475569;
+        }
 
-        /* PANNEAU DROIT */
-        .right-panel { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
-        .right-head { padding: 13px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-        .right-head-title { font-size: 13px; font-weight: 700; color: var(--text); }
-        .right-head-sub { font-size: 9px; color: var(--text3); font-family: var(--mono); margin-top: 2px; }
-        .right-scroll { flex: 1; overflow-y: auto; }
-        .right-scroll::-webkit-scrollbar { width: 3px; }
-        .right-scroll::-webkit-scrollbar-thumb { background: var(--border); }
+        /* RIGHT PANEL */
+        .right-panel {
+          background: white;
+          border: 1px solid #eef2ff;
+          border-radius: 20px;
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
+        .panel-tabs {
+          display: flex;
+          gap: 8px;
+          padding: 12px 20px;
+          border-bottom: 1px solid #f1f5f9;
+          background: #fefefe;
+        }
+        .tab-btn {
+          padding: 8px 20px;
+          border-radius: 30px;
+          font-size: 13px;
+          font-weight: 500;
+          background: transparent;
+          border: none;
+          color: #64748b;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .tab-btn.active {
+          background: #eef2ff;
+          color: #6366f1;
+        }
+        .panel-content {
+          flex: 1;
+          overflow-y: auto;
+          padding: 20px;
+        }
 
         /* TABLE */
-        .a-table { width: 100%; border-collapse: collapse; }
-        .a-table th { padding: 9px 14px; text-align: left; font-size: 8px; font-weight: 600; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.1em; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; }
-        .a-table td { padding: 12px 14px; border-bottom: 1px solid #1e224035; vertical-align: middle; }
-        .a-table tr:last-child td { border-bottom: none; }
-        .a-table tr:hover td { background: #ffffff03; cursor: pointer; }
+        .data-table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        .data-table th {
+          text-align: left;
+          padding: 12px 12px;
+          font-size: 11px;
+          font-weight: 600;
+          color: #64748b;
+          border-bottom: 1px solid #f1f5f9;
+        }
+        .data-table td {
+          padding: 12px 12px;
+          font-size: 13px;
+          border-bottom: 1px solid #faf9fe;
+          cursor: pointer;
+        }
+        .data-table tr:hover td {
+          background: #faf9fe;
+        }
 
-        .score-cell { display: flex; align-items: center; gap: 7px; }
-        .score-n { font-size: 12px; font-weight: 700; font-family: var(--mono); min-width: 24px; color: var(--sc); }
-        .score-track { flex: 1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; min-width: 36px; }
-        .score-fill  { height: 3px; border-radius: 2px; background: var(--sc); }
+        .score-cell {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .score-value {
+          font-size: 13px;
+          font-weight: 600;
+          font-family: monospace;
+          min-width: 32px;
+        }
+        .score-bar {
+          flex: 1;
+          height: 4px;
+          background: #e2e8f0;
+          border-radius: 2px;
+          overflow: hidden;
+        }
+        .score-bar-fill {
+          height: 4px;
+          border-radius: 2px;
+        }
 
-        .statut-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 9px; font-family: var(--mono); padding: 3px 8px; border-radius: 20px; }
-        .s-ok  { color: var(--green);  background: #00d4aa0d; border: 1px solid #00d4aa20; }
-        .s-run { color: var(--yellow); background: #ffd1660d; border: 1px solid #ffd16620; }
-        .s-err { color: var(--red);    background: #ff6b6b0d; border: 1px solid #ff6b6b20; }
-        .dot-blink { width: 5px; height: 5px; border-radius: 50%; animation: db 2s infinite; }
-        @keyframes db { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .status-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 12px;
+          border-radius: 30px;
+          font-size: 11px;
+          font-weight: 500;
+        }
+        .status-done {
+          background: #ecfdf5;
+          color: #10b981;
+        }
+        .status-running {
+          background: #fffbeb;
+          color: #f59e0b;
+        }
 
-        .vuln-tag { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; font-family: var(--mono); padding: 3px 9px; border-radius: 20px; }
-        .v-zero { color: var(--green); background: #00d4aa0d; border: 1px solid #00d4aa20; }
-        .v-some { color: var(--red);   background: #ff6b6b0d; border: 1px solid #ff6b6b20; }
-        .date-txt { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+        .vuln-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 12px;
+          border-radius: 30px;
+          font-size: 11px;
+          font-weight: 500;
+        }
+        .vuln-clean {
+          background: #ecfdf5;
+          color: #10b981;
+        }
+        .vuln-warning {
+          background: #fef2f2;
+          color: #ef4444;
+        }
 
-        /* DETAIL */
-        .detail-wrap { padding: 18px; }
-        .scores-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
-        .score-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px; text-align: center; }
-        .score-big { font-size: 36px; font-weight: 800; font-family: var(--mono); color: var(--sc); line-height: 1; margin-bottom: 4px; }
-        .score-name { font-size: 8px; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-        .score-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
-        .score-bar-fill { height: 3px; border-radius: 2px; background: var(--sc); }
-        .section-lbl { font-size: 9px; font-weight: 700; color: var(--text3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-        .vuln-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
-        .vuln-card { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--vc); border-radius: 8px; padding: 11px; }
-        .vuln-top { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
-        .vuln-sev { font-size: 8px; font-weight: 700; font-family: var(--mono); padding: 2px 8px; border-radius: 20px; background: var(--vc); color: #000; }
-        .vuln-type { font-size: 11px; font-weight: 700; color: var(--text); }
-        .vuln-loc  { font-size: 9px; color: var(--text3); font-family: var(--mono); margin-bottom: 5px; }
-        .vuln-fix  { font-size: 11px; color: var(--text2); background: var(--bg); padding: 7px 10px; border-radius: 6px; }
-        .reco-list { display: flex; flex-direction: column; gap: 8px; }
-        .reco-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 11px; }
-        .reco-titre { font-size: 11px; font-weight: 700; color: var(--green); margin-bottom: 4px; }
-        .reco-desc  { font-size: 11px; color: var(--text2); }
-        .clean-badge { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 14px; background: #00d4aa0d; border: 1px solid #00d4aa20; border-radius: 8px; color: var(--green); font-size: 12px; font-weight: 700; margin-bottom: 18px; }
+        /* DETAIL VIEW */
+        .detail-view {
+          padding: 8px;
+        }
+        .scores-detail {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+        .score-detail-card {
+          background: #f8fafc;
+          border: 1px solid #eef2ff;
+          border-radius: 16px;
+          padding: 20px;
+          text-align: center;
+        }
+        .score-detail-value {
+          font-size: 40px;
+          font-weight: 700;
+          margin-bottom: 8px;
+        }
+        .score-detail-label {
+          font-size: 12px;
+          color: #64748b;
+        }
 
-        .btn-back { padding: 6px 13px; background: transparent; border: 1px solid var(--border2); border-radius: 6px; color: var(--text2); font-family: var(--mono); font-size: 9px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
-        .btn-back:hover { border-color: var(--accent); color: var(--text); }
+        .section-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #0f172a;
+          margin: 20px 0 12px;
+        }
+        .vuln-card {
+          background: #f8fafc;
+          border: 1px solid #eef2ff;
+          border-radius: 12px;
+          padding: 16px;
+          margin-bottom: 12px;
+          border-left: 4px solid;
+        }
+        .vuln-header {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 8px;
+        }
+        .vuln-severity {
+          font-size: 10px;
+          font-weight: 600;
+          padding: 2px 10px;
+          border-radius: 20px;
+        }
+        .vuln-type {
+          font-size: 14px;
+          font-weight: 600;
+        }
+        .vuln-location {
+          font-size: 11px;
+          color: #64748b;
+          font-family: monospace;
+          margin-bottom: 8px;
+        }
+        .vuln-suggestion {
+          font-size: 12px;
+          color: #475569;
+          background: white;
+          padding: 8px 12px;
+          border-radius: 8px;
+        }
+        .reco-card {
+          background: #f8fafc;
+          border: 1px solid #eef2ff;
+          border-radius: 12px;
+          padding: 16px;
+          margin-bottom: 12px;
+        }
+        .reco-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #10b981;
+          margin-bottom: 6px;
+        }
+        .back-btn {
+          background: #f1f5f9;
+          border: none;
+          border-radius: 10px;
+          padding: 6px 14px;
+          font-size: 12px;
+          cursor: pointer;
+          color: #475569;
+          margin-bottom: 16px;
+        }
 
-        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; padding: 40px; }
-        .empty-icon { font-size: 30px; opacity: 0.08; }
-        .empty-txt  { font-size: 10px; color: var(--text3); font-family: var(--mono); text-align: center; line-height: 1.8; }
-        .loading-state { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 30px; color: var(--text3); font-size: 10px; font-family: var(--mono); }
-        .spin { width: 14px; height: 14px; border: 2px solid var(--border); border-top: 2px solid var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        .empty-state {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 60px 20px;
+          text-align: center;
+          color: #94a3b8;
+        }
+        .empty-icon {
+          font-size: 48px;
+          margin-bottom: 16px;
+        }
+        .loading-state {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          padding: 40px;
+          color: #64748b;
+        }
+        .spinner {
+          width: 20px;
+          height: 20px;
+          border: 2px solid #e2e8f0;
+          border-top-color: #6366f1;
+          border-radius: 50%;
+          animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
 
-        .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; opacity: 0.15; }
-        .placeholder-icon { font-size: 40px; }
-        .placeholder-txt  { font-size: 10px; color: var(--text2); font-family: var(--mono); letter-spacing: 0.1em; text-transform: uppercase; }
+        @media (max-width: 900px) {
+          .dashboard-grid { grid-template-columns: 1fr; }
+          .stats-grid { grid-template-columns: repeat(2, 1fr); }
+          .sidebar { display: none; }
+        }
       `}</style>
 
-      <div className="root">
+      <div className="dashboard">
 
         {/* SIDEBAR */}
         <aside className="sidebar">
           <div className="logo-area">
-            <div className="logo-row">
-              <div className="logo-box">A</div>
+            <div className="logo">
+              <div className="logo-icon">A</div>
               <div>
-                <div className="logo-name">AuditPlatform</div>
-                <div className="logo-sub">GitLab · LLM · PFE 2025</div>
+                <div className="logo-text">AuditPlatform</div>
+                <div className="logo-sub">GitLab · IA · PFE 2025</div>
               </div>
             </div>
           </div>
 
           <nav className="nav">
-            <div className="nav-lbl">Navigation</div>
             {menuItems.map(item => (
               <button
                 key={item.key}
-                className={`nav-btn ${activeMenu === item.key ? "active" : ""}`}
+                className={`nav-item ${activeMenu === item.key ? "active" : ""}`}
                 onClick={() => {
-                  if (item.key === "repositories") router.push("/depots");
-                  else if (item.key === "analyses") router.push("/analyse");
-                  else setActiveMenu(item.key);
+                  setActiveMenu(item.key);
+                  if (item.href && item.key !== "dashboard") {
+                    router.push(item.href);
+                  }
                 }}
               >
                 <span className="nav-icon">{item.icon}</span>
@@ -344,15 +775,17 @@ export default function Dashboard() {
             ))}
           </nav>
 
-          <div className="sidebar-foot">
-            <div className="user-pill" onClick={() => router.push("/profile")}>
-              <div className="avatar">{username[0]?.toUpperCase() ?? "U"}</div>
-              <div>
-                <div className="u-name">{username}</div>
-                <div className="u-role">connecté</div>
+          <div className="user-section">
+            <div className="user-card" onClick={() => router.push("/profile")}>
+              <div className="user-avatar">{username[0]?.toUpperCase() || "U"}</div>
+              <div className="user-info">
+                <div className="user-name">{username}</div>
+                <div className="user-email">connecté</div>
               </div>
             </div>
-            <button className="btn-logout" onClick={handleLogout}>⎋ Déconnexion</button>
+            <button className="logout-btn" onClick={handleLogout}>
+              ⎋ Déconnexion
+            </button>
           </div>
         </aside>
 
@@ -360,224 +793,192 @@ export default function Dashboard() {
         <div className="main">
           <header className="topbar">
             <div>
-              <div className="page-title">{menuItems.find(m => m.key === activeMenu)?.label}</div>
-              <div className="page-sub">
+              <div className="page-title">Tableau de bord</div>
+              <div className="page-date">
                 {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
               </div>
             </div>
             <div className="topbar-btns">
-              <button className="btn-ghost" onClick={() => router.push("/add-repository")}>⟁ Comparer</button>
-              <button className="btn-ghost" onClick={() => router.push("/Exploreformpage")}>◈ Dépôts</button>
+              <button className="btn-secondary" onClick={() => router.push("/depots")}>📁 Dépôts</button>
               <button className="btn-primary" onClick={() => router.push("/analyse")}>+ Nouvelle analyse</button>
             </div>
           </header>
 
           <div className="content">
 
-            {activeMenu === "dashboard" && (
-              <>
-                {/* Stats */}
-                <div className="stats-row">
-                  {stats.map((s, i) => (
-                    <div key={i} className="stat-card" style={{ "--ac": s.col } as any}>
-                      <div className="stat-num">{s.val}</div>
-                      <div className="stat-lbl">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Grid */}
-                <div className="dash-grid">
-
-                  {/* Projets */}
-                  <div className="projets-panel">
-                    <div className="panel-head">
-                      <span className="panel-head-title">Mes projets</span>
-                      <span className="panel-count">{projets.length}</span>
-                    </div>
-                    <div className="projets-scroll">
-                      {loading ? (
-                        <div className="loading-state"><div className="spin"/> Chargement...</div>
-                      ) : projets.length === 0 ? (
-                        <div className="empty-state">
-                          <div className="empty-icon">◈</div>
-                          <div className="empty-txt">
-                            Aucun projet analysé
-                            <br/>
-                            <button className="btn-primary" style={{ marginTop: 12, fontSize: 10, padding: "6px 14px" }} onClick={() => router.push("/analyse")}>
-                              + Analyser
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        projets.map(p => (
-                          <div
-                            key={p.id}
-                            className={`projet-item ${projetActif?.id === p.id ? "actif" : ""}`}
-                            onClick={() => selectionnerProjet(p)}
-                          >
-                            <div className="projet-nom">{p.nom}</div>
-                            <div className="projet-url">{p.project_url}</div>
-                            <div className="projet-tags">
-                              <span className="tag tag-branch">{p.branche}</span>
-                              <span className="tag tag-date">{new Date(p.created_at).toLocaleDateString("fr-FR")}</span>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
+            {/* STATS */}
+            <div className="stats-grid">
+              {stats.map((s, i) => (
+                <div key={i} className="stat-card">
+                  <div className="stat-header">
+                    <span className="stat-icon">{s.icon}</span>
                   </div>
+                  <div className="stat-value" style={{ color: s.color }}>{s.value}</div>
+                  <div className="stat-label">{s.label}</div>
+                </div>
+              ))}
+            </div>
 
-                  {/* Panneau droit */}
-                  <div className="right-panel">
-                    <div className="right-head">
-                      <div>
-                        <div className="right-head-title">
-                          {vue === "detail" && analyseActif
-                            ? `Analyse du ${new Date(analyseActif.created_at).toLocaleDateString("fr-FR")}`
-                            : projetActif ? `Analyses — ${projetActif.nom}` : "Sélectionne un projet"
-                          }
-                        </div>
-                        <div className="right-head-sub">
-                          {vue === "detail" && analyseActif
-                            ? `branche ${analyseActif.branche} · ${analyseActif.vulnerabilites?.length || 0} vulnérabilité(s)`
-                            : `${analyses.length} analyse(s) · clique pour voir le détail`
-                          }
+            {/* DASHBOARD GRID */}
+            <div className="dashboard-grid">
+
+              {/* PROJETS */}
+              <div className="projets-panel">
+                <div className="panel-header">
+                  <span className="panel-title">Mes projets</span>
+                  <span className="panel-badge">{projets.length}</span>
+                </div>
+                <div className="projets-list">
+                  {loading ? (
+                    <div className="loading-state"><div className="spinner" /> Chargement...</div>
+                  ) : projets.length === 0 ? (
+                    <div className="empty-state">
+                      <div className="empty-icon">📁</div>
+                      <div className="empty-text">Aucun projet analysé</div>
+                      <button className="btn-primary" style={{ marginTop: 16 }} onClick={() => router.push("/analyse")}>
+                        + Lancer une analyse
+                      </button>
+                    </div>
+                  ) : (
+                    projets.map(p => (
+                      <div
+                        key={p.id}
+                        className={`projet-item ${projetActif?.id === p.id ? "active" : ""}`}
+                        onClick={() => selectionnerProjet(p)}
+                      >
+                        <div className="projet-name">{p.nom}</div>
+                        <div className="projet-url">{p.project_url}</div>
+                        <div className="projet-meta">
+                          <span className="meta-tag">{p.branche}</span>
+                          <span className="meta-tag">{new Date(p.created_at).toLocaleDateString()}</span>
                         </div>
                       </div>
-                      {vue === "detail" && (
-                        <button className="btn-back" onClick={() => { setVue("liste"); setAnalyseActif(null); }}>
-                          ← Retour
-                        </button>
-                      )}
-                    </div>
+                    ))
+                  )}
+                </div>
+              </div>
 
-                    <div className="right-scroll">
+              {/* RIGHT PANEL */}
+              <div className="right-panel">
+                <div className="panel-tabs">
+                  <button className={`tab-btn ${vue === "liste" ? "active" : ""}`} onClick={() => { setVue("liste"); setAnalyseActif(null); }}>
+                    Analyses ({analyses.length})
+                  </button>
+                </div>
 
-                      {/* Vue liste */}
-                      {vue === "liste" && (
-                        <>
-                          {!projetActif ? (
-                            <div className="empty-state">
-                              <div className="empty-icon">◎</div>
-                              <div className="empty-txt">Sélectionne un projet à gauche</div>
-                            </div>
-                          ) : analyses.length === 0 ? (
-                            <div className="empty-state">
-                              <div className="empty-icon">◎</div>
-                              <div className="empty-txt">Aucune analyse pour ce projet</div>
-                            </div>
-                          ) : (
-                            <table className="a-table">
-                              <thead>
-                                <tr>
-                                  <th>Date</th>
-                                  <th>Branche</th>
-                                  <th>Qualité</th>
-                                  <th>Sécurité</th>
-                                  <th>Performance</th>
-                                  <th>Vulnérabilités</th>
-                                  <th>Statut</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {analyses.map(a => {
-                                  const v = a.vulnerabilites?.length || 0;
-                                  return (
-                                    <tr key={a.id} onClick={() => { setAnalyseActif(a); setVue("detail"); }}>
-                                      <td className="date-txt">{new Date(a.created_at).toLocaleDateString("fr-FR")}</td>
-                                      <td><span className="tag tag-branch">{a.branche}</span></td>
-                                      {[a.score_qualite, a.score_securite, a.score_performance].map((s, i) => (
-                                        <td key={i}>
-                                          <div className="score-cell" style={{ "--sc": c(s) } as any}>
-                                            <span className="score-n">{s ?? "—"}</span>
-                                            <div className="score-track"><div className="score-fill" style={{ width: `${s ?? 0}%` }}/></div>
-                                          </div>
-                                        </td>
-                                      ))}
-                                      <td><span className={`vuln-tag ${v === 0 ? "v-zero" : "v-some"}`}>{v === 0 ? "✓ 0" : `⚠ ${v}`}</span></td>
-                                      <td>
-                                        <span className={`statut-tag ${a.statut === "termine" ? "s-ok" : a.statut === "en_cours" ? "s-run" : "s-err"}`}>
-                                          <div className="dot-blink" style={{ background: a.statut === "termine" ? "#00d4aa" : a.statut === "en_cours" ? "#ffd166" : "#ff6b6b" }}/>
-                                          {a.statut}
-                                        </span>
-                                      </td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          )}
-                        </>
-                      )}
+                <div className="panel-content">
 
-                      {/* Vue détail */}
-                      {vue === "detail" && analyseActif && (
-                        <div className="detail-wrap">
-
-                          <div className="scores-grid">
-                            {[
-                              { label: "Qualité",     val: analyseActif.score_qualite },
-                              { label: "Sécurité",    val: analyseActif.score_securite },
-                              { label: "Performance", val: analyseActif.score_performance },
-                            ].map(s => (
-                              <div key={s.label} className="score-card" style={{ "--sc": c(s.val) } as any}>
-                                <div className="score-big">{s.val ?? "—"}</div>
-                                <div className="score-name">{s.label}</div>
-                                <div className="score-bar"><div className="score-bar-fill" style={{ width: `${s.val ?? 0}%` }}/></div>
-                              </div>
-                            ))}
-                          </div>
-
-                          {analyseActif.vulnerabilites?.length > 0 ? (
-                            <>
-                              <div className="section-lbl">⚠ Vulnérabilités ({analyseActif.vulnerabilites.length})</div>
-                              <div className="vuln-list">
-                                {analyseActif.vulnerabilites.map((v: any, i: number) => (
-                                  <div key={i} className="vuln-card" style={{ "--vc": cSev(v.severite) } as any}>
-                                    <div className="vuln-top">
-                                      <span className="vuln-sev">{v.severite}</span>
-                                      <span className="vuln-type">{v.type}</span>
+                  {/* VUE LISTE */}
+                  {vue === "liste" && (
+                    !projetActif ? (
+                      <div className="empty-state">
+                        <div className="empty-icon">◎</div>
+                        <div className="empty-text">Sélectionnez un projet à gauche</div>
+                      </div>
+                    ) : analyses.length === 0 ? (
+                      <div className="empty-state">
+                        <div className="empty-icon">🔍</div>
+                        <div className="empty-text">Aucune analyse pour ce projet</div>
+                      </div>
+                    ) : (
+                      <table className="data-table">
+                        <thead>
+                          <tr><th>Date</th><th>Branche</th><th>Qualité</th><th>Sécurité</th><th>Performance</th><th>Vulns</th><th>Statut</th></tr>
+                        </thead>
+                        <tbody>
+                          {analyses.map(a => {
+                            const vulnCount = a.vulnerabilites?.length || 0;
+                            return (
+                              <tr key={a.id} onClick={() => { setAnalyseActif(a); setVue("detail"); }}>
+                                <td style={{ fontFamily: "monospace", fontSize: 12 }}>{new Date(a.created_at).toLocaleDateString()}</td>
+                                <td><span className="meta-tag">{a.branche}</span></td>
+                                {[a.score_qualite, a.score_securite, a.score_performance].map((s, i) => (
+                                  <td key={i}>
+                                    <div className="score-cell">
+                                      <span className="score-value" style={{ color: colorScore(s) }}>{s ?? "—"}</span>
+                                      <div className="score-bar"><div className="score-bar-fill" style={{ width: `${s ?? 0}%`, background: colorScore(s) }} /></div>
                                     </div>
-                                    <div className="vuln-loc">📄 {v.fichier} — ligne {v.ligne}</div>
-                                    <div className="vuln-fix">💡 {v.suggestion}</div>
-                                  </div>
+                                  </td>
                                 ))}
-                              </div>
-                            </>
-                          ) : (
-                            <div className="clean-badge">✅ Aucune vulnérabilité — Code propre !</div>
-                          )}
+                                <td>
+                                  <span className={`vuln-badge ${vulnCount === 0 ? "vuln-clean" : "vuln-warning"}`}>
+                                    {vulnCount === 0 ? "✓ 0" : `⚠ ${vulnCount}`}
+                                  </span>
+                                </td>
+                                <td>
+                                  <span className={`status-badge ${a.statut === "termine" ? "status-done" : "status-running"}`}>
+                                    {a.statut === "termine" ? "✓ Terminé" : "⏳ En cours"}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )
+                  )}
 
-                          {analyseActif.recommandations?.length > 0 && (
-                            <>
-                              <div className="section-lbl">✓ Recommandations ({analyseActif.recommandations.length})</div>
-                              <div className="reco-list">
-                                {analyseActif.recommandations.map((r: any, i: number) => (
-                                  <div key={i} className="reco-card">
-                                    <div className="reco-titre">{r.titre}</div>
-                                    <div className="reco-desc">{r.description}</div>
-                                  </div>
-                                ))}
+                  {/* VUE DÉTAIL */}
+                  {vue === "detail" && analyseActif && (
+                    <div className="detail-view">
+                      <button className="back-btn" onClick={() => { setVue("liste"); setAnalyseActif(null); }}>
+                        ← Retour aux analyses
+                      </button>
+
+                      <div className="scores-detail">
+                        {[
+                          { label: "Qualité", val: analyseActif.score_qualite },
+                          { label: "Sécurité", val: analyseActif.score_securite },
+                          { label: "Performance", val: analyseActif.score_performance },
+                        ].map(s => (
+                          <div key={s.label} className="score-detail-card">
+                            <div className="score-detail-value" style={{ color: colorScore(s.val) }}>{s.val ?? "—"}</div>
+                            <div className="score-detail-label">{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {analyseActif.vulnerabilites?.length > 0 ? (
+                        <>
+                          <div className="section-title">⚠️ Vulnérabilités ({analyseActif.vulnerabilites.length})</div>
+                          {analyseActif.vulnerabilites.map((v: any, i: number) => (
+                            <div key={i} className="vuln-card" style={{ borderLeftColor: colorSeverite(v.severite) }}>
+                              <div className="vuln-header">
+                                <span className="vuln-severity" style={{ background: `${colorSeverite(v.severite)}15`, color: colorSeverite(v.severite) }}>
+                                  {v.severite}
+                                </span>
+                                <span className="vuln-type">{v.type}</span>
                               </div>
-                            </>
-                          )}
+                              <div className="vuln-location">📄 {v.fichier} — ligne {v.ligne}</div>
+                              <div className="vuln-suggestion">💡 {v.suggestion}</div>
+                            </div>
+                          ))}
+                        </>
+                      ) : (
+                        <div className="empty-state" style={{ background: "#ecfdf5", borderRadius: 16 }}>
+                          <div className="empty-icon">✅</div>
+                          <div className="empty-text">Aucune vulnérabilité détectée — Code propre !</div>
                         </div>
                       )}
+
+                      {analyseActif.recommandations?.length > 0 && (
+                        <>
+                          <div className="section-title">💡 Recommandations ({analyseActif.recommandations.length})</div>
+                          {analyseActif.recommandations.map((r: any, i: number) => (
+                            <div key={i} className="reco-card">
+                              <div className="reco-title">✓ {r.titre}</div>
+                              <div className="reco-desc">{r.description}</div>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
-                  </div>
+                  )}
 
                 </div>
-              </>
-            )}
-
-            {activeMenu !== "dashboard" && (
-              <div className="placeholder">
-                <div className="placeholder-icon">{menuItems.find(m => m.key === activeMenu)?.icon}</div>
-                <div className="placeholder-txt">{menuItems.find(m => m.key === activeMenu)?.label} — en développement</div>
               </div>
-            )}
 
+            </div>
           </div>
         </div>
       </div>

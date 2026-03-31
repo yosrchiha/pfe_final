@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+# backend/app/routes/Admin.py
+
+from fastapi import APIRouter, Depends, HTTPException, Header  # ← ajouter Header
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
@@ -8,9 +10,13 @@ from datetime import datetime
 from app.config.database import get_db
 
 # ── Import des modèles existants ─────────────────────────────────────────────
-# Adapte les imports selon tes noms de modèles réels
-from app.models.user  import User
-from app.models.depot import Depot
+from app.models.user          import User
+from app.models.depot         import Depot
+from app.models.depot_analyse import DepotAnalyse  # ← ajouter pour la MR
+from app.models.merge_request import MergeRequest  # ← ajouter pour la MR
+
+# ── Import de get_user_id_from_token (depuis analyses.py)
+from app.routes.analyses import get_user_id_from_token  # ← ajouter
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
 
@@ -178,3 +184,52 @@ def delete_depot_admin(depot_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Dépôt introuvable")
     db.delete(d)
     db.commit()
+    # backend/app/routes/admin.py
+
+# backend/app/routes/Admin.py
+
+@router.get("/merge-requests/")
+def get_all_merge_requests(
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """Récupère TOUTES les Merge Requests (admin uniquement)"""
+    
+    # Vérifier que l'utilisateur est admin
+    user_id = get_user_id_from_token(authorization, db)
+    user = db.query(User).filter(User.id == user_id).first()
+    
+    if not user or user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    
+    # Récupérer toutes les MR
+    mrs = db.query(MergeRequest).order_by(MergeRequest.created_at.desc()).all()
+    
+    # Enrichir avec les infos du dépôt et de l'utilisateur
+    result = []
+    for mr in mrs:
+        depot = db.query(DepotAnalyse).filter(DepotAnalyse.id == mr.depot_analyse_id).first()
+        user_depot = db.query(User).filter(User.id == depot.user_id).first() if depot else None
+        
+        result.append({
+            "id": mr.id,
+            "analyse_id": mr.analyse_id,
+            "test_id": mr.test_id,
+            "depot_analyse_id": mr.depot_analyse_id,
+            "mr_id_gitlab": mr.mr_id_gitlab,
+            "mr_url": mr.mr_url,
+            "titre": mr.titre,
+            "description": mr.description,
+            "branche_source": mr.branche_source,
+            "branche_cible": mr.branche_cible,
+            "statut": mr.statut,
+            "type_mr": mr.type_mr,
+            "labels": mr.labels,
+            "created_at": str(mr.created_at),
+            "updated_at": str(mr.updated_at) if mr.updated_at else None,
+            "projet_nom": depot.nom if depot else None,
+            "user_email": user_depot.email if user_depot else None,
+            "user_id": user_depot.id if user_depot else None,
+        })
+    
+    return result

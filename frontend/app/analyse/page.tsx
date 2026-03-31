@@ -1,39 +1,103 @@
+// frontend/app/analyse/page.tsx (version modifiée)
+
 "use client";
-import { useState } from "react";
+
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
 const API = "http://127.0.0.1:8000";
 
+interface GitLabProjet {
+  id: number;
+  nom: string;
+  chemin: string;
+  url: string;
+}
+
 export default function AnalysePage() {
   const router = useRouter();
 
-  const [nomProjet,  setNomProjet]  = useState("");
+  // ── Formulaire ─────────────────────────────────────────
   const [token,      setToken]      = useState("");
-  const [projectUrl, setProjectUrl] = useState("");
+  const [projets,    setProjets]    = useState<GitLabProjet[]>([]);
+  const [projetChoisi, setProjetChoisi] = useState<GitLabProjet | null>(null);
   const [branche,    setBranche]    = useState("main");
-  const [owasp,      setOwasp]      = useState(true);
-  const [autoTests,  setAutoTests]  = useState(true);
-  const [autoMr,     setAutoMr]     = useState(true);
-  const [seuil,      setSeuil]      = useState(60);
-  const [loading,    setLoading]    = useState(false);
-  const [erreur,     setErreur]     = useState("");
+  const [loadingProjets, setLoadingProjets] = useState(false);
 
-  const couleurSeuil = (s: number) => {
-    if (s >= 75) return "#00d4aa";
-    if (s >= 50) return "#ffd166";
-    return "#ff6b6b";
-  };
+  // ── Options ───────────────────────────────────────────
+  const [owasp,     setOwasp]     = useState(true);
+  const [autoTests, setAutoTests] = useState(true);
+  const [autoMr,    setAutoMr]    = useState(true);
+  const [seuil,     setSeuil]     = useState(60);
+
+  // ── États ─────────────────────────────────────────────
+  const [loading, setLoading] = useState(false);
+  const [erreur,  setErreur]  = useState("");
 
   const getHeaders = () => {
     const jwt = localStorage.getItem("token");
     return { Authorization: jwt ? `Bearer ${jwt}` : "" };
   };
 
+  // ── Charger les projets GitLab avec le token ──────────
+  // frontend/app/analyse/page.tsx
+
+const chargerProjets = async () => {
+  if (!token.trim()) {
+    setErreur("Veuillez saisir un token GitLab");
+    return;
+  }
+  setLoadingProjets(true);
+  setErreur("");
+  setProjets([]);
+  setProjetChoisi(null);
+
+  try {
+    const res = await axios.post(
+      `${API}/explorer/gitlab/projets`,
+      { token },  // ← format correct : objet avec token
+      { headers: getHeaders() }
+    );
+    setProjets(res.data);
+    if (res.data.length === 0) {
+      setErreur("Aucun projet trouvé avec ce token");
+    }
+  } catch (e: any) {
+    // ✅ Gestion correcte des erreurs
+    const detail = e.response?.data?.detail;
+    
+    if (Array.isArray(detail)) {
+      // Pydantic validation error
+      const messages = detail.map((d: any) => d.msg).join(", ");
+      setErreur(messages);
+    } else if (typeof detail === "string") {
+      setErreur(detail);
+    } else if (detail && typeof detail === "object" && detail.message) {
+      setErreur(detail.message);
+    } else {
+      setErreur("Token invalide ou impossible de se connecter à GitLab");
+    }
+  } finally {
+    setLoadingProjets(false);
+  }
+};
+
+  // ── Sélectionner un projet ────────────────────────────
+  const selectionnerProjet = (projet: GitLabProjet) => {
+    setProjetChoisi(projet);
+    // Optionnel : charger les branches du projet
+  };
+
   const lancerAnalyse = async () => {
-    if (!nomProjet.trim()) { setErreur("Le nom du projet est requis"); return; }
-    if (!token.trim())     { setErreur("Le token GitLab est requis");  return; }
-    if (!projectUrl.trim()){ setErreur("Le chemin du projet est requis"); return; }
+    if (!projetChoisi) {
+      setErreur("Veuillez sélectionner un projet");
+      return;
+    }
+    if (!token.trim()) {
+      setErreur("Le token GitLab est requis");
+      return;
+    }
 
     setLoading(true);
     setErreur("");
@@ -42,9 +106,9 @@ export default function AnalysePage() {
       const res = await axios.post(
         `${API}/analyses/lancer`,
         {
-          nom_projet    : nomProjet,
+          nom_projet    : projetChoisi.nom,
           gitlab_token  : token,
-          project_url   : projectUrl,
+          project_url   : projetChoisi.chemin,
           branche,
           owasp_enabled : owasp,
           auto_tests    : autoTests,
@@ -54,11 +118,10 @@ export default function AnalysePage() {
         { headers: getHeaders() }
       );
 
-      // Sauvegarder le résultat et rediriger vers la page rapport
       sessionStorage.setItem("rapport",     JSON.stringify(res.data));
-      sessionStorage.setItem("nomProjet",   nomProjet);
+      sessionStorage.setItem("nomProjet",   projetChoisi.nom);
       sessionStorage.setItem("token",       token);
-      sessionStorage.setItem("projectUrl",  projectUrl);
+      sessionStorage.setItem("projectUrl",  projetChoisi.chemin);
       sessionStorage.setItem("branche",     branche);
       sessionStorage.setItem("autoTests",   String(autoTests));
       sessionStorage.setItem("autoMr",      String(autoMr));
@@ -72,242 +135,346 @@ export default function AnalysePage() {
       } else if (typeof detail === "string") {
         setErreur(detail);
       } else {
-        setErreur("Erreur lors de l'analyse — vérifiez le token et le chemin du projet");
+        setErreur("Erreur lors de l'analyse — vérifiez le token et le projet");
       }
     } finally {
       setLoading(false);
     }
   };
 
+  const colorScore = (s: number) => {
+    if (s >= 75) return "#10b981";
+    if (s >= 50) return "#f59e0b";
+    return "#ef4444";
+  };
+
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
         .page {
           min-height: 100vh;
-          background: #060810;
+          background: #f8fafc;
           font-family: 'Inter', sans-serif;
-          color: #c9cad6;
+          color: #1e293b;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 32px 16px;
+          padding: 32px 24px;
         }
 
         .container {
           width: 100%;
-          max-width: 560px;
+          max-width: 680px;
+          margin: 0 auto;
         }
 
-        /* ── En-tête ── */
-        .header { text-align: center; margin-bottom: 36px; }
+        .header { text-align: center; margin-bottom: 32px; }
         .badge {
-          display: inline-flex; align-items: center; gap: 6px;
-          background: #5b63f510; border: 1px solid #5b63f530;
-          border-radius: 20px; padding: 4px 14px;
-          font-size: 10px; font-family: 'JetBrains Mono', monospace;
-          color: #818cf8; letter-spacing: 0.08em; margin-bottom: 16px;
+          display: inline-flex; align-items: center; gap: 8px;
+          background: #f1f5f9; border: 1px solid #e2e8f0;
+          border-radius: 100px; padding: 5px 16px;
+          font-size: 12px; font-weight: 500; color: #475569;
+          margin-bottom: 16px;
         }
-        .dot { width: 6px; height: 6px; border-radius: 50%; background: #818cf8; animation: blink 2s infinite; }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
-        .title { font-size: 28px; font-weight: 700; color: #e8eaf6; letter-spacing: -0.02em; margin-bottom: 8px; }
-        .subtitle { font-size: 13px; color: #3a4060; font-family: 'JetBrains Mono', monospace; }
+        .badge-dot { width: 8px; height: 8px; background: #6366f1; border-radius: 50%; }
+        .title { font-size: 32px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; margin-bottom: 8px; }
+        .subtitle { font-size: 15px; color: #64748b; }
 
-        /* ── Card ── */
+        .steps {
+          display: flex; align-items: center; justify-content: center;
+          gap: 12px; margin-bottom: 32px;
+        }
+        .step { display: flex; align-items: center; gap: 8px; }
+        .step-number {
+          width: 32px; height: 32px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 13px; font-weight: 600;
+          background: #f1f5f9; color: #94a3b8; border: 1px solid #e2e8f0;
+        }
+        .step-number.active { background: #0f172a; border-color: #0f172a; color: white; }
+        .step-label { font-size: 13px; font-weight: 500; color: #64748b; }
+        .step-label.active { color: #0f172a; font-weight: 600; }
+        .step-separator { width: 40px; height: 1px; background: #e2e8f0; }
+
         .card {
-          background: #0f1222;
-          border: 1px solid #1a1e35;
-          border-radius: 14px;
-          padding: 24px;
-          margin-bottom: 14px;
+          background: white; border: 1px solid #eef2ff;
+          border-radius: 24px; padding: 28px;
+          margin-bottom: 20px;
         }
         .card-title {
-          font-size: 11px; font-weight: 600; color: #3a4060;
-          font-family: 'JetBrains Mono', monospace;
-          text-transform: uppercase; letter-spacing: 0.1em;
-          margin-bottom: 18px; padding-bottom: 10px;
-          border-bottom: 1px solid #1a1e35;
+          font-size: 16px; font-weight: 600; color: #0f172a;
+          margin-bottom: 20px; padding-bottom: 12px;
+          border-bottom: 2px solid #f1f5f9;
         }
 
-        /* ── Champs ── */
-        .field { margin-bottom: 16px; }
+        .field { margin-bottom: 20px; }
         .field:last-child { margin-bottom: 0; }
         .label {
-          display: block; font-size: 11px; font-weight: 600;
-          color: #6870a0; margin-bottom: 6px;
-          font-family: 'JetBrains Mono', monospace;
-          text-transform: uppercase; letter-spacing: 0.06em;
+          display: block; font-size: 13px; font-weight: 600;
+          color: #334155; margin-bottom: 6px;
         }
         .input {
-          width: 100%; background: #080a14;
-          border: 1px solid #1a1e35; border-radius: 8px;
-          padding: 10px 14px; color: #e8eaf6;
-          font-family: 'JetBrains Mono', monospace; font-size: 13px;
-          outline: none; transition: border-color 0.15s;
+          width: 100%; padding: 12px 14px;
+          border: 1px solid #e2e8f0; border-radius: 12px;
+          font-size: 14px; font-family: monospace;
+          background: white; transition: all 0.2s;
         }
-        .input::placeholder { color: #2e3355; }
-        .input:focus { border-color: #5b63f555; box-shadow: 0 0 0 3px #5b63f510; }
-        .hint { font-size: 10px; color: #2e3355; font-family: 'JetBrains Mono', monospace; margin-top: 5px; display: block; }
+        .input:focus {
+          outline: none; border-color: #6366f1;
+          box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+        }
+        .hint { display: block; font-size: 11px; color: #94a3b8; margin-top: 5px; }
 
-        /* ── Options ── */
+        /* Liste des projets */
+        .projets-list {
+          margin-top: 16px;
+          border: 1px solid #eef2ff;
+          border-radius: 14px;
+          overflow: hidden;
+        }
+        .projet-item {
+          display: flex; align-items: center;
+          padding: 14px 16px;
+          border-bottom: 1px solid #f1f5f9;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .projet-item:last-child { border-bottom: none; }
+        .projet-item:hover { background: #f8fafc; }
+        .projet-item.selected {
+          background: #eef2ff;
+          border-left: 3px solid #6366f1;
+        }
+        .projet-info { flex: 1; }
+        .projet-nom { font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 2px; }
+        .projet-chemin { font-size: 11px; color: #64748b; font-family: monospace; }
+        .projet-icon { font-size: 18px; color: #94a3b8; }
+
+        .btn-secondary {
+          width: 100%; padding: 10px;
+          background: #f1f5f9; border: 1px solid #e2e8f0;
+          border-radius: 12px; font-size: 13px; font-weight: 500;
+          color: #475569; cursor: pointer;
+          transition: all 0.2s; margin-top: 16px;
+        }
+        .btn-secondary:hover { background: #eef2ff; border-color: #cbd5e1; }
+
         .option {
           display: flex; align-items: flex-start; gap: 12px;
-          padding: 12px 0; border-bottom: 1px solid #1a1e3540;
+          padding: 14px 0; border-bottom: 1px solid #f1f5f9;
         }
-        .option:last-of-type { border-bottom: none; }
-        .checkbox { width: 16px; height: 16px; accent-color: #5b63f5; margin-top: 2px; flex-shrink: 0; cursor: pointer; }
-        .option-text { flex: 1; cursor: pointer; }
-        .option-title { display: block; font-size: 13px; font-weight: 500; color: #c9cad6; margin-bottom: 2px; }
-        .option-desc  { display: block; font-size: 11px; color: #3a4060; font-family: 'JetBrains Mono', monospace; }
+        .option:last-child { border-bottom: none; }
+        .checkbox { width: 18px; height: 18px; accent-color: #6366f1; margin-top: 2px; cursor: pointer; }
+        .option-content { flex: 1; cursor: pointer; }
+        .option-title { font-size: 14px; font-weight: 600; color: #1e293b; margin-bottom: 4px; }
+        .option-desc { font-size: 12px; color: #64748b; line-height: 1.4; }
 
-        /* ── Seuil ── */
-        .seuil-wrap { padding-top: 14px; }
-        .seuil-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
-        .range { flex: 1; accent-color: #5b63f5; cursor: pointer; }
-        .seuil-val { font-size: 16px; font-weight: 700; font-family: 'JetBrains Mono', monospace; min-width: 52px; text-align: right; }
+        .seuil-wrap { margin-top: 20px; padding-top: 8px; }
+        .seuil-row { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
+        .range { flex: 1; height: 4px; accent-color: #6366f1; cursor: pointer; }
+        .seuil-value { font-size: 18px; font-weight: 700; font-family: monospace; min-width: 55px; text-align: right; }
 
-        /* ── Erreur ── */
-        .erreur {
-          background: #ff6b6b10; border: 1px solid #ff6b6b30;
-          border-radius: 8px; padding: 12px 14px;
-          font-size: 12px; color: #ff6b6b;
-          font-family: 'JetBrains Mono', monospace;
-          margin-bottom: 14px;
+        .error {
+          background: #fef2f2; border: 1px solid #fee2e2;
+          border-radius: 14px; padding: 14px 18px;
+          font-size: 13px; color: #ef4444;
+          margin-bottom: 20px; display: flex; align-items: center; gap: 10px;
         }
 
-        /* ── Bouton ── */
         .btn {
-          width: 100%; padding: 14px;
-          background: linear-gradient(135deg, #5b63f5, #818cf8);
-          border: none; border-radius: 10px;
-          color: #fff; font-family: 'Inter', sans-serif;
-          font-size: 15px; font-weight: 700;
-          cursor: pointer; transition: all 0.15s;
-          display: flex; align-items: center; justify-content: center; gap: 8px;
+          width: 100%; padding: 14px 24px;
+          background: #0f172a; color: white;
+          border: none; border-radius: 14px;
+          font-size: 15px; font-weight: 600;
+          cursor: pointer; transition: all 0.2s;
+          display: flex; align-items: center; justify-content: center; gap: 10px;
         }
-        .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 24px #5b63f540; }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-
-        .spin {
-          width: 16px; height: 16px;
-          border: 2px solid #ffffff40;
-          border-top: 2px solid #fff;
+        .btn:hover:not(:disabled) { background: #1e293b; transform: translateY(-1px); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .spinner {
+          width: 18px; height: 18px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: white;
           border-radius: 50%;
-          animation: spin 0.7s linear infinite;
+          animation: spin 0.6s linear infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
 
-        /* ── Steps indicator ── */
-        .steps { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 28px; }
-        .step { display: flex; align-items: center; gap: 6px; font-size: 11px; font-family: 'JetBrains Mono', monospace; }
-        .step-num { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
-        .step-active .step-num  { background: #5b63f5; color: #fff; }
-        .step-done .step-num    { background: #00d4aa; color: #000; }
-        .step-pending .step-num { background: #1a1e35; color: #3a4060; }
-        .step-active .step-lbl  { color: #e8eaf6; font-weight: 600; }
-        .step-pending .step-lbl { color: #2e3355; }
-        .step-sep { width: 24px; height: 1px; background: #1a1e35; }
+        .back-link {
+          display: inline-flex; align-items: center; gap: 6px;
+          background: transparent; border: none;
+          font-size: 13px; color: #64748b;
+          cursor: pointer; margin-bottom: 20px;
+        }
+        .back-link:hover { color: #0f172a; }
+
+        .loading-projets {
+          text-align: center; padding: 24px;
+          color: #64748b; font-size: 13px;
+        }
       `}</style>
 
       <div className="page">
         <div className="container">
 
-          {/* En-tête */}
+          <button className="back-link" onClick={() => router.push("/dashboard")}>
+            ← Retour au tableau de bord
+          </button>
+
           <div className="header">
             <div className="badge">
-              <div className="dot"/>
-              Plateforme Audit GitLab
+              <div className="badge-dot" />
+              AuditPlatform · IA
             </div>
             <h1 className="title">Analyser un projet</h1>
-            <p className="subtitle">Renseignez les infos du projet pour lancer l'audit IA</p>
+            <p className="subtitle">Entrez votre token GitLab pour charger vos projets</p>
           </div>
 
-          {/* Steps */}
           <div className="steps">
-            <div className="step step-active">
-              <div className="step-num">1</div>
-              <span className="step-lbl">Formulaire</span>
+            <div className="step">
+              <div className="step-number active">1</div>
+              <span className="step-label active">Token</span>
             </div>
-            <div className="step-sep"/>
-            <div className="step step-pending">
-              <div className="step-num">2</div>
-              <span className="step-lbl">Résultats</span>
+            <div className="step-separator" />
+            <div className="step">
+              <div className="step-number">2</div>
+              <span className="step-label">Projet</span>
+            </div>
+            <div className="step-separator" />
+            <div className="step">
+              <div className="step-number">3</div>
+              <span className="step-label">Résultats</span>
             </div>
           </div>
 
-          {/* Card 1 — Infos projet */}
+          {/* Card 1 — Token et projets */}
           <div className="card">
-            <div className="card-title">Projet GitLab</div>
+            <div className="card-title">🔑 Token GitLab</div>
 
             <div className="field">
-              <label className="label">Nom du projet</label>
-              <input className="input" type="text" placeholder="ex: mon-projet-pfe"
-                value={nomProjet} onChange={e => setNomProjet(e.target.value)} />
+              <label className="label">Token d'accès personnel</label>
+              <input
+                className="input"
+                type="password"
+                placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
+                value={token}
+                onChange={e => setToken(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && chargerProjets()}
+              />
+              <span className="hint">
+                GitLab → Settings → Access Tokens → scopes : api, read_repository
+              </span>
             </div>
 
-            <div className="field">
-              <label className="label">Token d'accès GitLab</label>
-              <input className="input" type="password" placeholder="glpat-xxxxxxxxxxxx"
-                value={token} onChange={e => setToken(e.target.value)} />
-              <span className="hint">GitLab → Settings → Access Tokens → scopes : api, write_repository</span>
-            </div>
+            <button
+              className="btn-secondary"
+              onClick={chargerProjets}
+              disabled={loadingProjets}
+            >
+              {loadingProjets ? <><div className="spinner" /> Chargement...</> : "🔍 Charger mes projets"}
+            </button>
 
-            <div className="field">
-              <label className="label">Chemin du projet</label>
-              <input className="input" type="text" placeholder="username/nom-du-projet"
-                value={projectUrl} onChange={e => setProjectUrl(e.target.value)} />
-              <span className="hint">Ex: yosrchiha01/plateforme-audit-ia ou URL HTTPS complète</span>
-            </div>
-
-            <div className="field">
-              <label className="label">Branche</label>
-              <input className="input" type="text" placeholder="main"
-                value={branche} onChange={e => setBranche(e.target.value)} />
-            </div>
+            {projets.length > 0 && (
+              <>
+                <div className="card-title" style={{ marginTop: 24, marginBottom: 12 }}>
+                  📁 Sélectionnez un projet ({projets.length})
+                </div>
+                <div className="projets-list">
+                  {projets.map(projet => (
+                    <div
+                      key={projet.id}
+                      className={`projet-item ${projetChoisi?.id === projet.id ? "selected" : ""}`}
+                      onClick={() => selectionnerProjet(projet)}
+                    >
+                      <div className="projet-info">
+                        <div className="projet-nom">{projet.nom}</div>
+                        <div className="projet-chemin">{projet.chemin}</div>
+                      </div>
+                      <div className="projet-icon">→</div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Card 2 — Options */}
-          <div className="card">
-            <div className="card-title">Options d'analyse</div>
-
-            {[
-              { id: "owasp",     val: owasp,     set: setOwasp,     title: "Analyse OWASP Top 10",        desc: "Détecte les 10 failles de sécurité les plus critiques" },
-              { id: "autoTests", val: autoTests, set: setAutoTests, title: "Générer les tests unitaires", desc: "L'IA génère les tests pour tout le code" },
-              { id: "autoMr",    val: autoMr,    set: setAutoMr,    title: "Créer une Merge Request",     desc: "Pousse les tests sur GitLab et ouvre une MR" },
-            ].map(opt => (
-              <div key={opt.id} className="option">
-                <input type="checkbox" id={opt.id} checked={opt.val}
-                  onChange={e => opt.set(e.target.checked)} className="checkbox" />
-                <label htmlFor={opt.id} className="option-text">
-                  <span className="option-title">{opt.title}</span>
-                  <span className="option-desc">{opt.desc}</span>
-                </label>
+          {/* Card 2 — Branche et options (visible seulement si projet sélectionné) */}
+          {projetChoisi && (
+            <>
+              <div className="card">
+                <div className="card-title">🌿 Branche</div>
+                <div className="field">
+                  <label className="label">Branche à analyser</label>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="main"
+                    value={branche}
+                    onChange={e => setBranche(e.target.value)}
+                  />
+                  <span className="hint">
+                    Laissez "main" pour analyser la branche principale
+                  </span>
+                </div>
               </div>
-            ))}
 
-            <div className="seuil-wrap">
-              <label className="label">Seuil minimum de qualité</label>
-              <div className="seuil-row">
-                <input type="range" min={0} max={100} value={seuil}
-                  onChange={e => setSeuil(parseInt(e.target.value))} className="range" />
-                <span className="seuil-val" style={{ color: couleurSeuil(seuil) }}>
-                  {seuil}/100
-                </span>
+              <div className="card">
+                <div className="card-title">⚙️ Options d'analyse</div>
+
+                <div className="option">
+                  <input type="checkbox" id="owasp" checked={owasp} onChange={e => setOwasp(e.target.checked)} className="checkbox" />
+                  <label htmlFor="owasp" className="option-content">
+                    <div className="option-title">Analyse OWASP Top 10</div>
+                    <div className="option-desc">Détecte les 10 failles de sécurité les plus critiques</div>
+                  </label>
+                </div>
+
+                <div className="option">
+                  <input type="checkbox" id="autoTests" checked={autoTests} onChange={e => setAutoTests(e.target.checked)} className="checkbox" />
+                  <label htmlFor="autoTests" className="option-content">
+                    <div className="option-title">Générer les tests unitaires</div>
+                    <div className="option-desc">L'IA génère automatiquement des tests unitaires</div>
+                  </label>
+                </div>
+
+                <div className="option">
+                  <input type="checkbox" id="autoMr" checked={autoMr} onChange={e => setAutoMr(e.target.checked)} className="checkbox" />
+                  <label htmlFor="autoMr" className="option-content">
+                    <div className="option-title">Créer une Merge Request</div>
+                    <div className="option-desc">Pousse les tests et crée une MR automatique</div>
+                  </label>
+                </div>
+
+                <div className="seuil-wrap">
+                  <label className="label">Seuil minimum de qualité</label>
+                  <div className="seuil-row">
+                    <input type="range" min={0} max={100} value={seuil} onChange={e => setSeuil(parseInt(e.target.value))} className="range" />
+                    <span className="seuil-value" style={{ color: colorScore(seuil) }}>{seuil}%</span>
+                  </div>
+                </div>
               </div>
+            </>
+          )}
+
+          {erreur && (
+            <div className="error">
+              <span>⚠️</span> {erreur}
             </div>
-          </div>
+          )}
 
-          {/* Erreur */}
-          {erreur && <div className="erreur">⚠ {erreur}</div>}
-
-          {/* Bouton */}
-          <button className="btn" onClick={lancerAnalyse} disabled={loading}>
-            {loading
-              ? <><div className="spin"/> Analyse en cours — patience...</>
-              : "Lancer l'analyse →"
-            }
+          <button
+            className="btn"
+            onClick={lancerAnalyse}
+            disabled={loading || !projetChoisi}
+          >
+            {loading ? (
+              <><div className="spinner" /> Analyse en cours...</>
+            ) : (
+              "Lancer l'analyse →"
+            )}
           </button>
 
         </div>
