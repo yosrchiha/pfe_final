@@ -1,20 +1,22 @@
 # backend/app/routes/explorer.py
 
-from fastapi import APIRouter, Depends, HTTPException  # ← ajouter Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session  # ← ajouter Session
-import gitlab  # ← ajouter gitlab
+from sqlalchemy.orm import Session
+import gitlab
 
-from app.config.database import get_db  # ← ajouter get_db
+from app.config.database import get_db
+from app.routes.auth import get_current_user
+from app.models.user import User
 from app.services.gitlab_client import get_project_files
 
 router = APIRouter(prefix="/explorer", tags=["Explorer"])
 
 
 class ExploreRequest(BaseModel):
-    nom: str        # ex: "user/mon-repo" ou URL SSH/HTTPS
-    branche: str    # ex: "main"
-    token: str      # glpat-xxx
+    nom: str
+    branche: str
+    token: str
 
 
 @router.post("/files")
@@ -22,7 +24,6 @@ def explore_branch(body: ExploreRequest):
     """
     Récupère tous les fichiers d'une branche GitLab
     sans passer par la base de données.
-    L'utilisateur fournit directement : nom, branche, token.
     """
     try:
         fichiers = get_project_files(
@@ -41,13 +42,6 @@ def explore_branch(body: ExploreRequest):
         "fichiers": fichiers
     }
 
-
-# ════════════════════════════════════════════════════════
-# NOUVEL ENDPOINT — Lister les projets GitLab
-# ════════════════════════════════════════════════════════
-# backend/app/routes/explorer.py
-
-from pydantic import BaseModel
 
 class GitLabTokenRequest(BaseModel):
     token: str
@@ -79,3 +73,48 @@ def lister_projets_gitlab(
         }
         for p in projets
     ]
+
+
+class BranchesRequest(BaseModel):
+    token: str
+    project_name: str
+
+
+@router.post("/gitlab/branches")
+def get_gitlab_branches(
+    data: BranchesRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Récupère toutes les branches d'un projet GitLab.
+    """
+    try:
+        gl = gitlab.Gitlab("https://gitlab.com", private_token=data.token)
+        
+        # Nettoyer le nom du projet
+        project_name = data.project_name.strip()
+        if "git@gitlab.com:" in project_name:
+            project_name = project_name.split("git@gitlab.com:")[-1].replace(".git", "")
+        elif "gitlab.com/" in project_name:
+            project_name = project_name.split("gitlab.com/")[-1].replace(".git", "")
+        
+        project = gl.projects.get(project_name)
+        branches = project.branches.list()
+        
+        return {
+            "project": project_name,
+            "branches": [
+                {
+                    "name": b.name,
+                    "default": b.name == project.default_branch
+                }
+                for b in branches
+            ]
+        }
+        
+    except gitlab.exceptions.GitlabAuthenticationError:
+        raise HTTPException(status_code=401, detail="Token GitLab invalide")
+    except gitlab.exceptions.GitlabGetError:
+        raise HTTPException(status_code=404, detail="Projet non trouvé")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

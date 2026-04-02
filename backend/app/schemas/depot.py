@@ -29,3 +29,4 @@ class DepotUpdate(BaseModel):
     url_branche_developpement: Optional[str] = None
     token_gitlab: Optional[str] = None
     proprietaire_id: Optional[int] = None
+    

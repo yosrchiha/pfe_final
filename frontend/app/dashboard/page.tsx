@@ -31,6 +31,7 @@ interface Analyse {
 const menuItems = [
   { key: "dashboard",      label: "Tableau de bord",  icon: "▦", href: "/dashboard" },
   { key: "repositories",   label: "Dépôts",          icon: "◈", href: "/depots" },
+   { key: "comparaisons",   label: "Comparaisons",    icon: "📊", href: "/comparaisons" },
   { key: "analyses",       label: "Analyse",         icon: "◎", href: "/analyse" },
   { key: "tests",          label: "Tests",           icon: "🧪", href: "/TestsPaage" },
   { key: "issues",         label: "Issues",          icon: "◇", href: "/issues" },
@@ -742,6 +743,7 @@ export default function Dashboard() {
           .sidebar { display: none; }
         }
       `}</style>
+      
 
       <div className="dashboard">
 
@@ -800,6 +802,9 @@ export default function Dashboard() {
             </div>
             <div className="topbar-btns">
               <button className="btn-secondary" onClick={() => router.push("/depots")}>📁 Dépôts</button>
+              <button className="btn-secondary" onClick={() => router.push("/add-repository")}>
+    🔀 Comparer des branches
+  </button>
               <button className="btn-primary" onClick={() => router.push("/analyse")}>+ Nouvelle analyse</button>
             </div>
           </header>

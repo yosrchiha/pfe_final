@@ -709,6 +709,24 @@ const exporterPDF = async () => {
         .chat-send:hover:not(:disabled) {
           background: #4f46e5;
         }
+          .btn-feedback {
+  padding: 8px 18px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: white;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-feedback:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+}
         .chat-send:disabled {
           background: #cbd5e1;
           cursor: not-allowed;
@@ -839,6 +857,10 @@ const exporterPDF = async () => {
             <button className="btn-primary" onClick={() => setShowPopup(true)}>
               🧪 Générer les tests
             </button>
+            // Dans la section topbar-btns, ajoute ce bouton
+<button className="btn-feedback" onClick={() => router.push(`/feedback?analyse_id=${rapport?.analyse_id}&projet=${nomProjet}`)}>
+  ⭐ Donner un avis
+</button>
           </div>
           <div className="status-badge">
             <div className="status-dot" />

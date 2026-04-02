@@ -26,6 +26,14 @@ from app.routes import chat as chat_router
 from app.routes import recommandations as reco_router
 from app.routes import tickets
 
+from app.models import user, depot, comparaison
+from app.models.analyse_diff import AnalyseDiff 
+from app.models.merge_request_diff import MergeRequestDiff
+from app.routes import merge_requests_diff
+from app.routes import feedback
+from app.routes import comparaisons, analyses_diff
+
+
 # Ajouter avec les autres routes
 # ── Application ──────────────────────────────────────────
 app = FastAPI(title="Plateforme Audit GitLab API")
@@ -66,6 +74,14 @@ app.include_router(exports_router.router)
 
 # ... après les autres routers ...
 app.include_router(tickets.router)
+app.include_router(merge_requests_diff.router)
+app.include_router(feedback.router)
+
+
+# Ajouter ces lignes
+app.include_router(comparaisons.router)
+app.include_router(analyses_diff.router)
+
 
 # ── Création des tables ──────────────────────────────────
 @app.on_event("startup")
