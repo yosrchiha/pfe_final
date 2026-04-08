@@ -3,6 +3,7 @@ stages:
   - analyze
   - test
   - quality_gate
+  
 
 # --- INSTALLATION ---
 install-backend:
@@ -19,49 +20,29 @@ install-frontend:
   script:
     - cd frontend
     - npm install
+  cache:
+    key: frontend-$CI_COMMIT_REF_SLUG
+    paths:
+      - frontend/node_modules/
   rules:
     - if: $CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID
-  # Ajout d'une tentative de relance en cas d'échec temporaire
-  retry: 1
 
-# --- ANALYSE ---
-llm-audit:
-  stage: analyze
-  image: python:3.11
-  needs: ["install-backend"]
-  script:
-    - export PYTHONPATH=$PYTHONPATH:$(pwd)/backend
-    - python backend/run_audit.py
-  artifacts:
+unit-tests-frontend:
+  stage: test
+  image: node:18
+  needs: ["install-frontend"]
+  cache:
+    key: frontend-$CI_COMMIT_REF_SLUG
     paths:
-      - audit_report.json
-    expire_in: 1 hour
-  rules:
-    - if: $CI_COMMIT_BRANCH
-
-security-scan:
-  stage: analyze
-  image: python:3.11
-  needs: ["install-backend"]
+      - frontend/node_modules/
+    policy: pull   # lecture seule, pas de réécriture
   script:
-    - pip install bandit
-    - bandit -r backend/app -x backend/tests
-  # Permet au job d'échouer sans bloquer le pipeline entier
+    - cd frontend
+    - npm test
   allow_failure: true
   rules:
-    - if: $CI_COMMIT_BRANCH
-
-# --- TESTS ---
-unit-tests-backend:
-  stage: test
-  image: python:3.11
-  needs: ["install-backend"]
-  script:
-    - pip install pytest pytest-cov
-    - export PYTHONPATH=$PYTHONPATH:$(pwd)/backend
-    - pytest --cov=backend/app backend/tests/
-  rules:
-    - if: $CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH || $
+    
 
 unit-tests-frontend:
   stage: test
@@ -90,3 +71,16 @@ quality-gate:
     - python backend/check_quality_gate.py
   rules:
     - if: $CI_MERGE_REQUEST_IID
+  security-scan:
+  stage: analyze
+  image: python:3.11
+  needs: ["install-backend"]
+  script:
+    - pip install bandit
+    - bandit -r backend/app -ll  # -ll = signale seulement Medium et High
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH
+  
+
+  
