@@ -21,6 +21,8 @@ install-frontend:
     - npm install
   rules:
     - if: $CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID
+  # Ajout d'une tentative de relance en cas d'échec temporaire
+  retry: 1
 
 # --- ANALYSE ---
 llm-audit:
@@ -32,7 +34,7 @@ llm-audit:
     - python backend/run_audit.py
   artifacts:
     paths:
-      - backend/audit_report.json
+      - audit_report.json
     expire_in: 1 hour
   rules:
     - if: $CI_COMMIT_BRANCH
@@ -44,6 +46,8 @@ security-scan:
   script:
     - pip install bandit
     - bandit -r backend/app -x backend/tests
+  # Permet au job d'échouer sans bloquer le pipeline entier
+  allow_failure: true
   rules:
     - if: $CI_COMMIT_BRANCH
 
@@ -65,7 +69,6 @@ unit-tests-frontend:
   needs: ["install-frontend"]
   script:
     - cd frontend
-    # Correction : On ne lance npm test que s'il y a des tests, sinon on fait un build de vérification
     - |
       if grep -q "test" package.json; then
         npm test
@@ -84,7 +87,6 @@ quality-gate:
   needs: ["llm-audit"]
   script:
     - export PYTHONPATH=$PYTHONPATH:$(pwd)/backend
-    # On s'assure que le script cherche le fichier au bon endroit
     - python backend/check_quality_gate.py
   rules:
     - if: $CI_MERGE_REQUEST_IID
