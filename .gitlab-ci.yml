@@ -71,7 +71,8 @@ quality-gate:
     - python backend/check_quality_gate.py
   rules:
     - if: $CI_MERGE_REQUEST_IID
-  security-scan:
+
+security-scan:
   stage: analyze
   image: python:3.11
   needs: ["install-backend"]
