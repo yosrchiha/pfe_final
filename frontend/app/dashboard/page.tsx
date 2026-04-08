@@ -801,7 +801,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="topbar-btns">
-              <button className="btn-secondary" onClick={() => router.push("/depots")}>📁 Dépôts</button>
+              <button className="btn-secondary" onClick={() => router.push("/Exploreformpage")}>📁 Dépôts</button>
               <button className="btn-secondary" onClick={() => router.push("/add-repository")}>
     🔀 Comparer des branches
   </button>

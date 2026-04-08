@@ -1,0 +1,112 @@
+stages:
+  - install
+  - analyze
+  - test
+  - quality_gate
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.npm"
+  CYPRESS_CACHE_FOLDER: "$CI_PROJECT_DIR/cache/Cypress"
+  # Seuil de qualité pour le pipeline de validation
+  QUALITY_THRESHOLD: 70 # Exemple: 70/100
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .cache/pip
+    - .npm
+    - cache/Cypress
+    - backend/venv/
+    - frontend/node_modules/
+
+# =============================================
+# STAGE: INSTALLATION DES DÉPENDANCES
+# =============================================
+
+install-backend:
+  stage: install
+  image: python:3.9
+  script:
+    - python -m venv backend/venv
+    - source backend/venv/bin/activate
+    - pip install -r backend/requirements.txt
+  rules:
+    - if: $CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID
+
+install-frontend:
+  stage: install
+  image: node:18
+  script:
+    - cd frontend
+    - npm install
+  rules:
+    - if: $CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID
+
+# =============================================
+# STAGE: ANALYSE (AUDIT LLM & SÉCURITÉ)
+# =============================================
+
+llm-audit:
+  stage: analyze
+  image: python:3.9
+  needs: ["install-backend"]
+  script:
+    - source backend/venv/bin/activate
+    - pip install groq # Assurez-vous que groq est dans requirements.txt ou installez-le ici
+    - python backend/run_audit.py
+  artifacts:
+    paths:
+      - audit_report.json
+  rules:
+    - if: $CI_COMMIT_BRANCH # Déclenchement à chaque push
+
+security-scan:
+  stage: analyze
+  image: python:3.9
+  needs: ["install-backend"]
+  script:
+    - source backend/venv/bin/activate
+    - pip install bandit
+    - bandit -r backend/app
+  rules:
+    - if: $CI_COMMIT_BRANCH # Déclenchement à chaque push
+
+# =============================================
+# STAGE: TESTS UNITAIRES ET COUVERTURE
+# =============================================
+
+unit-tests-backend:
+  stage: test
+  image: python:3.9
+  needs: ["install-backend"]
+  script:
+    - source backend/venv/bin/activate
+    - pip install pytest pytest-cov
+    - pytest --cov=backend/app backend/tests/
+  coverage: '/TOTAL.+?(\d+\%)/'
+  rules:
+    - if: $CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID # Déclenchement à chaque push et MR
+
+unit-tests-frontend:
+  stage: test
+  image: node:18
+  needs: ["install-frontend"]
+  script:
+    - cd frontend
+    - npm test -- --coverage
+  rules:
+    - if: $CI_COMMIT_BRANCH || $CI_MERGE_REQUEST_IID # Déclenchement à chaque push et MR
+
+# =============================================
+# STAGE: PORTE QUALITÉ (QUALITY GATE)
+# =============================================
+
+quality-gate:
+  stage: quality_gate
+  image: python:3.9
+  needs: ["llm-audit"]
+  script:
+    - python backend/check_quality_gate.py
+  rules:
+    - if: $CI_MERGE_REQUEST_IID # Déclenchement uniquement sur les Merge Requests

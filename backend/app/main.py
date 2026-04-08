@@ -32,6 +32,7 @@ from app.models.merge_request_diff import MergeRequestDiff
 from app.routes import merge_requests_diff
 from app.routes import feedback
 from app.routes import comparaisons, analyses_diff
+from app.routes import analyses_fichier
 
 
 # Ajouter avec les autres routes
@@ -81,6 +82,9 @@ app.include_router(feedback.router)
 # Ajouter ces lignes
 app.include_router(comparaisons.router)
 app.include_router(analyses_diff.router)
+
+
+app.include_router(analyses_fichier.router)
 
 
 # ── Création des tables ──────────────────────────────────

@@ -92,6 +92,7 @@ export default function DifferencePage() {
     
     setLoading(true);
     setErreur("");
+    setShowConfirmation(false);
     
     try {
       const res = await axios.post(
@@ -109,7 +110,6 @@ export default function DifferencePage() {
         message: "MR créée (forcée)",
         mr: res.data.mr
       }));
-      setShowConfirmation(false);
       
     } catch (e: any) {
       const detail = e.response?.data?.detail;
@@ -299,14 +299,14 @@ export default function DifferencePage() {
         }
 
         .force-mr-btn {
-          margin-top: 24px;
+          margin-top: 20px;
           padding-top: 16px;
           border-top: 1px solid #1c1d26;
           display: flex;
           justify-content: flex-end;
         }
         .btn-force {
-          padding: 12px 24px;
+          padding: 10px 20px;
           background: linear-gradient(135deg, #ff6b6b, #ff4757);
           border: none;
           border-radius: 8px;
@@ -316,7 +316,7 @@ export default function DifferencePage() {
           display: flex;
           align-items: center;
           gap: 8px;
-          font-size: 14px;
+          font-size: 13px;
           transition: all 0.2s;
         }
         .btn-force:hover {
@@ -351,37 +351,6 @@ export default function DifferencePage() {
             </button>
           </div>
         </div>
-
-        {/* Modal de confirmation */}
-        {showConfirmation && (
-          <div className="modal-overlay">
-            <div className="modal">
-              <h3>⚠️ Vulnérabilités détectées</h3>
-              <p>Des vulnérabilités critiques ou hautes ont été détectées :</p>
-              <ul style={{ margin: "16px 0", paddingLeft: 20 }}>
-                {resultat?.vulnerabilites_bloquantes?.map((v: any, i: number) => (
-                  <li key={i} style={{ marginBottom: 8 }}>
-                    <strong style={{ color: "#ff6b6b" }}>[{v.severite}]</strong> {v.type}<br/>
-                    <span style={{ fontSize: 12, color: "#888" }}>
-                      📄 {v.fichier} — ligne {v.ligne}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p style={{ marginBottom: 20 }}>
-                Voulez-vous quand même créer la Merge Request ?
-              </p>
-              <div className="modal-buttons">
-                <button className="modal-cancel" onClick={() => setShowConfirmation(false)}>
-                  Annuler
-                </button>
-                <button className="modal-submit" onClick={creerMRForce}>
-                  Créer la MR quand même
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {erreur && <div className="erreur-box">⚠ {erreur}</div>}
 
@@ -461,7 +430,7 @@ export default function DifferencePage() {
                   </div>
                 ))}
                 
-                {/* Bouton pour forcer la MR */}
+                {/* Bouton pour forcer la MR - DIRECTEMENT ICI */}
                 <div className="force-mr-btn">
                   <button
                     className="btn-force"
@@ -472,6 +441,42 @@ export default function DifferencePage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Modal de confirmation */}
+        {showConfirmation && resultat && (
+          <div className="modal-overlay" onClick={() => setShowConfirmation(false)}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+              <h3>⚠️ Confirmation</h3>
+              <p>Vous êtes sur le point de créer une Merge Request malgré les vulnérabilités suivantes :</p>
+              <ul style={{ margin: "16px 0", paddingLeft: 20, maxHeight: 200, overflow: "auto" }}>
+                {resultat.vulnerabilites_bloquantes?.slice(0, 5).map((v: any, i: number) => (
+                  <li key={i} style={{ marginBottom: 8 }}>
+                    <strong style={{ color: "#ff6b6b" }}>[{v.severite}]</strong> {v.type}
+                    <span style={{ fontSize: 11, color: "#888", display: "block" }}>
+                      📄 {v.fichier} — ligne {v.ligne}
+                    </span>
+                  </li>
+                ))}
+                {resultat.vulnerabilites_bloquantes?.length > 5 && (
+                  <li style={{ color: "#888", fontSize: 11 }}>
+                    ... et {resultat.vulnerabilites_bloquantes.length - 5} autres
+                  </li>
+                )}
+              </ul>
+              <p style={{ marginBottom: 20, color: "#ffd166", fontSize: 13 }}>
+                ⚠️ Cette action est déconseillée. La fusion pourrait introduire des vulnérabilités.
+              </p>
+              <div className="modal-buttons">
+                <button className="modal-cancel" onClick={() => setShowConfirmation(false)}>
+                  Annuler
+                </button>
+                <button className="modal-submit" onClick={creerMRForce}>
+                  Créer la MR quand même
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

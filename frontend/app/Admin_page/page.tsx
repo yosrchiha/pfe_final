@@ -1,1412 +1,779 @@
-// frontend/app/admin/page.tsx
 "use client";
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
-import axios from "axios";
-import {
-  Chart, ArcElement, Tooltip, Legend,
-  CategoryScale, LinearScale, BarElement,
-  DoughnutController, BarController,
-} from "chart.js";
 
-Chart.register(
-  ArcElement, Tooltip, Legend,
-  CategoryScale, LinearScale, BarElement,
-  DoughnutController, BarController
-);
+import { useState, useEffect } from "react";
+import axios from "axios";
 
 const API = "http://127.0.0.1:8000";
 
-interface Stats  { total_users: number; active_users: number; total_depots: number; admin_count: number; }
-interface User   { id: number; email: string; username: string | null; role: string; is_active: boolean; created_at: string | null; depot_count: number; }
-interface Depot  { id: number; nom: string; url_branche_principale: string | null; proprietaire_id: number; owner_email: string | null; created_at: string | null; }
-
-interface DepotAnalyse {
-  id          : number;
-  user_id     : number;
-  nom         : string;
-  project_url : string;
-  branche     : string;
-  created_at  : string;
+// ── TYPES ──────────────────────────────────────────────────────────
+interface Stats {
+  total_users: number; active_users: number; total_depots: number;
+  admin_count: number; total_analyses: number; analyses_ok: number;
+  total_mr: number; total_diffs: number;
 }
-
+interface UserItem {
+  id: number; email: string; username: string; role: string;
+  is_active: boolean; created_at: string; depot_count: number;
+}
+interface DepotItem {
+  id: number; nom: string; project_url: string; branche: string;
+  user_id: number; user_email: string; created_at: string;
+  analyses_count: number; is_active: boolean;
+}
 interface Analyse {
-  id                : number;
-  depot_analyse_id  : number;
-  branche           : string;
-  score_qualite     : number;
-  score_securite    : number;
-  score_performance : number;
-  vulnerabilites    : any[];
-  statut            : string;
-  created_at        : string;
+  id: number; depot_id: number; depot_nom: string; user_email: string;
+  branche: string; score_qualite: number; score_securite: number;
+  score_performance: number; statut: string; created_at: string;
+  nb_vulns: number; vulnerabilites?: any[];
+}
+interface MR {
+  id: number; projet_nom: string; user_email: string; titre: string;
+  statut: string; type_mr: string; branche_source: string;
+  branche_cible: string; created_at: string; mr_url?: string;
+}
+interface AnalyseDiff {
+  id: number; projet_nom: string; user_email: string;
+  from_branch: string; to_branch: string;
+  score_qualite: number; score_securite: number;
+  resultat_statut: string; created_at: string;
+}
+interface TestGenere {
+  id: number; projet_nom: string; user_email: string;
+  langage: string; framework: string; nb_tests: number;
+  statut: string; created_at: string;
 }
 
-// ── Donut Chart ────────────────────────────────────────
-function DonutChart({ data, labels, colors, total, center }: {
-  data: number[]; labels: string[]; colors: string[]; total: number; center: string;
-}) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const ch  = useRef<Chart | null>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    ch.current?.destroy();
-    ch.current = new Chart(ref.current, {
-      type: "doughnut",
-      data: {
-        labels,
-        datasets: [{
-          data,
-          backgroundColor: colors.map(c => c + "20"),
-          borderColor: colors,
-          borderWidth: 2,
-          hoverOffset: 6,
-        }],
-      },
-      options: {
-        cutout: "74%",
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: "#1e293b",
-            borderColor: "#e2e8f0",
-            borderWidth: 1,
-            titleColor: "#f1f5f9",
-            bodyColor: "#94a3b8",
-            titleFont: { family: "Inter", size: 11 },
-            bodyFont:  { family: "Inter", size: 11 },
-            padding: 12,
-          },
-        },
-      },
-    });
-    return () => ch.current?.destroy();
-  }, [JSON.stringify(data)]);
+// ── HELPERS ────────────────────────────────────────────────────────
+function scoreColor(s: number) {
+  return s >= 80 ? "#16a34a" : s >= 60 ? "#d97706" : "#dc2626";
+}
+function scoreBg(s: number) {
+  return s >= 80 ? "#f0fdf4" : s >= 60 ? "#fffbeb" : "#fef2f2";
+}
 
+function ScorePill({ score }: { score: number }) {
   return (
-    <div style={{ position: "relative", height: 160, width: 160, margin: "0 auto" }}>
-      <canvas ref={ref}/>
-      <div style={{
-        position: "absolute", top: "50%", left: "50%",
-        transform: "translate(-50%,-50%)", textAlign: "center", pointerEvents: "none"
-      }}>
-        <div style={{ fontSize: 26, fontWeight: 800, color: "#0f172a", fontFamily: "monospace" }}>{total}</div>
-        <div style={{ fontSize: 9, color: "#64748b", fontFamily: "monospace", textTransform: "uppercase", letterSpacing: "0.08em" }}>{center}</div>
+    <span style={{ background: scoreBg(score), color: scoreColor(score), fontWeight: 700, padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>
+      {score}/100
+    </span>
+  );
+}
+
+const STATUS_MAP: Record<string, { bg: string; color: string; label: string }> = {
+  termine:          { bg: "#f0fdf4", color: "#16a34a", label: "Terminé" },
+  en_cours:         { bg: "#eff6ff", color: "#2563eb", label: "En cours" },
+  erreur:           { bg: "#fef2f2", color: "#dc2626", label: "Erreur" },
+  opened:           { bg: "#eff6ff", color: "#2563eb", label: "Ouverte" },
+  merged:           { bg: "#f0fdf4", color: "#16a34a", label: "Fusionnée" },
+  closed:           { bg: "#f3f4f6", color: "#6b7280", label: "Fermée" },
+  merge_autorise:   { bg: "#f0fdf4", color: "#16a34a", label: "Autorisé" },
+  merge_bloque:     { bg: "#fef2f2", color: "#dc2626", label: "Bloqué" },
+  merge_autorise_force: { bg: "#fef3c7", color: "#d97706", label: "Auto forcé" },
+  pousse:           { bg: "#f0fdf4", color: "#16a34a", label: "Poussé" },
+  genere:           { bg: "#eff6ff", color: "#2563eb", label: "Généré" },
+  aucun_changement: { bg: "#f3f4f6", color: "#6b7280", label: "Aucun changement" },
+  inconnu:          { bg: "#f3f4f6", color: "#6b7280", label: "Inconnu" },
+};
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS_MAP[status] || { bg: "#f3f4f6", color: "#6b7280", label: status };
+  return (
+    <span style={{ background: s.bg, color: s.color, fontWeight: 600, padding: "3px 10px", borderRadius: 20, fontSize: 12, whiteSpace: "nowrap" }}>
+      {s.label}
+    </span>
+  );
+}
+
+function StatCard({ icon, value, label, sub, color }: { icon: string; value: number | string; label: string; sub?: string; color: string }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 6px rgba(0,0,0,0.07)", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 14 }}>
+      <div style={{ width: 46, height: 46, borderRadius: 12, background: color + "1a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
+        {icon}
+      </div>
+      <div>
+        <div style={{ fontSize: 26, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{value}</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#475569", marginTop: 2 }}>{label}</div>
+        {sub && <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 1 }}>{sub}</div>}
       </div>
     </div>
   );
 }
 
-// ── Bar Chart ──────────────────────────────────────────
-function BarChart({ labels, data, color }: { labels: string[]; data: number[]; color: string }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const ch  = useRef<Chart | null>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    ch.current?.destroy();
-    ch.current = new Chart(ref.current, {
-      type: "bar",
-      data: {
-        labels,
-        datasets: [{
-          data,
-          backgroundColor: color + "20",
-          borderColor: color,
-          borderWidth: 2,
-          borderRadius: 6,
-          borderSkipped: false as any,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: "#1e293b",
-            borderColor: "#e2e8f0",
-            borderWidth: 1,
-            titleColor: "#f1f5f9",
-            bodyColor: "#94a3b8",
-          },
-        },
-        scales: {
-          x: {
-            grid: { color: "#e2e8f0" },
-            ticks: { color: "#64748b", font: { size: 9 } },
-            border: { color: "#e2e8f0" },
-          },
-          y: {
-            grid: { color: "#e2e8f0" },
-            ticks: { color: "#64748b", font: { size: 9 }, stepSize: 1 },
-            border: { color: "#e2e8f0" },
-            beginAtZero: true,
-          },
-        },
-      },
-    });
-    return () => ch.current?.destroy();
-  }, [JSON.stringify(data)]);
-
-  return <div style={{ position: "relative", height: 180 }}><canvas ref={ref}/></div>;
+function TH({ children }: { children: React.ReactNode }) {
+  return (
+    <th style={{ padding: "11px 14px", background: "#f8fafc", color: "#64748b", fontWeight: 700, textAlign: "left", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+      {children}
+    </th>
+  );
+}
+function TD({ children, center }: { children: React.ReactNode; center?: boolean }) {
+  return (
+    <td style={{ padding: "11px 14px", color: "#1e293b", borderBottom: "1px solid #f1f5f9", textAlign: center ? "center" : "left", verticalAlign: "middle" }}>
+      {children}
+    </td>
+  );
 }
 
-export default function AdminDashboard() {
-  const router = useRouter();
+function EmptyRow({ cols, message }: { cols: number; message: string }) {
+  return (
+    <tr>
+      <td colSpan={cols} style={{ textAlign: "center", padding: "32px", color: "#94a3b8", fontSize: 13 }}>
+        {message}
+      </td>
+    </tr>
+  );
+}
 
-  const [tab,       setTab]       = useState<"overview"|"users"|"depots"|"analyses">("overview");
-  const [stats,     setStats]     = useState<Stats | null>(null);
-  const [users,     setUsers]     = useState<User[]>([]);
-  const [depots,    setDepots]    = useState<Depot[]>([]);
-  const [depotsA,   setDepotsA]   = useState<DepotAnalyse[]>([]);
-  const [analyses,  setAnalyses]  = useState<Analyse[]>([]);
-  const [search,    setSearch]    = useState("");
-  const [selUser,   setSelUser]   = useState<User | null>(null);
-  const [userDepots,setUserDepots]= useState<Depot[]>([]);
-  const [selAnalyse,setSelAnalyse]= useState<Analyse | null>(null);
-  const [loadingA,  setLoadingA]  = useState(false);
+// ══════════════════════════════════════════════════════════════════
+// PAGE PRINCIPALE
+// ══════════════════════════════════════════════════════════════════
+export default function AdminPage() {
+  type Tab = "overview" | "users" | "depots" | "analyses" | "diffs" | "tests" | "mrs" | "stats";
+  const [tab, setTab] = useState<Tab>("overview");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [stats, setStats] = useState<Stats>({ total_users: 0, active_users: 0, total_depots: 0, admin_count: 0, total_analyses: 0, analyses_ok: 0, total_mr: 0, total_diffs: 0 });
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [depots, setDepots] = useState<DepotItem[]>([]);
+  const [analyses, setAnalyses] = useState<Analyse[]>([]);
+  const [diffs, setDiffs] = useState<AnalyseDiff[]>([]);
+  const [tests, setTests] = useState<TestGenere[]>([]);
+  const [mrs, setMrs] = useState<MR[]>([]);
+  const [search, setSearch] = useState("");
+  const [selectedDepot, setSelectedDepot] = useState<DepotItem | null>(null);
+  const [depotAnalyses, setDepotAnalyses] = useState<Analyse[]>([]);
+  const [showDepotModal, setShowDepotModal] = useState(false);
 
   const getHeaders = () => {
     const token = localStorage.getItem("token");
     return { Authorization: token ? `Bearer ${token}` : "" };
   };
 
-  useEffect(() => { loadAll(); }, []);
-
-  const loadAll = async () => {
+  // ── Chargement centralisé ──────────────────────────────────────
+  const loadData = async () => {
+    setLoading(true);
+    setError("");
     try {
-      const [sR, uR, dR] = await Promise.all([
-        axios.get(`${API}/admin/stats`, { headers: getHeaders() }),
-        axios.get(`${API}/admin/users`, { headers: getHeaders() }),
-        axios.get(`${API}/admin/depots`, { headers: getHeaders() }),
-      ]);
-      setStats(sR.data);
-      setUsers(uR.data);
-      setDepots(dR.data);
-    } catch {}
-  };
+      // 1. Stats
+      const statsRes = await axios.get(`${API}/admin/stats`, { headers: getHeaders() });
+      setStats(statsRes.data);
 
-  const loadDepotsAnalyse = async () => {
-    setLoadingA(true);
-    try {
-      const allDepots: DepotAnalyse[] = [];
-      const allAnalyses: Analyse[] = [];
-      for (const u of users) {
+      // 2. Utilisateurs
+      const usersRes = await axios.get(`${API}/admin/users`, { headers: getHeaders() });
+      setUsers(usersRes.data);
+
+      // 3. Tous les dépôts d'analyse simple
+      const allDepots: DepotItem[] = [];
+      for (const user of usersRes.data) {
         try {
-          const r = await axios.get(`${API}/analyses/depots-user/${u.id}`, { headers: getHeaders() });
-          allDepots.push(...r.data);
-          for (const d of r.data) {
+          const depotsRes = await axios.get(`${API}/analyses/depots-user/${user.id}`, { headers: getHeaders() });
+          for (const depot of depotsRes.data) {
+            // Compter les analyses du dépôt
+            let analysesCount = 0;
             try {
-              const ar = await axios.get(`${API}/analyses/depot/${d.id}`, { headers: getHeaders() });
-              allAnalyses.push(...ar.data);
+              const aRes = await axios.get(`${API}/analyses/depot/${depot.id}`, { headers: getHeaders() });
+              analysesCount = aRes.data.length;
+            } catch {}
+            allDepots.push({
+              id: depot.id,
+              nom: depot.nom,
+              project_url: depot.project_url,
+              branche: depot.branche,
+              user_id: user.id,
+              user_email: user.email,
+              created_at: depot.created_at?.split("T")[0] || "",
+              analyses_count: analysesCount,
+              is_active: true,
+            });
+          }
+        } catch {}
+      }
+      setDepots(allDepots);
+
+      // 4. Toutes les analyses (route admin)
+      const allAnalyses: Analyse[] = [];
+      for (const depot of allDepots) {
+        try {
+          const aRes = await axios.get(`${API}/analyses/depot/${depot.id}`, { headers: getHeaders() });
+          for (const a of aRes.data) {
+            allAnalyses.push({
+              id: a.id,
+              depot_id: depot.id,
+              depot_nom: depot.nom,
+              user_email: depot.user_email,
+              branche: a.branche || "—",
+              score_qualite: a.score_qualite || 0,
+              score_securite: a.score_securite || 0,
+              score_performance: a.score_performance || 0,
+              statut: a.statut,
+              created_at: a.created_at?.split("T")[0] || "",
+              nb_vulns: a.vulnerabilites?.length || 0,
+              vulnerabilites: a.vulnerabilites,
+            });
+          }
+        } catch {}
+      }
+      setAnalyses(allAnalyses);
+
+      // 5. Analyses Diff - avec correction des données
+      const allDiffs: AnalyseDiff[] = [];
+      for (const user of usersRes.data) {
+        try {
+          const depotsDiffRes = await axios.get(`${API}/depots/user/${user.id}`, { headers: getHeaders() });
+          for (const depot of depotsDiffRes.data) {
+            try {
+              const compRes = await axios.get(`${API}/comparaisons/depot/${depot.id}`, { headers: getHeaders() });
+              for (const comp of compRes.data) {
+                try {
+                  const aRes = await axios.get(`${API}/comparaisons/${comp.id}/analyses`, { headers: getHeaders() });
+                  for (const a of aRes.data) {
+                    allDiffs.push({
+                      id: a.id,
+                      projet_nom: depot.nom,
+                      user_email: user.email,
+                      from_branch: comp.from_branch,
+                      to_branch: comp.to_branch,
+                      score_qualite: a.score_qualite || 0,
+                      score_securite: a.score_securite || 0,
+                      resultat_statut: a.resultat_statut || a.statut,
+                      created_at: a.created_at || "",
+                    });
+                  }
+                } catch {}
+              }
             } catch {}
           }
         } catch {}
       }
-      setDepotsA(allDepots);
-      setAnalyses(allAnalyses);
-    } catch {}
-    finally { setLoadingA(false); }
-  };
+      setDiffs(allDiffs);
 
-  useEffect(() => {
-    if ((tab === "analyses" || tab === "depots") && users.length > 0) {
-      loadDepotsAnalyse();
+      // 6. Merge Requests
+      const allMR: MR[] = [];
+      for (const depot of allDepots) {
+        try {
+          const mrRes = await axios.get(`${API}/merge-requests/depot/${depot.id}`, { headers: getHeaders() });
+          for (const m of mrRes.data) {
+            allMR.push({
+              id: m.id,
+              projet_nom: depot.nom,
+              user_email: depot.user_email,
+              titre: m.titre || "—",
+              statut: m.statut,
+              type_mr: m.type_mr,
+              branche_source: m.branche_source,
+              branche_cible: m.branche_cible,
+              created_at: m.created_at?.split("T")[0] || "",
+              mr_url: m.mr_url,
+            });
+          }
+        } catch {}
+      }
+      setMrs(allMR);
+
+      // 7. Tests générés
+      const allTests: TestGenere[] = [];
+      for (const depot of allDepots) {
+        try {
+          const tRes = await axios.get(`${API}/tests/depot/${depot.id}`, { headers: getHeaders() });
+          for (const t of tRes.data) {
+            allTests.push({
+              id: t.id,
+              projet_nom: depot.nom,
+              user_email: depot.user_email,
+              langage: t.langage || "—",
+              framework: t.framework || "—",
+              nb_tests: t.nb_tests || 0,
+              statut: t.statut,
+              created_at: t.created_at?.split("T")[0] || "",
+            });
+          }
+        } catch {}
+      }
+      setTests(allTests);
+
+    } catch (err: any) {
+      console.error("Erreur chargement admin:", err);
+      if (err?.response?.status === 403) {
+        setError("Accès refusé — vous devez être administrateur.");
+      } else {
+        setError("Erreur de chargement des données.");
+      }
+    } finally {
+      setLoading(false);
     }
-  }, [tab, users]);
-
-  const openUser = async (u: User) => {
-    setSelUser(u);
-    try { const r = await axios.get(`${API}/admin/users/${u.id}/depots`, { headers: getHeaders() }); setUserDepots(r.data); }
-    catch { setUserDepots([]); }
   };
 
-  const toggleActive = async (u: User) => {
-    await axios.patch(`${API}/admin/users/${u.id}/active`, { is_active: !u.is_active }, { headers: getHeaders() });
-    const upd = { ...u, is_active: !u.is_active };
-    setUsers(p => p.map(x => x.id === u.id ? upd : x));
-    if (selUser?.id === u.id) setSelUser(upd);
-    loadAll();
-  };
+  useEffect(() => { loadData(); }, []);
 
-  const toggleRole = async (u: User) => {
-    const r = u.role === "admin" ? "user" : "admin";
-    await axios.patch(`${API}/admin/users/${u.id}/role`, { role: r }, { headers: getHeaders() });
-    const upd = { ...u, role: r };
-    setUsers(p => p.map(x => x.id === u.id ? upd : x));
-    if (selUser?.id === u.id) setSelUser(upd);
-  };
+  // ── Actions utilisateur ────────────────────────────────────────
+  async function toggleUser(id: number, active: boolean) {
+    try {
+      await axios.patch(`${API}/admin/users/${id}/active`, { is_active: !active }, { headers: getHeaders() });
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, is_active: !active } : u));
+    } catch (_) {}
+  }
 
-  const deleteUser = async (id: number) => {
-    if (!confirm("Supprimer cet utilisateur ?")) return;
-    await axios.delete(`${API}/admin/users/${id}`, { headers: getHeaders() });
-    setUsers(p => p.filter(x => x.id !== id));
-    if (selUser?.id === id) setSelUser(null);
-    loadAll();
-  };
+  async function changeRole(id: number, role: string) {
+    const nr = role === "admin" ? "user" : "admin";
+    try {
+      await axios.patch(`${API}/admin/users/${id}/role`, { role: nr }, { headers: getHeaders() });
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, role: nr } : u));
+    } catch (_) {}
+  }
 
-  const deleteDepot = async (id: number) => {
-    if (!confirm("Supprimer ce dépôt ?")) return;
-    await axios.delete(`${API}/admin/depots/${id}`, { headers: getHeaders() });
-    setDepots(p => p.filter(x => x.id !== id));
-    setUserDepots(p => p.filter(x => x.id !== id));
-    loadAll();
-  };
+  async function deleteUser(id: number) {
+    if (!confirm("Supprimer cet utilisateur et tous ses dépôts ?")) return;
+    try {
+      await axios.delete(`${API}/admin/users/${id}`, { headers: getHeaders() });
+      setUsers(prev => prev.filter(u => u.id !== id));
+      loadData(); // Recharger les données
+    } catch (_) {}
+  }
 
-  const adminCount    = stats?.admin_count ?? 0;
-  const userCount     = (stats?.total_users ?? 0) - adminCount;
-  const activeCount   = stats?.active_users ?? 0;
-  const inactiveCount = (stats?.total_users ?? 0) - activeCount;
-  const totalUsers    = stats?.total_users ?? 0;
-  const totalDepots   = stats?.total_depots ?? 0;
+  // ── Actions dépôts ────────────────────────────────────────────
+  async function deleteDepot(depotId: number) {
+    if (!confirm("Supprimer ce dépôt et toutes ses analyses ?")) return;
+    try {
+      await axios.delete(`${API}/admin/depots/${depotId}`, { headers: getHeaders() });
+      setDepots(prev => prev.filter(d => d.id !== depotId));
+      loadData();
+    } catch (_) {}
+  }
 
-  const topUsers = [...users]
-    .filter(u => u.depot_count > 0)
-    .sort((a, b) => b.depot_count - a.depot_count)
-    .slice(0, 8);
+  async function viewDepotAnalyses(depot: DepotItem) {
+    setSelectedDepot(depot);
+    const analysesDepot = analyses.filter(a => a.depot_id === depot.id);
+    setDepotAnalyses(analysesDepot);
+    setShowDepotModal(true);
+  }
 
-  const scoresMoyens = analyses.length > 0
-    ? Math.round(analyses.reduce((a, b) => a + (b.score_qualite || 0), 0) / analyses.length)
-    : 0;
-  const totalVulns = analyses.reduce((a, b) => a + (b.vulnerabilites?.length || 0), 0);
-
-  const filteredUsers   = users.filter(u =>
+  const filteredUsers = users.filter(u =>
     u.email.toLowerCase().includes(search.toLowerCase()) ||
     (u.username || "").toLowerCase().includes(search.toLowerCase())
   );
-  const filteredDepots  = depots.filter(d =>
+
+  const filteredDepots = depots.filter(d =>
     d.nom.toLowerCase().includes(search.toLowerCase()) ||
-    (d.owner_email || "").toLowerCase().includes(search.toLowerCase())
-  );
-  const filteredDepotsA = depotsA.filter(d =>
-    d.nom.toLowerCase().includes(search.toLowerCase()) ||
-    d.project_url.toLowerCase().includes(search.toLowerCase())
-  );
-  const filteredAnalyses = analyses.filter(a =>
-    a.branche.toLowerCase().includes(search.toLowerCase()) ||
-    a.statut.toLowerCase().includes(search.toLowerCase())
+    d.user_email.toLowerCase().includes(search.toLowerCase())
   );
 
-  const colorScore = (s: number) => {
-    if (!s) return "#94a3b8";
-    if (s >= 75) return "#10b981";
-    if (s >= 50) return "#f59e0b";
-    return "#ef4444";
-  };
-
-  const colorSeverite = (s: string) => {
-    if (s === "CRITIQUE") return "#ef4444";
-    if (s === "HAUTE")    return "#f97316";
-    if (s === "MOYENNE")  return "#eab308";
-    return "#10b981";
-  };
-
-  const navItems = [
-    { key: "overview",  icon: "▦", label: "Vue globale",   count: null },
-    { key: "users",     icon: "◉", label: "Utilisateurs",  count: users.length },
-    { key: "depots",    icon: "◈", label: "Dépôts",        count: depots.length },
-    { key: "analyses",  icon: "◎", label: "Analyses IA",   count: analyses.length },
+  const TABS = [
+    { id: "overview" as Tab, icon: "🏠", label: "Vue d'ensemble" },
+    { id: "users"    as Tab, icon: "👥", label: `Utilisateurs (${users.length})` },
+    { id: "depots"   as Tab, icon: "📁", label: `Dépôts (${depots.length})` },
+    { id: "analyses" as Tab, icon: "🔍", label: `Analyses (${analyses.length})` },
+    { id: "diffs"    as Tab, icon: "⚡", label: `Analyse Diff (${diffs.length})` },
+    { id: "tests"    as Tab, icon: "🧪", label: `Tests (${tests.length})` },
+    { id: "mrs"      as Tab, icon: "🔀", label: `Merge Requests (${mrs.length})` },
+    { id: "stats"    as Tab, icon: "📊", label: "Statistiques" },
   ];
 
-  return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  if (loading) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
+        <div style={{ width: 44, height: 44, border: "3px solid #e2e8f0", borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+        <p style={{ color: "#64748b", fontSize: 14 }}>Chargement du panneau admin...</p>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
 
-        .admin {
-          min-height: 100vh;
-          background: #f8fafc;
-          font-family: 'Inter', sans-serif;
-          color: #1e293b;
-          display: flex;
-          flex-direction: column;
-        }
-
-        /* Topbar */
-        .topbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 16px 32px;
-          background: white;
-          border-bottom: 1px solid #eef2ff;
-          position: sticky;
-          top: 0;
-          z-index: 10;
-        }
-        .topbar-left {
-          display: flex;
-          align-items: center;
-          gap: 16px;
-        }
-        .logo {
-          width: 36px;
-          height: 36px;
-          background: linear-gradient(135deg, #6366f1, #8b5cf6);
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-weight: 700;
-          font-size: 16px;
-          color: white;
-        }
-        .title {
-          font-size: 18px;
-          font-weight: 700;
-          color: #0f172a;
-        }
-        .badge-admin {
-          background: #eef2ff;
-          color: #6366f1;
-          padding: 4px 12px;
-          border-radius: 30px;
-          font-size: 11px;
-          font-weight: 600;
-        }
-        .back-btn {
-          background: #f1f5f9;
-          border: none;
-          border-radius: 8px;
-          padding: 6px 14px;
-          font-size: 12px;
-          cursor: pointer;
-          color: #475569;
-          transition: all 0.2s;
-        }
-        .back-btn:hover {
-          background: #e2e8f0;
-          color: #0f172a;
-        }
-
-        /* Body */
-        .body {
-          display: flex;
-          flex: 1;
-          overflow: hidden;
-        }
-
-        /* Sidebar */
-        .sidebar {
-          width: 260px;
-          background: white;
-          border-right: 1px solid #eef2ff;
-          display: flex;
-          flex-direction: column;
-          padding: 24px 16px;
-          overflow-y: auto;
-        }
-        .nav-item {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 10px 12px;
-          border-radius: 10px;
-          cursor: pointer;
-          transition: all 0.2s;
-          color: #475569;
-          font-size: 14px;
-          font-weight: 500;
-          margin-bottom: 2px;
-        }
-        .nav-item:hover {
-          background: #f8fafc;
-          color: #0f172a;
-        }
-        .nav-item.active {
-          background: #eef2ff;
-          color: #6366f1;
-        }
-        .nav-icon {
-          font-size: 18px;
-          width: 24px;
-        }
-        .nav-badge {
-          margin-left: auto;
-          background: #f1f5f9;
-          padding: 2px 8px;
-          border-radius: 20px;
-          font-size: 11px;
-          font-weight: 500;
-          color: #64748b;
-        }
-        .sidebar-stats {
-          margin-top: auto;
-          padding-top: 24px;
-          border-top: 1px solid #f1f5f9;
-        }
-        .mini-stat {
-          background: #f8fafc;
-          border-radius: 12px;
-          padding: 12px;
-          margin-bottom: 8px;
-        }
-        .mini-stat-val {
-          font-size: 20px;
-          font-weight: 700;
-        }
-        .mini-stat-lbl {
-          font-size: 10px;
-          color: #64748b;
-          margin-top: 2px;
-        }
-
-        /* Main */
-        .main {
-          flex: 1;
-          overflow-y: auto;
-          padding: 24px 32px;
-        }
-        .main::-webkit-scrollbar {
-          width: 6px;
-        }
-        .main::-webkit-scrollbar-track {
-          background: #f1f5f9;
-          border-radius: 3px;
-        }
-        .main::-webkit-scrollbar-thumb {
-          background: #cbd5e1;
-          border-radius: 3px;
-        }
-
-        .page-header {
-          margin-bottom: 24px;
-        }
-        .page-title {
-          font-size: 24px;
-          font-weight: 700;
-          color: #0f172a;
-          letter-spacing: -0.02em;
-        }
-        .page-sub {
-          font-size: 13px;
-          color: #64748b;
-          margin-top: 4px;
-        }
-
-        /* Stats Grid */
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 16px;
-          margin-bottom: 24px;
-        }
-        .stat-card {
-          background: white;
-          border: 1px solid #eef2ff;
-          border-radius: 20px;
-          padding: 20px;
-          transition: all 0.2s;
-        }
-        .stat-card:hover {
-          border-color: #e2e8f0;
-          transform: translateY(-2px);
-        }
-        .stat-card-icon {
-          font-size: 24px;
-          margin-bottom: 12px;
-        }
-        .stat-card-val {
-          font-size: 32px;
-          font-weight: 700;
-          margin-bottom: 4px;
-        }
-        .stat-card-lbl {
-          font-size: 12px;
-          color: #64748b;
-          font-weight: 500;
-        }
-
-        /* Charts */
-        .charts-row {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 20px;
-          margin-bottom: 24px;
-        }
-        .chart-card {
-          background: white;
-          border: 1px solid #eef2ff;
-          border-radius: 20px;
-          padding: 20px;
-        }
-        .chart-title {
-          font-size: 14px;
-          font-weight: 600;
-          color: #0f172a;
-          margin-bottom: 4px;
-        }
-        .chart-sub {
-          font-size: 11px;
-          color: #64748b;
-          margin-bottom: 16px;
-        }
-        .legend {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          margin-top: 16px;
-        }
-        .legend-row {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .legend-dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 50%;
-        }
-        .legend-lbl {
-          flex: 1;
-          font-size: 12px;
-          color: #475569;
-        }
-        .legend-val {
-          font-size: 12px;
-          font-weight: 600;
-          color: #0f172a;
-        }
-
-        .big-chart {
-          background: white;
-          border: 1px solid #eef2ff;
-          border-radius: 20px;
-          padding: 20px;
-          margin-bottom: 24px;
-        }
-
-        /* Search */
-        .search-bar {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          margin-bottom: 20px;
-        }
-        .search-wrapper {
-          position: relative;
-          flex: 1;
-        }
-        .search-icon {
-          position: absolute;
-          left: 14px;
-          top: 50%;
-          transform: translateY(-50%);
-          color: #94a3b8;
-          font-size: 14px;
-        }
-        .search-input {
-          width: 100%;
-          padding: 10px 16px 10px 42px;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          font-size: 14px;
-          background: white;
-        }
-        .search-input:focus {
-          outline: none;
-          border-color: #6366f1;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-        }
-        .search-count {
-          font-size: 13px;
-          color: #64748b;
-        }
-
-        /* Table */
-        .table-container {
-          background: white;
-          border: 1px solid #eef2ff;
-          border-radius: 20px;
-          overflow: auto;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th {
-          text-align: left;
-          padding: 14px 20px;
-          font-size: 12px;
-          font-weight: 600;
-          color: #64748b;
-          background: #fefefe;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        td {
-          padding: 14px 20px;
-          font-size: 13px;
-          border-bottom: 1px solid #f8fafc;
-          vertical-align: middle;
-        }
-        .table-row {
-          cursor: pointer;
-          transition: background 0.15s;
-        }
-        .table-row:hover {
-          background: #faf9fe;
-        }
-
-        /* Badges */
-        .badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 4px 12px;
-          border-radius: 30px;
-          font-size: 11px;
-          font-weight: 500;
-        }
-        .badge-admin {
-          background: #eef2ff;
-          color: #6366f1;
-        }
-        .badge-user {
-          background: #f1f5f9;
-          color: #475569;
-        }
-        .badge-active {
-          background: #ecfdf5;
-          color: #10b981;
-        }
-        .badge-inactive {
-          background: #fef2f2;
-          color: #ef4444;
-        }
-        .badge-branch {
-          background: #eef2ff;
-          color: #6366f1;
-        }
-        .badge-ok {
-          background: #ecfdf5;
-          color: #10b981;
-        }
-        .badge-err {
-          background: #fef2f2;
-          color: #ef4444;
-        }
-        .vuln-chip {
-          padding: 4px 12px;
-          border-radius: 30px;
-          font-size: 11px;
-          font-weight: 500;
-        }
-        .vc-zero {
-          background: #ecfdf5;
-          color: #10b981;
-        }
-        .vc-some {
-          background: #fef2f2;
-          color: #ef4444;
-        }
-
-        /* Score cell */
-        .score-cell {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .score-value {
-          font-size: 13px;
-          font-weight: 600;
-          font-family: monospace;
-          min-width: 32px;
-        }
-        .score-bar {
-          flex: 1;
-          height: 4px;
-          background: #e2e8f0;
-          border-radius: 2px;
-          overflow: hidden;
-        }
-        .score-bar-fill {
-          height: 4px;
-          border-radius: 2px;
-        }
-
-        /* Actions */
-        .actions {
-          display: flex;
-          gap: 6px;
-        }
-        .action-btn {
-          width: 30px;
-          height: 30px;
-          background: #f1f5f9;
-          border: none;
-          border-radius: 8px;
-          cursor: pointer;
-          color: #64748b;
-          transition: all 0.2s;
-        }
-        .action-btn:hover {
-          background: #e2e8f0;
-          color: #0f172a;
-        }
-        .action-btn-danger {
-          background: #fef2f2;
-          color: #ef4444;
-        }
-        .action-btn-danger:hover {
-          background: #fee2e2;
-        }
-
-        /* Panel */
-        .panel {
-          width: 380px;
-          background: white;
-          border-left: 1px solid #eef2ff;
-          overflow-y: auto;
-          padding: 24px;
-          animation: slideIn 0.2s ease;
-        }
-        @keyframes slideIn {
-          from { transform: translateX(20px); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
-        .panel-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          margin-bottom: 20px;
-        }
-        .panel-title {
-          font-size: 18px;
-          font-weight: 700;
-          color: #0f172a;
-        }
-        .panel-sub {
-          font-size: 11px;
-          color: #64748b;
-          margin-top: 2px;
-        }
-        .panel-close {
-          background: #f1f5f9;
-          border: none;
-          border-radius: 8px;
-          width: 28px;
-          height: 28px;
-          cursor: pointer;
-          font-size: 16px;
-          color: #64748b;
-        }
-        .panel-close:hover {
-          background: #e2e8f0;
-        }
-        .info-row {
-          display: flex;
-          padding: 10px 0;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .info-label {
-          width: 100px;
-          font-size: 11px;
-          font-weight: 600;
-          color: #64748b;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-        }
-        .info-value {
-          flex: 1;
-          font-size: 13px;
-          color: #1e293b;
-          font-family: monospace;
-        }
-        .panel-buttons {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          margin: 20px 0;
-        }
-        .panel-btn {
-          padding: 10px;
-          border-radius: 10px;
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s;
-          text-align: center;
-        }
-        .panel-btn-green {
-          background: #ecfdf5;
-          color: #10b981;
-          border: 1px solid #bbf7d0;
-        }
-        .panel-btn-green:hover {
-          background: #d1fae5;
-        }
-        .panel-btn-purple {
-          background: #eef2ff;
-          color: #6366f1;
-          border: 1px solid #c7d2fe;
-        }
-        .panel-btn-purple:hover {
-          background: #e0e7ff;
-        }
-        .panel-btn-red {
-          background: #fef2f2;
-          color: #ef4444;
-          border: 1px solid #fee2e2;
-        }
-        .panel-btn-red:hover {
-          background: #fee2e2;
-        }
-
-        .depot-item {
-          background: #f8fafc;
-          border-radius: 12px;
-          padding: 12px;
-          margin-bottom: 8px;
-        }
-        .depot-name {
-          font-size: 13px;
-          font-weight: 600;
-          margin-bottom: 4px;
-        }
-        .depot-url {
-          font-size: 10px;
-          color: #64748b;
-          font-family: monospace;
-          word-break: break-all;
-        }
-
-        .scores-panel {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 12px;
-          margin: 20px 0;
-        }
-        .score-panel-card {
-          background: #f8fafc;
-          border-radius: 12px;
-          padding: 12px;
-          text-align: center;
-        }
-        .score-panel-value {
-          font-size: 24px;
-          font-weight: 700;
-        }
-        .score-panel-label {
-          font-size: 10px;
-          color: #64748b;
-          margin-top: 4px;
-        }
-
-        .vuln-mini {
-          background: #f8fafc;
-          border: 1px solid #eef2ff;
-          border-left: 3px solid;
-          border-radius: 10px;
-          padding: 12px;
-          margin-bottom: 8px;
-        }
-        .vuln-mini-header {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-bottom: 6px;
-        }
-        .vuln-severity {
-          font-size: 9px;
-          font-weight: 700;
-          padding: 2px 8px;
-          border-radius: 20px;
-        }
-        .vuln-type {
-          font-size: 12px;
-          font-weight: 600;
-        }
-        .vuln-location {
-          font-size: 10px;
-          color: #64748b;
-          font-family: monospace;
-          margin-bottom: 6px;
-        }
-        .vuln-suggestion {
-          font-size: 11px;
-          color: #475569;
-          background: white;
-          padding: 6px 8px;
-          border-radius: 8px;
-        }
-
-        .empty-state {
-          text-align: center;
-          padding: 60px 20px;
-          color: #94a3b8;
-        }
-        .loading-state {
-          text-align: center;
-          padding: 40px;
-          color: #64748b;
-        }
-        .spinner {
-          width: 20px;
-          height: 20px;
-          border: 2px solid #e2e8f0;
-          border-top-color: #6366f1;
-          border-radius: 50%;
-          animation: spin 0.6s linear infinite;
-          display: inline-block;
-          margin-right: 8px;
-        }
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-
-        @media (max-width: 900px) {
-          .sidebar { display: none; }
-          .stats-grid { grid-template-columns: repeat(2, 1fr); }
-          .charts-row { grid-template-columns: 1fr; }
-          .panel { width: 100%; }
-        }
-      `}</style>
-
-      <div className="admin">
-        {/* Topbar */}
-        <div className="topbar">
-          <div className="topbar-left">
-            <div className="logo">A</div>
-            <span className="title">AuditPlatform</span>
-            <span className="badge-admin">ADMIN</span>
-          </div>
-          <button className="back-btn" onClick={() => router.push("/dashboard")}>← Dashboard</button>
+  if (error) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#f1f5f9", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ background: "#fff", borderRadius: 14, padding: 36, textAlign: "center", border: "1px solid #fee2e2" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🚫</div>
+          <p style={{ color: "#dc2626", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>{error}</p>
+          <button onClick={loadData} style={{ padding: "9px 20px", background: "#6366f1", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600 }}>
+            Réessayer
+          </button>
         </div>
+      </div>
+    );
+  }
 
-        <div className="body">
-          {/* Sidebar */}
-          <div className="sidebar">
-            {navItems.map(item => (
-              <div
-                key={item.key}
-                className={`nav-item ${tab === item.key ? "active" : ""}`}
-                onClick={() => { setTab(item.key as any); setSearch(""); setSelUser(null); setSelAnalyse(null); }}
-              >
-                <span className="nav-icon">{item.icon}</span>
-                {item.label}
-                {item.count !== null && <span className="nav-badge">{item.count}</span>}
-              </div>
-            ))}
+  return (
+    <div style={{ minHeight: "100vh", background: "#f1f5f9", fontFamily: "system-ui, -apple-system, sans-serif" }}>
 
-            <div className="sidebar-stats">
-              <div className="mini-stat">
-                <div className="mini-stat-val" style={{ color: "#6366f1" }}>{totalUsers}</div>
-                <div className="mini-stat-lbl">Utilisateurs</div>
-              </div>
-              <div className="mini-stat">
-                <div className="mini-stat-val" style={{ color: "#f97316" }}>{totalDepots}</div>
-                <div className="mini-stat-lbl">Dépôts</div>
-              </div>
-              <div className="mini-stat">
-                <div className="mini-stat-val" style={{ color: "#10b981" }}>{depotsA.length}</div>
-                <div className="mini-stat-lbl">Projets IA</div>
-              </div>
-              <div className="mini-stat">
-                <div className="mini-stat-val" style={{ color: "#a855f7" }}>{analyses.length}</div>
-                <div className="mini-stat-lbl">Analyses</div>
+      {/* HEADER */}
+      <div style={{ background: "linear-gradient(135deg,#0f172a 0%,#1e3a5f 100%)", padding: "20px 28px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 42, height: 42, borderRadius: 10, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🛡️</div>
+          <div>
+            <h1 style={{ margin: 0, color: "#fff", fontSize: 20, fontWeight: 800 }}>Panneau Administration</h1>
+            <p style={{ margin: 0, color: "#94a3b8", fontSize: 12 }}>AuditPlatform · PFE 2025 · Neopolis</p>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button onClick={loadData} style={{ padding: "6px 14px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 8, color: "#fff", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+            ↻ Actualiser
+          </button>
+        </div>
+      </div>
+
+      {/* NAV TABS */}
+      <div style={{ background: "#fff", borderBottom: "2px solid #e2e8f0", padding: "0 28px", display: "flex", gap: 0, overflowX: "auto" }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ padding: "13px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? "#6366f1" : "#64748b", borderBottom: `3px solid ${tab === t.id ? "#6366f1" : "transparent"}`, display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" }}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* CONTENT */}
+      <div style={{ padding: "28px", maxWidth: 1400, margin: "0 auto" }}>
+
+        {/* VUE D'ENSEMBLE */}
+        {tab === "overview" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 14, marginBottom: 28 }}>
+              <StatCard icon="👥" value={stats.total_users}   label="Utilisateurs"    sub={`${stats.active_users} actifs`}     color="#6366f1" />
+              <StatCard icon="🗂️" value={stats.total_depots}  label="Dépôts GitLab"  sub="tous utilisateurs"                  color="#0ea5e9" />
+              <StatCard icon="🔍" value={analyses.length}     label="Analyses IA"     sub="branche complète"                   color="#22c55e" />
+              <StatCard icon="⚡" value={diffs.length}        label="Analyses Diff"   sub="comparaison branches"               color="#ec4899" />
+              <StatCard icon="🔀" value={mrs.length}          label="Merge Requests"  sub="créées par l'IA"                    color="#f59e0b" />
+              <StatCard icon="🧪" value={tests.length}        label="Tests générés"   sub="par le LLM"                         color="#8b5cf6" />
+              <StatCard icon="👑" value={stats.admin_count}   label="Admins"          sub="accès complet"                      color="#ef4444" />
+              <StatCard icon="✅" value={`${analyses.length ? Math.round(analyses.filter(a => a.statut === "termine").length / analyses.length * 100) : 0}%`} label="Taux succès" sub="analyses terminées" color="#14b8a6" />
+            </div>
+
+            <p style={{ fontWeight: 700, fontSize: 15, color: "#0f172a", marginBottom: 12 }}>Dernières analyses IA</p>
+            <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr><TH>Dépôt</TH><TH>Utilisateur</TH><TH>Qualité</TH><TH>Sécurité</TH><TH>Perf.</TH><TH>Vulns</TH><TH>Statut</TH><TH>Date</TH></tr></thead>
+                  <tbody>
+                    {analyses.slice(0, 10).map((a, i) => (
+                      <tr key={a.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <TD><b>📁 {a.depot_nom}</b></TD>
+                        <TD><span style={{ color: "#6366f1", fontSize: 12 }}>{a.user_email}</span></TD>
+                        <TD center><ScorePill score={a.score_qualite} /></TD>
+                        <TD center><ScorePill score={a.score_securite} /></TD>
+                        <TD center><ScorePill score={a.score_performance} /></TD>
+                        <TD center><span style={{ background: a.nb_vulns > 5 ? "#fef2f2" : a.nb_vulns > 0 ? "#fffbeb" : "#f0fdf4", color: a.nb_vulns > 5 ? "#dc2626" : a.nb_vulns > 0 ? "#d97706" : "#16a34a", fontWeight: 700, padding: "2px 10px", borderRadius: 20, fontSize: 12 }}>{a.nb_vulns} vulns</span></TD>
+                        <TD center><StatusBadge status={a.statut} /></TD>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 12 }}>{a.created_at}</span></TD>
+                      </tr>
+                    ))}
+                    {analyses.length === 0 && <EmptyRow cols={8} message="Aucune analyse disponible" />}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
+        )}
 
-          {/* Main */}
-          <div className="main">
-            {/* OVERVIEW */}
-            {tab === "overview" && stats && (
-              <>
-                <div className="page-header">
-                  <div className="page-title">Vue d'ensemble</div>
-                  <div className="page-sub">
-                    {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-                  </div>
-                </div>
-
-                <div className="stats-grid">
-                  {[
-                    { icon: "👥", label: "Utilisateurs",   val: totalUsers,    color: "#6366f1" },
-                    { icon: "📁", label: "Dépôts",         val: totalDepots,   color: "#f97316" },
-                    { icon: "🤖", label: "Projets IA",     val: depotsA.length, color: "#10b981" },
-                    { icon: "🔍", label: "Analyses",       val: analyses.length, color: "#a855f7" },
-                  ].map(s => (
-                    <div key={s.label} className="stat-card">
-                      <div className="stat-card-icon">{s.icon}</div>
-                      <div className="stat-card-val" style={{ color: s.color }}>{s.val}</div>
-                      <div className="stat-card-lbl">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="charts-row">
-                  <div className="chart-card">
-                    <div className="chart-title">Rôles utilisateurs</div>
-                    <div className="chart-sub">Admins vs Utilisateurs</div>
-                    <DonutChart
-                      data={[adminCount, userCount]}
-                      labels={["Admins", "Utilisateurs"]}
-                      colors={["#a855f7", "#10b981"]}
-                      total={totalUsers}
-                      center="comptes"
-                    />
-                    <div className="legend">
-                      <div className="legend-row">
-                        <div className="legend-dot" style={{ background: "#a855f7" }} />
-                        <span className="legend-lbl">Admins</span>
-                        <span className="legend-val">{adminCount}</span>
-                      </div>
-                      <div className="legend-row">
-                        <div className="legend-dot" style={{ background: "#10b981" }} />
-                        <span className="legend-lbl">Utilisateurs</span>
-                        <span className="legend-val">{userCount}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="chart-card">
-                    <div className="chart-title">Statut des comptes</div>
-                    <div className="chart-sub">Actifs vs Inactifs</div>
-                    <DonutChart
-                      data={[activeCount, inactiveCount]}
-                      labels={["Actifs", "Inactifs"]}
-                      colors={["#10b981", "#ef4444"]}
-                      total={totalUsers}
-                      center="comptes"
-                    />
-                    <div className="legend">
-                      <div className="legend-row">
-                        <div className="legend-dot" style={{ background: "#10b981" }} />
-                        <span className="legend-lbl">Actifs</span>
-                        <span className="legend-val">{activeCount}</span>
-                      </div>
-                      <div className="legend-row">
-                        <div className="legend-dot" style={{ background: "#ef4444" }} />
-                        <span className="legend-lbl">Inactifs</span>
-                        <span className="legend-val">{inactiveCount}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="chart-card">
-                    <div className="chart-title">Ressources</div>
-                    <div className="chart-sub">Utilisateurs vs Dépôts</div>
-                    <DonutChart
-                      data={[totalUsers, totalDepots]}
-                      labels={["Utilisateurs", "Dépôts"]}
-                      colors={["#6366f1", "#f97316"]}
-                      total={totalUsers + totalDepots}
-                      center="total"
-                    />
-                    <div className="legend">
-                      <div className="legend-row">
-                        <div className="legend-dot" style={{ background: "#6366f1" }} />
-                        <span className="legend-lbl">Utilisateurs</span>
-                        <span className="legend-val">{totalUsers}</span>
-                      </div>
-                      <div className="legend-row">
-                        <div className="legend-dot" style={{ background: "#f97316" }} />
-                        <span className="legend-lbl">Dépôts</span>
-                        <span className="legend-val">{totalDepots}</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {topUsers.length > 0 && (
-                  <div className="big-chart">
-                    <div className="chart-title">Dépôts par utilisateur</div>
-                    <div className="chart-sub">Top {topUsers.length} contributeurs</div>
-                    <BarChart
-                      labels={topUsers.map(u => u.username || u.email.split("@")[0])}
-                      data={topUsers.map(u => u.depot_count)}
-                      color="#f97316"
-                    />
-                  </div>
-                )}
-
-                <div className="page-header" style={{ marginTop: 24, marginBottom: 16 }}>
-                  <div className="page-title">Derniers inscrits</div>
-                </div>
-                <div className="table-container">
-                  <table>
-                    <thead>
-                      <tr><th>ID</th><th>Email</th><th>Username</th><th>Rôle</th><th>Statut</th><th>Dépôts</th></tr>
-                    </thead>
-                    <tbody>
-                      {users.slice(0, 6).map(u => (
-                        <tr key={u.id} className="table-row" onClick={() => { setTab("users"); openUser(u); }}>
-                          <td style={{ fontFamily: "monospace", color: "#64748b" }}>#{u.id}</td>
-                          <td style={{ color: "#6366f1" }}>{u.email}</td>
-                          <td>{u.username || "—"}</td>
-                          <td><span className={`badge ${u.role === "admin" ? "badge-admin" : "badge-user"}`}>{u.role}</span></td>
-                          <td><span className={`badge ${u.is_active ? "badge-active" : "badge-inactive"}`}>{u.is_active ? "Actif" : "Inactif"}</span></td>
-                          <td>{u.depot_count}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-
-            {/* USERS */}
-            {tab === "users" && (
-              <>
-                <div className="page-header">
-                  <div className="page-title">Utilisateurs</div>
-                  <div className="page-sub">{users.length} comptes enregistrés</div>
-                </div>
-
-                <div className="search-bar">
-                  <div className="search-wrapper">
-                    <span className="search-icon">🔍</span>
-                    <input className="search-input" placeholder="Rechercher par email ou username..." value={search} onChange={e => setSearch(e.target.value)} />
-                  </div>
-                  <span className="search-count">{filteredUsers.length} résultat(s)</span>
-                </div>
-
-                <div className="table-container">
-                  <table>
-                    <thead>
-                      <tr><th>ID</th><th>Email</th><th>Username</th><th>Rôle</th><th>Statut</th><th>Dépôts</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody>
-                      {filteredUsers.map(u => (
-                        <tr key={u.id} className="table-row" onClick={() => openUser(u)}>
-                          <td style={{ fontFamily: "monospace", color: "#64748b" }}>#{u.id}</td>
-                          <td style={{ color: "#6366f1" }}>{u.email}</td>
-                          <td>{u.username || "—"}</td>
-                          <td><span className={`badge ${u.role === "admin" ? "badge-admin" : "badge-user"}`}>{u.role}</span></td>
-                          <td><span className={`badge ${u.is_active ? "badge-active" : "badge-inactive"}`}>{u.is_active ? "Actif" : "Inactif"}</span></td>
-                          <td>{u.depot_count}</td>
-                          <td onClick={e => e.stopPropagation()}>
-                            <div className="actions">
-                              <button className="action-btn" title={u.is_active ? "Désactiver" : "Activer"} onClick={() => toggleActive(u)}>{u.is_active ? "⏸" : "▶"}</button>
-                              <button className="action-btn" title="Changer rôle" onClick={() => toggleRole(u)}>🛡</button>
-                              <button className="action-btn action-btn-danger" title="Supprimer" onClick={() => deleteUser(u.id)}>🗑</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {filteredUsers.length === 0 && <tr><td colSpan={7} className="empty-state">Aucun utilisateur trouvé</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-
-            {/* DEPOTS */}
-            {tab === "depots" && (
-              <>
-                <div className="page-header">
-                  <div className="page-title">Dépôts GitLab</div>
-                  <div className="page-sub">{depots.length} dépôts enregistrés · {depotsA.length} projets analysés</div>
-                </div>
-
-                <div className="search-bar">
-                  <div className="search-wrapper">
-                    <span className="search-icon">🔍</span>
-                    <input className="search-input" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
-                  </div>
-                  <span className="search-count">{filteredDepots.length + filteredDepotsA.length} résultat(s)</span>
-                </div>
-
-                <div className="page-header" style={{ marginTop: 24, marginBottom: 16 }}>
-                  <div className="page-title">Dépôts configurés</div>
-                  <div className="page-sub">{depots.length} dépôts</div>
-                </div>
-                <div className="table-container" style={{ marginBottom: 32 }}>
-                  <table>
-                    <thead><tr><th>ID</th><th>Nom</th><th>Branche principale</th><th>Propriétaire</th><th>Actions</th></tr></thead>
-                    <tbody>
-                      {filteredDepots.map(d => (
-                        <tr key={d.id} className="table-row">
-                          <td style={{ fontFamily: "monospace", color: "#64748b" }}>#{d.id}</td>
-                          <td style={{ fontWeight: 600 }}>{d.nom}</td>
-                          <td style={{ fontFamily: "monospace", fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{d.url_branche_principale || "—"}</td>
-                          <td>{d.owner_email || `user #${d.proprietaire_id}`}</td>
-                          <td><button className="action-btn action-btn-danger" onClick={() => deleteDepot(d.id)}>🗑</button></td>
-                        </tr>
-                      ))}
-                      {filteredDepots.length === 0 && <tr><td colSpan={5} className="empty-state">Aucun dépôt</td></tr>}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="page-header" style={{ marginBottom: 16 }}>
-                  <div className="page-title">Projets analysés par IA</div>
-                  <div className="page-sub">{depotsA.length} projets</div>
-                </div>
-                {loadingA ? (
-                  <div className="loading-state"><div className="spinner" /> Chargement...</div>
-                ) : (
-                  <div className="table-container">
-                    <table>
-                      <thead><tr><th>ID</th><th>Nom</th><th>URL GitLab</th><th>Branche</th><th>Date</th></tr></thead>
-                      <tbody>
-                        {filteredDepotsA.map(d => (
-                          <tr key={d.id} className="table-row">
-                            <td style={{ fontFamily: "monospace", color: "#64748b" }}>#{d.id}</td>
-                            <td style={{ fontWeight: 600 }}>{d.nom}</td>
-                            <td style={{ fontFamily: "monospace", fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{d.project_url}</td>
-                            <td><span className="badge badge-branch">{d.branche}</span></td>
-                            <td style={{ fontFamily: "monospace", fontSize: 12 }}>{new Date(d.created_at).toLocaleDateString("fr-FR")}</td>
-                          </tr>
-                        ))}
-                        {filteredDepotsA.length === 0 && <tr><td colSpan={5} className="empty-state">Aucun projet analysé</td></tr>}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ANALYSES */}
-            {tab === "analyses" && (
-              <>
-                <div className="page-header">
-                  <div className="page-title">Analyses IA</div>
-                  <div className="page-sub">{analyses.length} analyses · score moyen : {scoresMoyens}% · {totalVulns} vulnérabilité(s)</div>
-                </div>
-
-                <div className="stats-grid">
-                  <div className="stat-card"><div className="stat-card-val" style={{ color: "#6366f1" }}>{analyses.length}</div><div className="stat-card-lbl">Total analyses</div></div>
-                  <div className="stat-card"><div className="stat-card-val" style={{ color: colorScore(scoresMoyens) }}>{scoresMoyens ? `${scoresMoyens}%` : "—"}</div><div className="stat-card-lbl">Score moyen</div></div>
-                  <div className="stat-card"><div className="stat-card-val" style={{ color: totalVulns > 0 ? "#ef4444" : "#10b981" }}>{totalVulns}</div><div className="stat-card-lbl">Vulnérabilités</div></div>
-                  <div className="stat-card"><div className="stat-card-val" style={{ color: "#10b981" }}>{analyses.filter(a => a.statut === "termine").length}</div><div className="stat-card-lbl">Terminées</div></div>
-                </div>
-
-                <div className="search-bar">
-                  <div className="search-wrapper">
-                    <span className="search-icon">🔍</span>
-                    <input className="search-input" placeholder="Rechercher par branche ou statut..." value={search} onChange={e => setSearch(e.target.value)} />
-                  </div>
-                  <span className="search-count">{filteredAnalyses.length} résultat(s)</span>
-                </div>
-
-                {loadingA ? (
-                  <div className="loading-state"><div className="spinner" /> Chargement...</div>
-                ) : (
-                  <div className="table-container">
-                    <table>
-                      <thead><tr><th>ID</th><th>Date</th><th>Branche</th><th>Qualité</th><th>Sécurité</th><th>Performance</th><th>Vulns</th><th>Statut</th></tr></thead>
-                      <tbody>
-                        {filteredAnalyses.map(a => {
-                          const v = a.vulnerabilites?.length || 0;
-                          return (
-                            <tr key={a.id} className="table-row" onClick={() => setSelAnalyse(a)}>
-                              <td style={{ fontFamily: "monospace", color: "#64748b" }}>#{a.id}</td>
-                              <td style={{ fontFamily: "monospace", fontSize: 12 }}>{new Date(a.created_at).toLocaleDateString("fr-FR")}</td>
-                              <td><span className="badge badge-branch">{a.branche}</span></td>
-                              {[a.score_qualite, a.score_securite, a.score_performance].map((s, i) => (
-                                <td key={i}>
-                                  <div className="score-cell">
-                                    <span className="score-value" style={{ color: colorScore(s) }}>{s ?? "—"}</span>
-                                    <div className="score-bar"><div className="score-bar-fill" style={{ width: `${s ?? 0}%`, background: colorScore(s) }} /></div>
-                                  </div>
-                                </td>
-                              ))}
-                              <td><span className={`vuln-chip ${v === 0 ? "vc-zero" : "vc-some"}`}>{v === 0 ? "✓ 0" : `⚠ ${v}`}</span></td>
-                              <td><span className={`badge ${a.statut === "termine" ? "badge-ok" : "badge-err"}`}>{a.statut}</span></td>
-                            </tr>
-                          );
-                        })}
-                        {filteredAnalyses.length === 0 && <tr><td colSpan={8} className="empty-state">Aucune analyse trouvée</td></tr>}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Panel Utilisateur */}
-          {selUser && tab === "users" && (
-            <div className="panel">
-              <div className="panel-header">
-                <div>
-                  <div className="panel-title">{selUser.username || selUser.email}</div>
-                  <div className="panel-sub">Détails du compte</div>
-                </div>
-                <button className="panel-close" onClick={() => setSelUser(null)}>✕</button>
-              </div>
-              <div className="info-row"><div className="info-label">ID</div><div className="info-value">#{selUser.id}</div></div>
-              <div className="info-row"><div className="info-label">Email</div><div className="info-value">{selUser.email}</div></div>
-              <div className="info-row"><div className="info-label">Username</div><div className="info-value">{selUser.username || "—"}</div></div>
-              <div className="info-row"><div className="info-label">Rôle</div><div className="info-value">{selUser.role}</div></div>
-              <div className="info-row"><div className="info-label">Statut</div><div className="info-value">{selUser.is_active ? "Actif" : "Inactif"}</div></div>
-              <div className="info-row"><div className="info-label">Dépôts</div><div className="info-value">{selUser.depot_count}</div></div>
-              <div className="info-row"><div className="info-label">Inscrit le</div><div className="info-value">{selUser.created_at ? new Date(selUser.created_at).toLocaleDateString() : "—"}</div></div>
-
-              <div className="panel-buttons">
-                <button className={`panel-btn ${selUser.is_active ? "panel-btn-red" : "panel-btn-green"}`} onClick={() => toggleActive(selUser)}>
-                  {selUser.is_active ? "⏸ Désactiver" : "▶ Activer"}
-                </button>
-                <button className="panel-btn panel-btn-purple" onClick={() => toggleRole(selUser)}>
-                  🛡 Passer en {selUser.role === "admin" ? "user" : "admin"}
-                </button>
-              </div>
-
-              <div className="panel-title" style={{ fontSize: 14, marginTop: 16, marginBottom: 12 }}>Dépôts ({userDepots.length})</div>
-              {userDepots.length === 0 ? (
-                <div className="empty-state">Aucun dépôt</div>
-              ) : (
-                userDepots.map(d => (
-                  <div key={d.id} className="depot-item">
-                    <div className="depot-name">{d.nom}</div>
-                    <div className="depot-url">{d.url_branche_principale || "—"}</div>
-                    <button className="panel-btn panel-btn-red" style={{ marginTop: 8, width: "100%" }} onClick={() => deleteDepot(d.id)}>🗑 Supprimer</button>
-                  </div>
-                ))
-              )}
-
-              <button className="panel-btn panel-btn-red" style={{ marginTop: 16 }} onClick={() => deleteUser(selUser.id)}>🗑 Supprimer l'utilisateur</button>
+        {/* UTILISATEURS */}
+        {tab === "users" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 18, color: "#0f172a" }}>👥 Utilisateurs ({filteredUsers.length})</p>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher email ou username..."
+                style={{ padding: "9px 14px", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 13, width: 260, outline: "none" }} />
             </div>
-          )}
-
-          {/* Panel Analyse */}
-          {selAnalyse && tab === "analyses" && (
-            <div className="panel">
-              <div className="panel-header">
-                <div>
-                  <div className="panel-title">Analyse #{selAnalyse.id}</div>
-                  <div className="panel-sub">{new Date(selAnalyse.created_at).toLocaleString()} · {selAnalyse.branche}</div>
-                </div>
-                <button className="panel-close" onClick={() => setSelAnalyse(null)}>✕</button>
+            <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr><TH>ID</TH><TH>Email</TH><TH>Username</TH><TH>Rôle</TH><TH>Statut</TH><TH>Dépôts</TH><TH>Créé le</TH><TH>Actions</TH></tr></thead>
+                  <tbody>
+                    {filteredUsers.map((u, i) => (
+                      <tr key={u.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 11 }}>#{u.id}</span></TD>
+                        <TD><b>{u.email}</b></TD>
+                        <TD><code style={{ background: "#f1f5f9", padding: "2px 7px", borderRadius: 6, fontSize: 12 }}>@{u.username}</code></TD>
+                        <TD center><span style={{ background: u.role === "admin" ? "#fef3c7" : "#eff6ff", color: u.role === "admin" ? "#d97706" : "#2563eb", fontWeight: 700, padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>{u.role === "admin" ? "👑 Admin" : "👤 User"}</span></TD>
+                        <TD center><span style={{ background: u.is_active ? "#f0fdf4" : "#fef2f2", color: u.is_active ? "#16a34a" : "#dc2626", fontWeight: 600, padding: "3px 10px", borderRadius: 20, fontSize: 12 }}>{u.is_active ? "✅ Actif" : "❌ Inactif"}</span></TD>
+                        <TD center><b style={{ color: "#6366f1" }}>{u.depot_count}</b></TD>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 12 }}>{u.created_at?.split("T")[0]}</span></TD>
+                        <TD>
+                          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                            <button onClick={() => toggleUser(u.id, u.is_active)} style={{ padding: "4px 10px", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600, background: u.is_active ? "#fef2f2" : "#f0fdf4", color: u.is_active ? "#dc2626" : "#16a34a" }}>{u.is_active ? "Désactiver" : "Activer"}</button>
+                            <button onClick={() => changeRole(u.id, u.role)} style={{ padding: "4px 10px", border: "1px solid #e2e8f0", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600, background: "#fff", color: "#475569" }}>{u.role === "admin" ? "→ User" : "→ Admin"}</button>
+                            <button onClick={() => deleteUser(u.id)} style={{ padding: "4px 10px", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600, background: "#fef2f2", color: "#dc2626" }}>Supprimer</button>
+                          </div>
+                        </TD>
+                      </tr>
+                    ))}
+                    {filteredUsers.length === 0 && <EmptyRow cols={8} message="Aucun utilisateur trouvé" />}
+                  </tbody>
+                </table>
               </div>
+            </div>
+          </div>
+        )}
 
-              <div className="scores-panel">
+        {/* DÉPÔTS (NOUVEAU) */}
+        {tab === "depots" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 18, color: "#0f172a" }}>📁 Dépôts d'analyse ({filteredDepots.length})</p>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher dépôt ou utilisateur..."
+                style={{ padding: "9px 14px", border: "1px solid #e2e8f0", borderRadius: 10, fontSize: 13, width: 260, outline: "none" }} />
+            </div>
+            <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr><TH>ID</TH><TH>Nom</TH><TH>URL</TH><TH>Branche</TH><TH>Utilisateur</TH><TH>Analyses</TH><TH>Date</TH><TH>Actions</TH></tr></thead>
+                  <tbody>
+                    {filteredDepots.map((d, i) => (
+                      <tr key={d.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 11 }}>#{d.id}</span></TD>
+                        <TD><b>{d.nom}</b></TD>
+                        <TD><code style={{ fontSize: 11, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>{d.project_url}</code></TD>
+                        <TD><code style={{ background: "#f1f5f9", padding: "2px 7px", borderRadius: 6, fontSize: 11 }}>{d.branche}</code></TD>
+                        <TD><span style={{ color: "#6366f1", fontSize: 12 }}>{d.user_email}</span></TD>
+                        <TD center><b style={{ color: "#6366f1" }}>{d.analyses_count}</b></TD>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 12 }}>{d.created_at}</span></TD>
+                        <TD>
+                          <div style={{ display: "flex", gap: 5 }}>
+                            <button onClick={() => viewDepotAnalyses(d)} style={{ padding: "4px 10px", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600, background: "#eff6ff", color: "#2563eb" }}>📊 Voir analyses</button>
+                            <button onClick={() => deleteDepot(d.id)} style={{ padding: "4px 10px", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 600, background: "#fef2f2", color: "#dc2626" }}>🗑 Supprimer</button>
+                          </div>
+                        </TD>
+                      </tr>
+                    ))}
+                    {filteredDepots.length === 0 && <EmptyRow cols={8} message="Aucun dépôt trouvé" />}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYSES IA */}
+        {tab === "analyses" && (
+          <div>
+            <p style={{ fontWeight: 700, fontSize: 18, color: "#0f172a", marginBottom: 16 }}>🔍 Toutes les Analyses IA ({analyses.length})</p>
+            <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr><TH>ID</TH><TH>Dépôt</TH><TH>Utilisateur</TH><TH>Branche</TH><TH>Qualité</TH><TH>Sécurité</TH><TH>Perf.</TH><TH>Vulns</TH><TH>Statut</TH><TH>Date</TH></tr></thead>
+                  <tbody>
+                    {analyses.map((a, i) => (
+                      <tr key={a.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 11 }}>#{a.id}</span></TD>
+                        <TD><b>📁 {a.depot_nom}</b></TD>
+                        <TD><span style={{ color: "#6366f1", fontSize: 12 }}>{a.user_email}</span></TD>
+                        <TD><code style={{ background: "#f1f5f9", padding: "2px 7px", borderRadius: 6, fontSize: 11 }}>{a.branche}</code></TD>
+                        <TD center><ScorePill score={a.score_qualite} /></TD>
+                        <TD center><ScorePill score={a.score_securite} /></TD>
+                        <TD center><ScorePill score={a.score_performance} /></TD>
+                        <TD center><span style={{ background: a.nb_vulns > 5 ? "#fef2f2" : a.nb_vulns > 0 ? "#fffbeb" : "#f0fdf4", color: a.nb_vulns > 5 ? "#dc2626" : a.nb_vulns > 0 ? "#d97706" : "#16a34a", fontWeight: 700, padding: "2px 8px", borderRadius: 20, fontSize: 12 }}>{a.nb_vulns}</span></TD>
+                        <TD center><StatusBadge status={a.statut} /></TD>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 12 }}>{a.created_at}</span></TD>
+                      </tr>
+                    ))}
+                    {analyses.length === 0 && <EmptyRow cols={10} message="Aucune analyse disponible" />}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYSES DIFF */}
+        {tab === "diffs" && (
+          <div>
+            <p style={{ fontWeight: 700, fontSize: 18, color: "#0f172a", marginBottom: 16 }}>⚡ Analyses de Diff entre Branches ({diffs.length})</p>
+            <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr><TH>ID</TH><TH>Projet</TH><TH>Utilisateur</TH><TH>Branche source</TH><TH>Branche cible</TH><TH>Qualité</TH><TH>Sécurité</TH><TH>Décision IA</TH><TH>Date</TH></tr></thead>
+                  <tbody>
+                    {diffs.map((d, i) => (
+                      <tr key={d.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 11 }}>#{d.id}</span></TD>
+                        <TD><b>📁 {d.projet_nom || "Projet inconnu"}</b></TD>
+                        <TD><span style={{ color: "#6366f1", fontSize: 12 }}>{d.user_email || "Inconnu"}</span></TD>
+                        <TD><code style={{ background: "#fef3c7", padding: "2px 7px", borderRadius: 6, fontSize: 11, color: "#92400e" }}>{d.from_branch || "—"}</code></TD>
+                        <TD><code style={{ background: "#dbeafe", padding: "2px 7px", borderRadius: 6, fontSize: 11, color: "#1e40af" }}>{d.to_branch || "—"}</code></TD>
+                        <TD center><ScorePill score={d.score_qualite} /></TD>
+                        <TD center><ScorePill score={d.score_securite} /></TD>
+                        <TD center><StatusBadge status={d.resultat_statut} /></TD>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 12 }}>{d.created_at?.split(" ")[0] || d.created_at?.split("T")[0] || ""}</span></TD>
+                      </tr>
+                    ))}
+                    {diffs.length === 0 && <EmptyRow cols={9} message="Aucune analyse de diff disponible" />}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TESTS GÉNÈRES */}
+        {tab === "tests" && (
+          <div>
+            <p style={{ fontWeight: 700, fontSize: 18, color: "#0f172a", marginBottom: 16 }}>🧪 Tests Unitaires Générés ({tests.length})</p>
+            <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr><TH>ID</TH><TH>Projet</TH><TH>Utilisateur</TH><TH>Langage</TH><TH>Framework</TH><TH>Nb tests</TH><TH>Statut</TH><TH>Date</TH></tr></thead>
+                  <tbody>
+                    {tests.map((t, i) => (
+                      <tr key={t.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 11 }}>#{t.id}</span></TD>
+                        <TD><b>📁 {t.projet_nom}</b></TD>
+                        <TD><span style={{ color: "#6366f1", fontSize: 12 }}>{t.user_email}</span></TD>
+                        <TD><span style={{ background: "#f0fdf4", color: "#166534", padding: "2px 8px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{t.langage}</span></TD>
+                        <TD><code style={{ background: "#f1f5f9", padding: "2px 7px", borderRadius: 6, fontSize: 12 }}>{t.framework}</code></TD>
+                        <TD center><b style={{ color: "#8b5cf6", fontSize: 15 }}>{t.nb_tests}</b></TD>
+                        <TD center><StatusBadge status={t.statut} /></TD>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 12 }}>{t.created_at}</span></TD>
+                      </tr>
+                    ))}
+                    {tests.length === 0 && <EmptyRow cols={8} message="Aucun test généré disponible" />}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MERGE REQUESTS */}
+        {tab === "mrs" && (
+          <div>
+            <p style={{ fontWeight: 700, fontSize: 18, color: "#0f172a", marginBottom: 16 }}>🔀 Merge Requests ({mrs.length})</p>
+            <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead><tr><TH>ID</TH><TH>Projet</TH><TH>Utilisateur</TH><TH>Titre</TH><TH>Type</TH><TH>Source</TH><TH>Cible</TH><TH>Statut</TH><TH>Date</TH></tr></thead>
+                  <tbody>
+                    {mrs.map((m, i) => (
+                      <tr key={m.id} style={{ background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 11 }}>#{m.id}</span></TD>
+                        <TD><b>📁 {m.projet_nom}</b></TD>
+                        <TD><span style={{ color: "#6366f1", fontSize: 12 }}>{m.user_email}</span></TD>
+                        <TD>{m.mr_url ? <a href={m.mr_url} target="_blank" rel="noreferrer" style={{ color: "#6366f1", textDecoration: "none" }}>{m.titre}</a> : <span>{m.titre}</span>}</TD>
+                        <TD center><span style={{ background: m.type_mr === "auto_merge" ? "#dbeafe" : m.type_mr === "tests" ? "#f3e8ff" : "#fef3c7", color: m.type_mr === "auto_merge" ? "#1e40af" : m.type_mr === "tests" ? "#6b21a8" : "#92400e", padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>{m.type_mr === "auto_merge" ? "🤖 Auto" : m.type_mr === "tests" ? "🧪 Tests" : "⚡ Diff"}</span></TD>
+                        <TD><code style={{ background: "#fef3c7", padding: "2px 6px", borderRadius: 5, fontSize: 11, color: "#92400e" }}>{m.branche_source?.slice(0, 20)}</code></TD>
+                        <TD><code style={{ background: "#dbeafe", padding: "2px 6px", borderRadius: 5, fontSize: 11, color: "#1e40af" }}>{m.branche_cible}</code></TD>
+                        <TD center><StatusBadge status={m.statut} /></TD>
+                        <TD><span style={{ color: "#94a3b8", fontSize: 12 }}>{m.created_at}</span></TD>
+                      </tr>
+                    ))}
+                    {mrs.length === 0 && <EmptyRow cols={9} message="Aucune Merge Request disponible" />}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* STATISTIQUES */}
+        {tab === "stats" && (
+          <div>
+            <p style={{ fontWeight: 700, fontSize: 18, color: "#0f172a", marginBottom: 20 }}>📊 Statistiques globales</p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 20 }}>
+              {/* Décisions diff */}
+              <div style={{ background: "#fff", borderRadius: 14, padding: 20, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", border: "1px solid #e2e8f0" }}>
+                <p style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: "#0f172a" }}>⚡ Décisions Analyse Diff IA</p>
                 {[
-                  { label: "Qualité", val: selAnalyse.score_qualite },
-                  { label: "Sécurité", val: selAnalyse.score_securite },
-                  { label: "Performance", val: selAnalyse.score_performance },
-                ].map(s => (
-                  <div key={s.label} className="score-panel-card">
-                    <div className="score-panel-value" style={{ color: colorScore(s.val) }}>{s.val ?? "—"}</div>
-                    <div className="score-panel-label">{s.label}</div>
+                  { label: "Merge autorisé",   value: diffs.filter(d => d.resultat_statut === "merge_autorise").length, color: "#16a34a", bg: "#f0fdf4" },
+                  { label: "Merge bloqué",     value: diffs.filter(d => d.resultat_statut === "merge_bloque").length,   color: "#dc2626", bg: "#fef2f2" },
+                  { label: "Auto forcé",       value: diffs.filter(d => d.resultat_statut === "merge_autorise_force").length, color: "#d97706", bg: "#fef3c7" },
+                  { label: "Aucun changement", value: diffs.filter(d => d.resultat_statut === "aucun_changement").length, color: "#6b7280", bg: "#f3f4f6" },
+                ].map((item, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 12px", background: item.bg, borderRadius: 9, marginBottom: 6 }}>
+                    <span style={{ color: item.color, fontWeight: 600, fontSize: 13 }}>{item.label}</span>
+                    <span style={{ color: item.color, fontWeight: 800, fontSize: 20 }}>{item.value}</span>
+                  </div>
+                ))}
+                {diffs.length === 0 && <p style={{ color: "#94a3b8", fontSize: 12, textAlign: "center", marginTop: 8 }}>Aucune analyse diff effectuée</p>}
+              </div>
+
+              {/* KPIs */}
+              <div style={{ background: "#fff", borderRadius: 14, padding: 20, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", border: "1px solid #e2e8f0" }}>
+                <p style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: "#0f172a" }}>🏆 Indicateurs clés</p>
+                {[
+                  { label: "Taux analyses réussies",    value: analyses.length ? `${Math.round(analyses.filter(a => a.statut === "termine").length / analyses.length * 100)}%` : "—", color: "#22c55e" },
+                  { label: "Score qualité moyen",       value: analyses.length ? `${Math.round(analyses.reduce((s, a) => s + a.score_qualite, 0) / analyses.length)}/100` : "—", color: "#6366f1" },
+                  { label: "Score sécurité moyen",      value: analyses.length ? `${Math.round(analyses.reduce((s, a) => s + a.score_securite, 0) / analyses.length)}/100` : "—", color: "#0ea5e9" },
+                  { label: "Taux merge autorisé",       value: diffs.length ? `${Math.round(diffs.filter(d => d.resultat_statut === "merge_autorise" || d.resultat_statut === "merge_autorise_force").length / diffs.length * 100)}%` : "—", color: "#f59e0b" },
+                  { label: "Tests générés total",       value: tests.reduce((s, t) => s + t.nb_tests, 0).toString(), color: "#8b5cf6" },
+                  { label: "Dépôts par utilisateur",    value: stats.total_users ? `${(stats.total_depots / stats.total_users).toFixed(1)} moy.` : "—", color: "#ec4899" },
+                ].map((kpi, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: i < 5 ? "1px solid #f1f5f9" : "none" }}>
+                    <span style={{ fontSize: 12, color: "#475569" }}>{kpi.label}</span>
+                    <b style={{ color: kpi.color, fontSize: 14 }}>{kpi.value}</b>
                   </div>
                 ))}
               </div>
 
-              <div className="panel-title" style={{ fontSize: 14, marginTop: 8, marginBottom: 12 }}>Vulnérabilités ({selAnalyse.vulnerabilites?.length || 0})</div>
-              {(selAnalyse.vulnerabilites?.length || 0) === 0 ? (
-                <div className="empty-state">✅ Code propre</div>
-              ) : (
-                selAnalyse.vulnerabilites.map((v: any, i: number) => (
-                  <div key={i} className="vuln-mini" style={{ borderLeftColor: colorSeverite(v.severite) }}>
-                    <div className="vuln-mini-header">
-                      <span className="vuln-severity" style={{ background: `${colorSeverite(v.severite)}15`, color: colorSeverite(v.severite) }}>{v.severite}</span>
-                      <span className="vuln-type">{v.type}</span>
+              {/* Répartition utilisateurs */}
+              <div style={{ background: "#fff", borderRadius: 14, padding: 20, boxShadow: "0 1px 6px rgba(0,0,0,0.07)", border: "1px solid #e2e8f0" }}>
+                <p style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: "#0f172a" }}>👥 Répartition utilisateurs</p>
+                <div style={{ display: "flex", gap: 10 }}>
+                  {[
+                    { label: "Admins", value: users.filter(u => u.role === "admin").length, color: "#f59e0b", icon: "👑" },
+                    { label: "Users",  value: users.filter(u => u.role === "user").length,  color: "#6366f1", icon: "👤" },
+                    { label: "Actifs", value: users.filter(u => u.is_active).length,        color: "#22c55e", icon: "✅" },
+                  ].map((item, i) => (
+                    <div key={i} style={{ flex: 1, textAlign: "center", padding: "14px 6px", background: `${item.color}15`, borderRadius: 10, border: `2px solid ${item.color}33` }}>
+                      <div style={{ fontSize: 22 }}>{item.icon}</div>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: item.color }}>{item.value}</div>
+                      <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>{item.label}</div>
                     </div>
-                    <div className="vuln-location">📄 {v.fichier} — ligne {v.ligne}</div>
-                    <div className="vuln-suggestion">💡 {v.suggestion}</div>
-                  </div>
-                ))
-              )}
+                  ))}
+                </div>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
-    </>
+
+      {/* MODAL DÉTAIL ANALYSES D'UN DÉPÔT */}
+      {showDepotModal && selectedDepot && (
+        <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: "#fff", borderRadius: 20, maxWidth: 900, width: "100%", maxHeight: "80vh", overflow: "auto", boxShadow: "0 20px 35px rgba(0,0,0,0.2)" }}>
+            <div style={{ padding: 20, borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{selectedDepot.nom}</h3>
+                <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b" }}>{selectedDepot.user_email} · {selectedDepot.branche}</p>
+              </div>
+              <button onClick={() => setShowDepotModal(false)} style={{ background: "none", border: "none", fontSize: 24, cursor: "pointer", color: "#94a3b8" }}>✕</button>
+            </div>
+            <div style={{ padding: 20 }}>
+              <p style={{ fontWeight: 600, marginBottom: 16 }}>📊 Analyses du dépôt ({depotAnalyses.length})</p>
+              {depotAnalyses.length === 0 ? (
+                <p style={{ color: "#94a3b8", textAlign: "center", padding: 40 }}>Aucune analyse pour ce dépôt</p>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: 10, background: "#f8fafc", fontSize: 11 }}>ID</th>
+                      <th style={{ textAlign: "left", padding: 10, background: "#f8fafc", fontSize: 11 }}>Date</th>
+                      <th style={{ textAlign: "left", padding: 10, background: "#f8fafc", fontSize: 11 }}>Qualité</th>
+                      <th style={{ textAlign: "left", padding: 10, background: "#f8fafc", fontSize: 11 }}>Sécurité</th>
+                      <th style={{ textAlign: "left", padding: 10, background: "#f8fafc", fontSize: 11 }}>Performance</th>
+                      <th style={{ textAlign: "left", padding: 10, background: "#f8fafc", fontSize: 11 }}>Vulns</th>
+                      <th style={{ textAlign: "left", padding: 10, background: "#f8fafc", fontSize: 11 }}>Statut</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {depotAnalyses.map(a => (
+                      <tr key={a.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: 10, fontSize: 12 }}>#{a.id}</td>
+                        <td style={{ padding: 10, fontSize: 12 }}>{a.created_at}</td>
+                        <td style={{ padding: 10, fontSize: 12 }}><ScorePill score={a.score_qualite} /></td>
+                        <td style={{ padding: 10, fontSize: 12 }}><ScorePill score={a.score_securite} /></td>
+                        <td style={{ padding: 10, fontSize: 12 }}><ScorePill score={a.score_performance} /></td>
+                        <td style={{ padding: 10, fontSize: 12, textAlign: "center" }}>{a.nb_vulns}</td>
+                        <td style={{ padding: 10, fontSize: 12 }}><StatusBadge status={a.statut} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={() => deleteDepot(selectedDepot.id)} style={{ padding: "8px 16px", background: "#fef2f2", border: "none", borderRadius: 8, color: "#dc2626", fontWeight: 600, cursor: "pointer" }}>🗑 Supprimer ce dépôt</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
