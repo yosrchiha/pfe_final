@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+# backend/app/routes/merge_requests_diff.py
+
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime
 
 from app.config.database import get_db
 from app.routes.auth import get_current_user
@@ -43,7 +46,9 @@ class MergeRequestDiffDetailResponse(MergeRequestDiffResponse):
     analyse_resultat_statut: str | None = None
 
 
-# ── GET /depot/{depot_id} ──────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# ROUTE POUR RÉCUPÉRER TOUTES LES MR DIFF D'UN DÉPÔT
+# ═══════════════════════════════════════════════════════════════════
 @router.get("/depot/{depot_id}", response_model=List[MergeRequestDiffDetailResponse])
 def get_merge_requests_by_depot(
     depot_id: int,
@@ -51,9 +56,8 @@ def get_merge_requests_by_depot(
     current_user: User = Depends(get_current_user)
 ):
     """
-    Récupère toutes les Merge Requests de diff pour un dépôt donné.
+    Récupère toutes les Merge Requests de diff (forcées et auto) pour un dépôt donné.
     """
-    # Vérifier que le dépôt existe et que l'utilisateur y a accès
     depot = db.query(Depot).filter(Depot.id == depot_id).first()
     if not depot:
         raise HTTPException(status_code=404, detail="Dépôt non trouvé")
@@ -61,34 +65,34 @@ def get_merge_requests_by_depot(
     if depot.proprietaire_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
-    # Récupérer les MR de diff
-    mrs = db.query(MergeRequestDiff).filter(MergeRequestDiff.depot_id == depot_id).order_by(MergeRequestDiff.created_at.desc()).all()
+    mrs = db.query(MergeRequestDiff).filter(
+        MergeRequestDiff.depot_id == depot_id
+    ).order_by(MergeRequestDiff.created_at.desc()).all()
     
-    # Enrichir avec les informations du projet et de l'analyse
     result = []
     for mr in mrs:
         analyse = db.query(AnalyseDiff).filter(AnalyseDiff.id == mr.analyse_diff_id).first()
         
-        result.append(MergeRequestDiffDetailResponse(
-            id=mr.id,
-            analyse_diff_id=mr.analyse_diff_id,
-            depot_id=mr.depot_id,
-            mr_id_gitlab=mr.mr_id_gitlab,
-            mr_iid_gitlab=mr.mr_iid_gitlab,
-            mr_url=mr.mr_url,
-            title=mr.title,
-            description=mr.description,
-            source_branch=mr.source_branch,
-            target_branch=mr.target_branch,
-            state=mr.state,
-            type_mr=mr.type_mr,
-            created_at=mr.created_at.isoformat(),
-            projet_nom=depot.nom,
-            analyse_score_qualite=analyse.score_qualite if analyse else None,
-            analyse_score_securite=analyse.score_securite if analyse else None,
-            analyse_score_performance=analyse.score_performance if analyse else None,
-            analyse_resultat_statut=analyse.resultat_statut if analyse else None
-        ))
+        result.append({
+            "id": mr.id,
+            "analyse_diff_id": mr.analyse_diff_id,
+            "depot_id": mr.depot_id,
+            "mr_id_gitlab": mr.mr_id_gitlab,
+            "mr_iid_gitlab": mr.mr_iid_gitlab,
+            "mr_url": mr.mr_url,
+            "title": mr.title,
+            "description": mr.description,
+            "source_branch": mr.source_branch,
+            "target_branch": mr.target_branch,
+            "state": mr.state,
+            "type_mr": mr.type_mr,
+            "created_at": mr.created_at.isoformat(),
+            "projet_nom": depot.nom,
+            "analyse_score_qualite": analyse.score_qualite if analyse else None,
+            "analyse_score_securite": analyse.score_securite if analyse else None,
+            "analyse_score_performance": analyse.score_performance if analyse else None,
+            "analyse_resultat_statut": analyse.resultat_statut if analyse else None,
+        })
     
     return result
 
@@ -100,22 +104,20 @@ def get_merge_requests_by_analyse(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Récupère toutes les Merge Requests de diff pour une analyse donnée.
-    """
-    # Vérifier que l'analyse existe
+    """Récupère toutes les Merge Requests de diff pour une analyse donnée."""
     analyse = db.query(AnalyseDiff).filter(AnalyseDiff.id == analyse_diff_id).first()
     if not analyse:
         raise HTTPException(status_code=404, detail="Analyse non trouvée")
     
-    # Vérifier l'accès via le dépôt
     comparaison = db.query(Comparaison).filter(Comparaison.id == analyse.comparaison_id).first()
     depot = db.query(Depot).filter(Depot.id == comparaison.depot_id).first()
     
     if depot.proprietaire_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
-    mrs = db.query(MergeRequestDiff).filter(MergeRequestDiff.analyse_diff_id == analyse_diff_id).order_by(MergeRequestDiff.created_at.desc()).all()
+    mrs = db.query(MergeRequestDiff).filter(
+        MergeRequestDiff.analyse_diff_id == analyse_diff_id
+    ).order_by(MergeRequestDiff.created_at.desc()).all()
     
     return [
         MergeRequestDiffResponse(
@@ -144,40 +146,37 @@ def get_merge_request(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Récupère les détails d'une Merge Request de diff spécifique.
-    """
+    """Récupère les détails d'une Merge Request de diff spécifique."""
     mr = db.query(MergeRequestDiff).filter(MergeRequestDiff.id == id).first()
     if not mr:
         raise HTTPException(status_code=404, detail="Merge Request non trouvée")
     
-    # Vérifier l'accès
     depot = db.query(Depot).filter(Depot.id == mr.depot_id).first()
     if depot.proprietaire_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
     analyse = db.query(AnalyseDiff).filter(AnalyseDiff.id == mr.analyse_diff_id).first()
     
-    return MergeRequestDiffDetailResponse(
-        id=mr.id,
-        analyse_diff_id=mr.analyse_diff_id,
-        depot_id=mr.depot_id,
-        mr_id_gitlab=mr.mr_id_gitlab,
-        mr_iid_gitlab=mr.mr_iid_gitlab,
-        mr_url=mr.mr_url,
-        title=mr.title,
-        description=mr.description,
-        source_branch=mr.source_branch,
-        target_branch=mr.target_branch,
-        state=mr.state,
-        type_mr=mr.type_mr,
-        created_at=mr.created_at.isoformat(),
-        projet_nom=depot.nom,
-        analyse_score_qualite=analyse.score_qualite if analyse else None,
-        analyse_score_securite=analyse.score_securite if analyse else None,
-        analyse_score_performance=analyse.score_performance if analyse else None,
-        analyse_resultat_statut=analyse.resultat_statut if analyse else None
-    )
+    return {
+        "id": mr.id,
+        "analyse_diff_id": mr.analyse_diff_id,
+        "depot_id": mr.depot_id,
+        "mr_id_gitlab": mr.mr_id_gitlab,
+        "mr_iid_gitlab": mr.mr_iid_gitlab,
+        "mr_url": mr.mr_url,
+        "title": mr.title,
+        "description": mr.description,
+        "source_branch": mr.source_branch,
+        "target_branch": mr.target_branch,
+        "state": mr.state,
+        "type_mr": mr.type_mr,
+        "created_at": mr.created_at.isoformat(),
+        "projet_nom": depot.nom,
+        "analyse_score_qualite": analyse.score_qualite if analyse else None,
+        "analyse_score_securite": analyse.score_securite if analyse else None,
+        "analyse_score_performance": analyse.score_performance if analyse else None,
+        "analyse_resultat_statut": analyse.resultat_statut if analyse else None,
+    }
 
 
 # ── PUT /{id}/sync ─────────────────────────────────────────────────
@@ -187,24 +186,19 @@ def sync_merge_request_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """
-    Synchronise le statut d'une MR avec GitLab.
-    """
+    """Synchronise le statut d'une MR avec GitLab."""
     mr = db.query(MergeRequestDiff).filter(MergeRequestDiff.id == id).first()
     if not mr:
         raise HTTPException(status_code=404, detail="Merge Request non trouvée")
     
-    # Vérifier l'accès
     depot = db.query(Depot).filter(Depot.id == mr.depot_id).first()
     if depot.proprietaire_id != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Accès non autorisé")
     
     try:
-        # Récupérer la MR depuis GitLab
         project = get_gitlab_project(depot.token_gitlab, depot.nom)
         gitlab_mr = project.mergerequests.get(mr.mr_iid_gitlab)
         
-        # Mettre à jour le statut
         mr.state = gitlab_mr.state
         db.commit()
         
@@ -212,3 +206,66 @@ def sync_merge_request_status(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur synchronisation: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ROUTES POUR FERMER / RÉOUVRIR UNE MR
+# ═══════════════════════════════════════════════════════════════════
+@router.put("/{id}/close")
+def close_merge_request_diff(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Ferme une Merge Request de diff."""
+    mr = db.query(MergeRequestDiff).filter(MergeRequestDiff.id == id).first()
+    if not mr:
+        raise HTTPException(status_code=404, detail="Merge Request non trouvée")
+    
+    depot = db.query(Depot).filter(Depot.id == mr.depot_id).first()
+    if depot.proprietaire_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès non autorisé")
+    
+    try:
+        project = get_gitlab_project(depot.token_gitlab, depot.nom)
+        gitlab_mr = project.mergerequests.get(mr.mr_iid_gitlab)
+        gitlab_mr.state_event = "close"
+        gitlab_mr.save()
+        
+        mr.state = "closed"
+        db.commit()
+        
+        return {"statut": "closed", "message": "Merge Request fermée avec succès"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur fermeture MR: {str(e)}")
+
+
+@router.put("/{id}/reopen")
+def reopen_merge_request_diff(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Rouvre une Merge Request de diff."""
+    mr = db.query(MergeRequestDiff).filter(MergeRequestDiff.id == id).first()
+    if not mr:
+        raise HTTPException(status_code=404, detail="Merge Request non trouvée")
+    
+    depot = db.query(Depot).filter(Depot.id == mr.depot_id).first()
+    if depot.proprietaire_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès non autorisé")
+    
+    try:
+        project = get_gitlab_project(depot.token_gitlab, depot.nom)
+        gitlab_mr = project.mergerequests.get(mr.mr_iid_gitlab)
+        gitlab_mr.state_event = "reopen"
+        gitlab_mr.save()
+        
+        mr.state = "opened"
+        db.commit()
+        
+        return {"statut": "opened", "message": "Merge Request réouverte avec succès"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur réouverture MR: {str(e)}")

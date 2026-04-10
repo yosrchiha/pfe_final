@@ -1,407 +1,488 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
 const API = "http://127.0.0.1:8000";
 
+// ── TYPES ────────────────────────────────────────────────────────
 interface Projet {
-  id: number;
-  nom: string;
-  project_url: string;
-  branche: string;
-  created_at: string;
+  id: number; nom: string; project_url: string;
+  branche: string; created_at: string;
 }
 
 interface MergeRequest {
   id: number;
-  analyse_id?: number;
-  analyse_diff_id?: number;
+  analyse_id?: number; analyse_diff_id?: number;
   test_id?: number | null;
-  depot_analyse_id?: number;
-  depot_id?: number;
-  mr_id_gitlab: number;
-  mr_iid_gitlab?: number;
-  mr_url: string;
-  titre: string;
-  title?: string;
+  depot_analyse_id?: number; depot_id?: number;
+  mr_id_gitlab: number; mr_iid_gitlab?: number;
+  mr_url: string; titre: string;
   description: string | null;
-  branche_source: string;
-  source_branch?: string;
-  branche_cible: string;
-  target_branch?: string;
-  statut: string;
-  state?: string;
-  type_mr: string;
+  branche_source: string; branche_cible: string;
+  statut: string; type_mr: string;
   labels: string | null;
-  created_at: string;
-  updated_at?: string | null;
-  projet_nom?: string;
+  created_at: string; updated_at?: string | null;
+  depot_nom?: string;
   analyse_score_qualite?: number | null;
   analyse_score_securite?: number | null;
   analyse_score_performance?: number | null;
   analyse_resultat_statut?: string | null;
-  depot_nom?: string;
 }
 
+// ── HELPERS ──────────────────────────────────────────────────────
+const TYPE_CONFIG: Record<string, { icon: string; label: string; color: string; bg: string; border: string }> = {
+  tests:      { icon: "🧪", label: "Tests IA",    color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe" },
+  auto_merge: { icon: "⚡", label: "Auto-merge",  color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+  diff:       { icon: "🔬", label: "Diff IA",     color: "#059669", bg: "#ecfdf5", border: "#a7f3d0" },
+  force:      { icon: "⚠️", label: "Forcée",      color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+};
+
+const STATUT_CONFIG: Record<string, { dot: string; label: string; color: string; bg: string }> = {
+  opened: { dot: "#f59e0b", label: "Ouverte",    color: "#92400e", bg: "#fef3c7" },
+  merged: { dot: "#10b981", label: "Fusionnée",  color: "#065f46", bg: "#d1fae5" },
+  closed: { dot: "#6b7280", label: "Fermée",     color: "#374151", bg: "#f3f4f6" },
+};
+
+function getType(type: string)   { return TYPE_CONFIG[type]   || { icon: "🔀", label: type,   color: "#64748b", bg: "#f8fafc", border: "#e2e8f0" }; }
+function getStatut(s: string)    { return STATUT_CONFIG[s]    || { dot: "#94a3b8", label: s,   color: "#475569", bg: "#f1f5f9" }; }
+
+function ScoreDot({ score }: { score: number | null | undefined }) {
+  if (score == null) return <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span>;
+  const c = score >= 80 ? "#10b981" : score >= 60 ? "#f59e0b" : "#ef4444";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: c, display: "inline-block" }} />
+      <span style={{ fontSize: 12, fontWeight: 600, color: c }}>{score}</span>
+    </span>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
+// PAGE PRINCIPALE
+// ════════════════════════════════════════════════════════════════
 export default function MergeRequestsPage() {
   const router = useRouter();
 
-  const [projets, setProjets] = useState<Projet[]>([]);
+  const [projets, setProjets]           = useState<Projet[]>([]);
   const [projetFiltre, setProjetFiltre] = useState<number | "all">("all");
-  const [mrs, setMrs] = useState<MergeRequest[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [filterType, setFilterType] = useState("all");
+  const [mrs, setMrs]                   = useState<MergeRequest[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState("");
+  const [filterType, setFilterType]     = useState("all");
   const [filterStatut, setFilterStatut] = useState("all");
-  const [selectedMr, setSelectedMr] = useState<MergeRequest | null>(null);
+  const [selectedMr, setSelectedMr]     = useState<MergeRequest | null>(null);
+  const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [toast, setToast]               = useState<{ msg: string; ok: boolean } | null>(null);
 
-  const getHeaders = () => {
-    const jwt = localStorage.getItem("token");
-    return { Authorization: jwt ? `Bearer ${jwt}` : "" };
+  const headers = () => {
+    const t = localStorage.getItem("token");
+    return { Authorization: t ? `Bearer ${t}` : "" };
   };
 
-  // Charger tous les projets de l'utilisateur
-  const fetchProjets = async () => {
-    try {
-      const token = localStorage.getItem("token");
-      if (!token) {
-        router.push("/login");
-        return;
-      }
-      const me = await axios.get(`${API}/auth/me`, { headers: getHeaders() });
-      const userId = me.data.id;
-      const res = await axios.get(`${API}/analyses/depots-user/${userId}`, { headers: getHeaders() });
-      setProjets(res.data);
-    } catch (e: any) {
-      if (e.response?.status === 401) {
-        localStorage.removeItem("token");
-        router.push("/login");
-      }
-    }
+  const showToast = (msg: string, ok = true) => {
+    setToast({ msg, ok });
+    setTimeout(() => setToast(null), 3000);
   };
 
-  // Charger TOUTES les MR de TOUS les dépôts
-  const fetchAllMergeRequests = async () => {
+  // ── FETCH DATA ────────────────────────────────────────────────
+  const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      let allMrs: MergeRequest[] = [];
-
-      // 1. Récupérer tous les dépôts
       const token = localStorage.getItem("token");
-      const me = await axios.get(`${API}/auth/me`, { headers: getHeaders() });
+      if (!token) { router.push("/login"); return; }
+
+      const me = await axios.get(`${API}/auth/me`, { headers: headers() });
       const userId = me.data.id;
-      const depotsRes = await axios.get(`${API}/analyses/depots-user/${userId}`, { headers: getHeaders() });
-      const depots = depotsRes.data;
 
-      // 2. Pour chaque dépôt, récupérer ses MR
-      for (const depot of depots) {
-        // MR de tests
-        try {
-          const resTests = await axios.get(`${API}/merge-requests/depot/${depot.id}`, { headers: getHeaders() });
-          const testsMrs = resTests.data.map((mr: any) => ({
-            ...mr,
-            depot_nom: depot.nom,
-            depot_id: depot.id,
-            titre: mr.titre || "",
-            branche_source: mr.branche_source || "",
-            branche_cible: mr.branche_cible || "",
-            statut: mr.statut || "opened",
-          }));
-          allMrs = [...allMrs, ...testsMrs];
-        } catch (e) {
-          console.log(`Aucune MR de tests pour ${depot.nom}`);
-        }
+      // Charger projets
+      const projRes = await axios.get(`${API}/analyses/depots-user/${userId}`, { headers: headers() });
+      setProjets(projRes.data);
 
-        // MR de diff
-        try {
-          const resDiff = await axios.get(`${API}/merge-requests-diff/depot/${depot.id}`, { headers: getHeaders() });
-          const diffMrs = resDiff.data.map((mr: any) => ({
-            ...mr,
-            depot_nom: depot.nom,
-            depot_id: depot.id,
-            titre: mr.title || "",
-            branche_source: mr.source_branch || "",
-            branche_cible: mr.target_branch || "",
-            statut: mr.state || "opened",
-            type_mr: mr.type_mr === "auto" ? "auto_merge" : mr.type_mr,
-          }));
-          allMrs = [...allMrs, ...diffMrs];
-        } catch (e) {
-          console.log(`Aucune MR de diff pour ${depot.nom}`);
+      // Charger dépôts des deux sources
+      const [resAnalyses, resDepots] = await Promise.allSettled([
+        axios.get(`${API}/analyses/depots-user/${userId}`, { headers: headers() }),
+        axios.get(`${API}/depots/user/${userId}`,          { headers: headers() }),
+      ]);
+
+      const seen = new Set<number>();
+      const depots: any[] = [];
+      for (const r of [resAnalyses, resDepots]) {
+        if (r.status === "fulfilled") {
+          for (const d of r.value.data) {
+            if (!seen.has(d.id)) { seen.add(d.id); depots.push(d); }
+          }
         }
       }
 
-      // Trier par date (plus récent d'abord)
-      allMrs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      // Charger MR de chaque dépôt
+      let all: MergeRequest[] = [];
+      for (const depot of depots) {
+        // MR tests/analyses
+        try {
+          const r = await axios.get(`${API}/merge-requests/depot/${depot.id}`, { headers: headers() });
+          for (const mr of r.data) {
+            all.push({ ...mr, depot_nom: depot.nom, depot_id: depot.id,
+              titre: mr.titre || "", branche_source: mr.branche_source || "",
+              branche_cible: mr.branche_cible || "", statut: mr.statut || "opened" });
+          }
+        } catch {}
+        // MR diff
+        try {
+          const r = await axios.get(`${API}/merge-requests-diff/depot/${depot.id}`, { headers: headers() });
+          for (const mr of r.data) {
+            all.push({ ...mr, depot_nom: depot.nom, depot_id: depot.id,
+              titre: mr.title || mr.titre || "",
+              branche_source: mr.source_branch || mr.branche_source || "",
+              branche_cible:  mr.target_branch || mr.branche_cible  || "",
+              statut:  mr.state   || mr.statut  || "opened",
+              type_mr: mr.type_mr === "auto" ? "auto_merge" : (mr.type_mr || "diff") });
+          }
+        } catch {}
+      }
 
-      setMrs(allMrs);
-    } catch (e) {
-      console.error("Erreur chargement MR", e);
+      all.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      setMrs(all);
+    } catch (e: any) {
+      if (e?.response?.status === 401) { localStorage.removeItem("token"); router.push("/login"); }
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchProjets();
-    fetchAllMergeRequests();
   }, []);
 
-  const syncStatus = async (mr: MergeRequest) => {
-    try {
-      const isDiff = mr.type_mr === "auto_merge" || mr.type_mr === "diff" || mr.type_mr === "force";
-      const endpoint = isDiff
-        ? `${API}/merge-requests-diff/${mr.id}/sync`
-        : `${API}/merge-requests/${mr.id}/sync`;
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
-      await axios.put(endpoint, {}, { headers: getHeaders() });
-      
-      // Rafraîchir la liste
-      await fetchAllMergeRequests();
-    } catch (e) {
-      alert("Erreur lors de la synchronisation");
+  // ── FERMER / ROUVRIR UNE MR ───────────────────────────────────
+  // Cette fonction :
+  // 1. Appelle le backend → qui appelle l'API GitLab pour fermer/rouvrir la MR
+  // 2. Met à jour l'état local immédiatement
+  const toggleMrStatut = async (mr: MergeRequest) => {
+    const isDiff = mr.type_mr === "auto_merge" || mr.type_mr === "diff" || mr.type_mr === "force";
+    const newStatut = mr.statut === "opened" ? "closed" : "opened";
+    const action    = mr.statut === "opened" ? "close" : "reopen";
+
+    setActionLoading(mr.id);
+    try {
+      // Appel backend pour fermer/rouvrir sur GitLab
+      const endpoint = isDiff
+        ? `${API}/merge-requests-diff/${mr.id}/${action}`
+        : `${API}/merge-requests/${mr.id}/${action}`;
+
+      await axios.put(endpoint, {}, { headers: headers() });
+
+      // Mettre à jour l'état local
+      setMrs(prev => prev.map(m =>
+        m.id === mr.id ? { ...m, statut: newStatut } : m
+      ));
+      // Mettre à jour le modal si ouvert
+      if (selectedMr?.id === mr.id) {
+        setSelectedMr(prev => prev ? { ...prev, statut: newStatut } : null);
+      }
+
+      showToast(
+        mr.statut === "opened"
+          ? `MR fermée sur GitLab ✓`
+          : `MR réouverte sur GitLab ✓`,
+        true
+      );
+    } catch (e: any) {
+      showToast(`Erreur : ${e?.response?.data?.detail || "Impossible de modifier la MR"}`, false);
+    } finally {
+      setActionLoading(null);
     }
   };
 
-  // Filtres
-  const filteredMrs = mrs.filter(mr => {
-    const matchProjet = projetFiltre === "all" || mr.depot_id === projetFiltre || mr.depot_analyse_id === projetFiltre;
-    const matchSearch = mr.titre?.toLowerCase().includes(search.toLowerCase()) ||
+  // ── SYNC STATUT ───────────────────────────────────────────────
+  const syncMr = async (mr: MergeRequest) => {
+    const isDiff = mr.type_mr === "auto_merge" || mr.type_mr === "diff" || mr.type_mr === "force";
+    const endpoint = isDiff
+      ? `${API}/merge-requests-diff/${mr.id}/sync`
+      : `${API}/merge-requests/${mr.id}/sync`;
+
+    setActionLoading(mr.id);
+    try {
+      const res = await axios.put(endpoint, {}, { headers: headers() });
+      const newStatut = res.data?.statut || res.data?.gitlab_state || mr.statut;
+      setMrs(prev => prev.map(m => m.id === mr.id ? { ...m, statut: newStatut } : m));
+      if (selectedMr?.id === mr.id) setSelectedMr(prev => prev ? { ...prev, statut: newStatut } : null);
+      showToast("Statut synchronisé depuis GitLab ✓");
+    } catch {
+      showToast("Erreur de synchronisation", false);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  // ── FILTRES ───────────────────────────────────────────────────
+  const filtered = mrs.filter(mr => {
+    const matchProjet  = projetFiltre === "all" || mr.depot_id === projetFiltre || mr.depot_analyse_id === projetFiltre;
+    const matchSearch  = !search ||
+      mr.titre?.toLowerCase().includes(search.toLowerCase()) ||
       mr.branche_source?.toLowerCase().includes(search.toLowerCase()) ||
       mr.branche_cible?.toLowerCase().includes(search.toLowerCase()) ||
       mr.depot_nom?.toLowerCase().includes(search.toLowerCase());
-    const matchType = filterType === "all" || mr.type_mr === filterType;
-    const matchStatut = filterStatut === "all" || mr.statut === filterStatut;
+    const matchType    = filterType   === "all" || mr.type_mr === filterType;
+    const matchStatut  = filterStatut === "all" || mr.statut  === filterStatut;
     return matchProjet && matchSearch && matchType && matchStatut;
   });
 
-  // Stats
   const stats = {
-    total: filteredMrs.length,
-    opened: filteredMrs.filter(m => m.statut === "opened").length,
-    merged: filteredMrs.filter(m => m.statut === "merged").length,
-    closed: filteredMrs.filter(m => m.statut === "closed").length,
-    tests: filteredMrs.filter(m => m.type_mr === "tests").length,
-    auto_merge: filteredMrs.filter(m => m.type_mr === "auto_merge").length,
-    diff: filteredMrs.filter(m => m.type_mr === "diff").length,
-    force: filteredMrs.filter(m => m.type_mr === "force").length,
+    total:   filtered.length,
+    opened:  filtered.filter(m => m.statut === "opened").length,
+    merged:  filtered.filter(m => m.statut === "merged").length,
+    closed:  filtered.filter(m => m.statut === "closed").length,
+    tests:   filtered.filter(m => m.type_mr === "tests").length,
+    auto:    filtered.filter(m => m.type_mr === "auto_merge").length,
+    diff:    filtered.filter(m => m.type_mr === "diff").length,
+    force:   filtered.filter(m => m.type_mr === "force").length,
   };
 
-  const getTypeConfig = (type: string) => {
-    switch (type) {
-      case "tests":
-        return { icon: "🧪", label: "Tests", color: "#6366f1", bg: "#eef2ff" };
-      case "auto_merge":
-        return { icon: "⚡", label: "Auto-merge", color: "#f59e0b", bg: "#fffbeb" };
-      case "diff":
-        return { icon: "📊", label: "Diff analyse", color: "#10b981", bg: "#ecfdf5" };
-      case "force":
-        return { icon: "⚠️", label: "Forcée", color: "#ef4444", bg: "#fef2f2" };
-      default:
-        return { icon: "🔀", label: "MR", color: "#64748b", bg: "#f1f5f9" };
-    }
-  };
-
-  const getStatutConfig = (statut: string) => {
-    switch (statut) {
-      case "opened":
-        return { icon: "🟡", label: "Ouverte", color: "#b45309", bg: "#fef3c7" };
-      case "merged":
-        return { icon: "✅", label: "Fusionnée", color: "#15803d", bg: "#dcfce7" };
-      default:
-        return { icon: "🔴", label: "Fermée", color: "#b91c1c", bg: "#fee2e2" };
-    }
-  };
-
+  // ════════════════════════════════════════════════════════════
+  // RENDER
+  // ════════════════════════════════════════════════════════════
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        
-        {/* HEADER */}
-        <div className="flex justify-between items-center mb-6">
+    <div style={{ minHeight: "100vh", background: "#0f1117", fontFamily: "'DM Sans',system-ui,sans-serif", color: "#e2e8f0" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+      {/* ── TOAST ── */}
+      {toast && (
+        <div style={{
+          position: "fixed", top: 20, right: 20, zIndex: 9999,
+          background: toast.ok ? "#064e3b" : "#7f1d1d",
+          border: `1px solid ${toast.ok ? "#059669" : "#dc2626"}`,
+          color: "#fff", borderRadius: 12, padding: "12px 20px",
+          fontSize: 13, fontWeight: 500, boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+          display: "flex", alignItems: "center", gap: 8,
+          animation: "slideIn 0.3s ease",
+        }}>
+          {toast.ok ? "✓" : "✕"} {toast.msg}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeUp  { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .mr-row:hover { background: #1a1f2e !important; }
+        .action-btn:hover { opacity: 0.85; transform: scale(0.97); }
+        .action-btn { transition: all 0.15s ease; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1f2e; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+      `}</style>
+
+      <div style={{ maxWidth: 1320, margin: "0 auto", padding: "32px 24px" }}>
+
+        {/* ── HEADER ── */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Merge Requests</h1>
-            <p className="text-sm text-gray-500 mt-1">Toutes les MR générées par l'IA</p>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🔀</div>
+              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#f1f5f9", letterSpacing: "-0.02em" }}>
+                Merge Requests
+              </h1>
+            </div>
+            <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>
+              Toutes les MR générées par l'IA — tests, diff, auto-merge
+            </p>
           </div>
-          <button
-            onClick={() => router.push("/dashboard")}
-            className="px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition"
-          >
-            ← Retour
-          </button>
-        </div>
-
-        {/* STATS CARDS */}
-        <div className="grid grid-cols-4 md:grid-cols-8 gap-3 mb-6">
-          <div className="text-center p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-            <div className="text-2xl font-bold text-gray-800">{stats.total}</div>
-            <div className="text-xs text-gray-500">Total</div>
-          </div>
-          <div className="text-center p-3 bg-amber-50 rounded-xl border border-amber-100">
-            <div className="text-2xl font-bold text-amber-600">{stats.opened}</div>
-            <div className="text-xs text-gray-500">Ouvertes</div>
-          </div>
-          <div className="text-center p-3 bg-green-50 rounded-xl border border-green-100">
-            <div className="text-2xl font-bold text-green-600">{stats.merged}</div>
-            <div className="text-xs text-gray-500">Fusionnées</div>
-          </div>
-          <div className="text-center p-3 bg-red-50 rounded-xl border border-red-100">
-            <div className="text-2xl font-bold text-red-600">{stats.closed}</div>
-            <div className="text-xs text-gray-500">Fermées</div>
-          </div>
-          <div className="text-center p-3 bg-indigo-50 rounded-xl border border-indigo-100">
-            <div className="text-2xl font-bold text-indigo-600">{stats.tests}</div>
-            <div className="text-xs text-gray-500">🧪 Tests</div>
-          </div>
-          <div className="text-center p-3 bg-amber-50 rounded-xl border border-amber-100">
-            <div className="text-2xl font-bold text-amber-600">{stats.auto_merge}</div>
-            <div className="text-xs text-gray-500">⚡ Auto</div>
-          </div>
-          <div className="text-center p-3 bg-emerald-50 rounded-xl border border-emerald-100">
-            <div className="text-2xl font-bold text-emerald-600">{stats.diff}</div>
-            <div className="text-xs text-gray-500">📊 Diff</div>
-          </div>
-          <div className="text-center p-3 bg-red-50 rounded-xl border border-red-100">
-            <div className="text-2xl font-bold text-red-600">{stats.force}</div>
-            <div className="text-xs text-gray-500">⚠️ Force</div>
-          </div>
-        </div>
-
-        {/* FILTRES */}
-        <div className="bg-white rounded-xl border border-gray-100 p-4 mb-6 shadow-sm">
-          <div className="flex flex-wrap gap-3 items-center">
-            {/* Filtre projet */}
-            <select
-              value={projetFiltre}
-              onChange={e => setProjetFiltre(e.target.value === "all" ? "all" : Number(e.target.value))}
-              className="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm"
-            >
-              <option value="all">📁 Tous les projets</option>
-              {projets.map(p => (
-                <option key={p.id} value={p.id}>{p.nom}</option>
-              ))}
-            </select>
-
-            {/* Filtre type */}
-            <select
-              value={filterType}
-              onChange={e => setFilterType(e.target.value)}
-              className="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm"
-            >
-              <option value="all">🏷️ Tous les types</option>
-              <option value="tests">🧪 Tests</option>
-              <option value="auto_merge">⚡ Auto-merge</option>
-              <option value="diff">📊 Diff analyse</option>
-              <option value="force">⚠️ MR forcée</option>
-            </select>
-
-            {/* Filtre statut */}
-            <select
-              value={filterStatut}
-              onChange={e => setFilterStatut(e.target.value)}
-              className="px-4 py-2 border border-gray-200 rounded-lg bg-white text-sm"
-            >
-              <option value="all">🔄 Tous les statuts</option>
-              <option value="opened">🟡 Ouvertes</option>
-              <option value="merged">✅ Fusionnées</option>
-              <option value="closed">🔴 Fermées</option>
-            </select>
-
-            {/* Recherche */}
-            <input
-              type="text"
-              placeholder="🔍 Rechercher..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="flex-1 min-w-[200px] px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:border-indigo-400"
-            />
-
-            {/* Rafraîchir */}
-            <button
-              onClick={fetchAllMergeRequests}
-              className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition"
-            >
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={fetchAll}
+              style={{ padding: "8px 16px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 10, color: "#94a3b8", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
               ↻ Rafraîchir
+            </button>
+            <button onClick={() => router.push("/dashboard")}
+              style={{ padding: "8px 16px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 10, color: "#94a3b8", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
+              ← Retour
             </button>
           </div>
         </div>
 
-        {/* TABLEAU DES MR */}
+        {/* ── STATS BAND ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 10, marginBottom: 24 }}>
+          {[
+            { label: "Total",      value: stats.total,  color: "#6366f1", bg: "#1e1b4b" },
+            { label: "Ouvertes",   value: stats.opened, color: "#f59e0b", bg: "#1c1409" },
+            { label: "Fusionnées", value: stats.merged, color: "#10b981", bg: "#022c22" },
+            { label: "Fermées",    value: stats.closed, color: "#94a3b8", bg: "#1a1f2e" },
+            { label: "🧪 Tests",   value: stats.tests,  color: "#7c3aed", bg: "#1e1b4b" },
+            { label: "⚡ Auto",    value: stats.auto,   color: "#d97706", bg: "#1c1409" },
+            { label: "🔬 Diff",    value: stats.diff,   color: "#059669", bg: "#022c22" },
+            { label: "⚠️ Force",   value: stats.force,  color: "#ef4444", bg: "#1f0909" },
+          ].map(s => (
+            <div key={s.label} style={{ background: s.bg, border: `1px solid ${s.color}33`, borderRadius: 12, padding: "14px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: s.color, fontFamily: "'DM Mono',monospace" }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── FILTRES ── */}
+        <div style={{ background: "#141921", border: "1px solid #1e2538", borderRadius: 14, padding: "16px 20px", marginBottom: 20, display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <select value={projetFiltre === "all" ? "all" : String(projetFiltre)}
+            onChange={e => setProjetFiltre(e.target.value === "all" ? "all" : Number(e.target.value))}
+            style={{ padding: "8px 12px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#94a3b8", fontSize: 13, cursor: "pointer", outline: "none" }}>
+            <option value="all">📁 Tous les projets</option>
+            {projets.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
+          </select>
+
+          <select value={filterType} onChange={e => setFilterType(e.target.value)}
+            style={{ padding: "8px 12px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#94a3b8", fontSize: 13, cursor: "pointer", outline: "none" }}>
+            <option value="all">🏷️ Tous les types</option>
+            <option value="tests">🧪 Tests IA</option>
+            <option value="auto_merge">⚡ Auto-merge</option>
+            <option value="diff">🔬 Diff IA</option>
+            <option value="force">⚠️ Forcée</option>
+          </select>
+
+          <select value={filterStatut} onChange={e => setFilterStatut(e.target.value)}
+            style={{ padding: "8px 12px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#94a3b8", fontSize: 13, cursor: "pointer", outline: "none" }}>
+            <option value="all">🔄 Tous les statuts</option>
+            <option value="opened">🟡 Ouvertes</option>
+            <option value="merged">🟢 Fusionnées</option>
+            <option value="closed">⚫ Fermées</option>
+          </select>
+
+          <input type="text" placeholder="🔍 Rechercher titre, branche, projet..."
+            value={search} onChange={e => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 200, padding: "8px 14px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#e2e8f0", fontSize: 13, outline: "none" }} />
+        </div>
+
+        {/* ── TABLE ── */}
         {loading ? (
-          <div className="text-center py-12 text-gray-400">Chargement...</div>
-        ) : filteredMrs.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-xl border border-gray-100">
-            <div className="text-4xl mb-3">🔀</div>
-            <p className="text-gray-500">Aucune Merge Request trouvée</p>
+          <div style={{ textAlign: "center", padding: "80px 0", color: "#475569" }}>
+            <div style={{ width: 36, height: 36, border: "3px solid #1e2538", borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.7s linear infinite", margin: "0 auto 12px" }} />
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            Chargement des Merge Requests...
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "80px 0", background: "#141921", borderRadius: 16, border: "1px solid #1e2538" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🔀</div>
+            <p style={{ color: "#475569", fontSize: 14 }}>Aucune Merge Request trouvée</p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl border border-gray-100 overflow-hidden shadow-sm">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500">Projet</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500">Type</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500">Titre</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500">Source → Cible</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500">Statut</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500">Date</th>
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-gray-500">Actions</th>
+          <div style={{ background: "#141921", border: "1px solid #1e2538", borderRadius: 16, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#0f1117", borderBottom: "1px solid #1e2538" }}>
+                  {["Projet", "Type", "Titre", "Branches", "Statut", "Scores IA", "Date", "Actions"].map(h => (
+                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredMrs.map(mr => {
-                  const type = getTypeConfig(mr.type_mr);
-                  const statut = getStatutConfig(mr.statut);
+                {filtered.map((mr, i) => {
+                  const type   = getType(mr.type_mr);
+                  const statut = getStatut(mr.statut);
+                  const isDiff = mr.type_mr === "auto_merge" || mr.type_mr === "diff" || mr.type_mr === "force";
+                  const isLoading = actionLoading === mr.id;
+
                   return (
-                    <tr
-                      key={mr.id}
-                      className={`border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition ${
-                        selectedMr?.id === mr.id ? "bg-indigo-50" : ""
-                      }`}
-                      onClick={() => setSelectedMr(mr)}
-                    >
-                      <td className="px-5 py-3">
-                        <div className="font-medium text-gray-900 text-sm">{mr.depot_nom || "—"}</div>
+                    <tr key={`${mr.type_mr}-${mr.id}`} className="mr-row"
+                      style={{ borderBottom: "1px solid #1a1f2e", cursor: "pointer", transition: "background 0.15s", animation: `fadeUp 0.2s ease ${i * 0.02}s both` }}
+                      onClick={() => setSelectedMr(mr)}>
+
+                      {/* Projet */}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>
+                          📁 {mr.depot_nom || "—"}
+                        </span>
                       </td>
-                      <td className="px-5 py-3">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={{ background: type.bg, color: type.color }}>
+
+                      {/* Type */}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: type.bg, color: type.color, border: `1px solid ${type.border}` }}>
                           {type.icon} {type.label}
                         </span>
                       </td>
-                      <td className="px-5 py-3">
-                        <a
-                          href={mr.mr_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          {mr.titre?.slice(0, 60) || "Sans titre"}
-                        </a>
+
+                      {/* Titre */}
+                      <td style={{ padding: "12px 16px", maxWidth: 260 }}>
+                        {mr.mr_url ? (
+                          <a href={mr.mr_url} target="_blank" rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            style={{ color: "#818cf8", fontSize: 13, fontWeight: 500, textDecoration: "none", display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {mr.titre?.slice(0, 55) || "Sans titre"}
+                          </a>
+                        ) : (
+                          <span style={{ color: "#94a3b8", fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {mr.titre?.slice(0, 55) || "Sans titre"}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-5 py-3">
-                        <code className="text-xs bg-gray-100 px-2 py-1 rounded">{mr.branche_source || "?"}</code>
-                        <span className="mx-1 text-gray-400">→</span>
-                        <code className="text-xs bg-gray-100 px-2 py-1 rounded">{mr.branche_cible || "?"}</code>
+
+                      {/* Branches */}
+                      <td style={{ padding: "12px 16px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <code style={{ fontSize: 11, background: "#1e2538", padding: "2px 7px", borderRadius: 5, color: "#fbbf24", fontFamily: "'DM Mono',monospace" }}>
+                            {(mr.branche_source || "?").slice(0, 16)}
+                          </code>
+                          <span style={{ color: "#475569", fontSize: 11 }}>→</span>
+                          <code style={{ fontSize: 11, background: "#1e2538", padding: "2px 7px", borderRadius: 5, color: "#34d399", fontFamily: "'DM Mono',monospace" }}>
+                            {(mr.branche_cible || "?").slice(0, 12)}
+                          </code>
+                        </div>
                       </td>
-                      <td className="px-5 py-3">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={{ background: statut.bg, color: statut.color }}>
-                          {statut.icon} {statut.label}
+
+                      {/* Statut */}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: statut.bg, color: statut.color }}>
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: statut.dot }} />
+                          {statut.label}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-xs text-gray-500">
-                        {new Date(mr.created_at).toLocaleDateString()}
+
+                      {/* Scores IA */}
+                      <td style={{ padding: "12px 16px" }}>
+                        {(mr.analyse_score_qualite != null || mr.analyse_score_securite != null) ? (
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <div style={{ fontSize: 10, color: "#64748b" }}>Q<br /><ScoreDot score={mr.analyse_score_qualite} /></div>
+                            <div style={{ fontSize: 10, color: "#64748b" }}>S<br /><ScoreDot score={mr.analyse_score_securite} /></div>
+                          </div>
+                        ) : (
+                          <span style={{ color: "#334155", fontSize: 12 }}>—</span>
+                        )}
                       </td>
-                      <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={() => syncStatus(mr)}
-                          className="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg transition"
-                          title="Synchroniser avec GitLab"
-                        >
-                          ↻ Sync
-                        </button>
+
+                      {/* Date */}
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ fontSize: 12, color: "#475569", fontFamily: "'DM Mono',monospace" }}>
+                          {new Date(mr.created_at).toLocaleDateString("fr-FR")}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td style={{ padding: "12px 16px" }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: "flex", gap: 6 }}>
+
+                          {/* Bouton Fermer / Rouvrir — FONCTIONNALITÉ PRINCIPALE */}
+                          {mr.statut !== "merged" && (
+                            <button className="action-btn"
+                              onClick={() => toggleMrStatut(mr)}
+                              disabled={isLoading}
+                              title={mr.statut === "opened" ? "Fermer cette MR sur GitLab" : "Rouvrir cette MR sur GitLab"}
+                              style={{
+                                padding: "5px 12px", border: "none", borderRadius: 8, cursor: isLoading ? "not-allowed" : "pointer",
+                                fontSize: 11, fontWeight: 600,
+                                background: mr.statut === "opened" ? "#1f0909" : "#022c22",
+                                color:      mr.statut === "opened" ? "#ef4444" : "#10b981",
+                                opacity: isLoading ? 0.6 : 1,
+                              }}>
+                              {isLoading ? "..." : mr.statut === "opened" ? "✕ Fermer" : "↩ Rouvrir"}
+                            </button>
+                          )}
+
+                          {/* Bouton Sync */}
+                          <button className="action-btn"
+                            onClick={() => syncMr(mr)}
+                            disabled={isLoading}
+                            title="Synchroniser le statut depuis GitLab"
+                            style={{ padding: "5px 10px", border: "1px solid #2d3748", borderRadius: 8, cursor: "pointer", fontSize: 11, background: "transparent", color: "#64748b" }}>
+                            {isLoading ? "..." : "↻"}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -411,60 +492,126 @@ export default function MergeRequestsPage() {
           </div>
         )}
 
-        {/* MODAL DÉTAILS */}
+        {/* ── MODAL DÉTAIL ── */}
         {selectedMr && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedMr(null)}>
-            <div className="bg-white rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-              <div className="sticky top-0 bg-white border-b border-gray-100 p-5 flex justify-between items-center">
-                <div>
-                  <h3 className="font-bold text-gray-900">{selectedMr.titre?.slice(0, 80)}</h3>
-                  <p className="text-xs text-gray-500 mt-1">MR #{selectedMr.mr_id_gitlab} · {new Date(selectedMr.created_at).toLocaleString()}</p>
-                </div>
-                <button onClick={() => setSelectedMr(null)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
-              </div>
-              <div className="p-5 space-y-4">
-                <div>
-                  <div className="text-xs font-semibold text-gray-400 uppercase mb-1">Lien GitLab</div>
-                  <a href={selectedMr.mr_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 text-sm break-all">
-                    {selectedMr.mr_url}
-                  </a>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold text-gray-400 uppercase mb-1">Branches</div>
-                  <code className="text-sm bg-gray-100 px-3 py-1.5 rounded-lg block font-mono">
-                    {selectedMr.branche_source || "?"} → {selectedMr.branche_cible || "?"}
-                  </code>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold text-gray-400 uppercase mb-1">Type / Statut</div>
-                  <div className="flex gap-2">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style={{ background: getTypeConfig(selectedMr.type_mr).bg, color: getTypeConfig(selectedMr.type_mr).color }}>
-                      {getTypeConfig(selectedMr.type_mr).icon} {getTypeConfig(selectedMr.type_mr).label}
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20, backdropFilter: "blur(4px)" }}
+            onClick={() => setSelectedMr(null)}>
+            <div style={{ background: "#141921", border: "1px solid #1e2538", borderRadius: 20, width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}
+              onClick={e => e.stopPropagation()}>
+
+              {/* Modal Header */}
+              <div style={{ padding: "20px 24px", borderBottom: "1px solid #1e2538", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div style={{ flex: 1, marginRight: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 20 }}>{getType(selectedMr.type_mr).icon}</span>
+                    <span style={{ ...{}, background: getType(selectedMr.type_mr).bg, color: getType(selectedMr.type_mr).color, border: `1px solid ${getType(selectedMr.type_mr).border}`, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
+                      {getType(selectedMr.type_mr).label}
                     </span>
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style={{ background: getStatutConfig(selectedMr.statut).bg, color: getStatutConfig(selectedMr.statut).color }}>
-                      {getStatutConfig(selectedMr.statut).icon} {getStatutConfig(selectedMr.statut).label}
+                    <span style={{ background: getStatut(selectedMr.statut).bg, color: getStatut(selectedMr.statut).color, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
+                      {getStatut(selectedMr.statut).label}
                     </span>
                   </div>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "#f1f5f9", lineHeight: 1.4 }}>
+                    {selectedMr.titre || "Sans titre"}
+                  </h3>
+                  <p style={{ margin: "4px 0 0", color: "#475569", fontSize: 12, fontFamily: "'DM Mono',monospace" }}>
+                    MR #{selectedMr.mr_id_gitlab} · {new Date(selectedMr.created_at).toLocaleString("fr-FR")}
+                  </p>
                 </div>
+                <button onClick={() => setSelectedMr(null)}
+                  style={{ background: "#1e2538", border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", color: "#64748b", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+
+                {/* Projet */}
+                <div>
+                  <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Projet</div>
+                  <div style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 500 }}>📁 {selectedMr.depot_nom}</div>
+                </div>
+
+                {/* Branches */}
+                <div>
+                  <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Branches</div>
+                  <div style={{ background: "#0f1117", borderRadius: 10, padding: "10px 14px", fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+                    <span style={{ color: "#fbbf24" }}>{selectedMr.branche_source}</span>
+                    <span style={{ color: "#475569", margin: "0 8px" }}>→</span>
+                    <span style={{ color: "#34d399" }}>{selectedMr.branche_cible}</span>
+                  </div>
+                </div>
+
+                {/* Lien GitLab */}
+                {selectedMr.mr_url && (
+                  <div>
+                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Lien GitLab</div>
+                    <a href={selectedMr.mr_url} target="_blank" rel="noopener noreferrer"
+                      style={{ color: "#818cf8", fontSize: 13, wordBreak: "break-all", textDecoration: "none" }}>
+                      {selectedMr.mr_url}
+                    </a>
+                  </div>
+                )}
+
+                {/* Scores IA */}
+                {(selectedMr.analyse_score_qualite != null || selectedMr.analyse_score_securite != null) && (
+                  <div>
+                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Scores IA</div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      {[
+                        { label: "Qualité",     score: selectedMr.analyse_score_qualite },
+                        { label: "Sécurité",    score: selectedMr.analyse_score_securite },
+                        { label: "Performance", score: selectedMr.analyse_score_performance },
+                      ].map(s => s.score != null && (
+                        <div key={s.label} style={{ flex: 1, background: "#0f1117", borderRadius: 10, padding: "10px", textAlign: "center" }}>
+                          <div style={{ fontSize: 20, fontWeight: 700, color: s.score >= 80 ? "#10b981" : s.score >= 60 ? "#f59e0b" : "#ef4444", fontFamily: "'DM Mono',monospace" }}>
+                            {s.score}
+                          </div>
+                          <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>{s.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Description */}
                 {selectedMr.description && (
                   <div>
-                    <div className="text-xs font-semibold text-gray-400 uppercase mb-1">Description</div>
-                    <div className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg whitespace-pre-wrap max-h-48 overflow-y-auto">
+                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Description</div>
+                    <div style={{ background: "#0f1117", borderRadius: 10, padding: "12px 14px", fontSize: 12, color: "#94a3b8", whiteSpace: "pre-wrap", maxHeight: 150, overflowY: "auto", lineHeight: 1.6 }}>
                       {selectedMr.description}
                     </div>
                   </div>
                 )}
-                <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={() => syncStatus(selectedMr)}
-                    className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm transition"
-                  >
+
+                {/* Actions du modal */}
+                <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                  {selectedMr.statut !== "merged" && (
+                    <button
+                      onClick={() => toggleMrStatut(selectedMr)}
+                      disabled={actionLoading === selectedMr.id}
+                      style={{
+                        flex: 1, padding: "11px",
+                        background: selectedMr.statut === "opened" ? "#7f1d1d" : "#064e3b",
+                        color: selectedMr.statut === "opened" ? "#fca5a5" : "#6ee7b7",
+                        border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                        cursor: "pointer", transition: "opacity 0.2s",
+                      }}>
+                      {actionLoading === selectedMr.id
+                        ? "En cours..."
+                        : selectedMr.statut === "opened"
+                          ? "✕ Fermer sur GitLab"
+                          : "↩ Rouvrir sur GitLab"}
+                    </button>
+                  )}
+                  <button onClick={() => syncMr(selectedMr)}
+                    disabled={actionLoading === selectedMr.id}
+                    style={{ flex: 1, padding: "11px", background: "#1e2538", color: "#94a3b8", border: "1px solid #2d3748", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                     ↻ Synchroniser
                   </button>
-                  <button
-                    onClick={() => setSelectedMr(null)}
-                    className="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm transition"
-                  >
+                  <button onClick={() => setSelectedMr(null)}
+                    style={{ padding: "11px 16px", background: "#0f1117", color: "#64748b", border: "1px solid #1e2538", borderRadius: 10, fontSize: 13, cursor: "pointer" }}>
                     Fermer
                   </button>
                 </div>
@@ -472,6 +619,7 @@ export default function MergeRequestsPage() {
             </div>
           </div>
         )}
+
       </div>
     </div>
   );

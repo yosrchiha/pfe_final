@@ -14,6 +14,9 @@ from app.models.depot         import Depot
 from app.models.depot_analyse import DepotAnalyse
 from app.models.merge_request import MergeRequest
 from app.models.analyse       import Analyse
+from app.routes.auth import get_current_user
+from app.models.comparaison import Comparaison
+from app.models.analyse_diff import AnalyseDiff
 
 # ── Import du modèle AnalyseDiff ──────────────────────────────────
 # Adapte le chemin selon ton app (le modèle de comparaison de branches)
@@ -259,9 +262,12 @@ def get_all_merge_requests(
     return result
 
 
+# backend/app/routes/Admin.py
+
+# ... (gardez tout le début jusqu'à la ligne 200 environ) ...
+
 # ══════════════════════════════════════════════════════════════════
-# ANALYSES DIFF — TOUTES (admin)
-# Route correctement définie AU NIVEAU du router, pas dans une fonction
+# ANALYSES DIFF — TOUTES (admin) - VERSION CORRECTE
 # ══════════════════════════════════════════════════════════════════
 @router.get("/analyses-diff")
 def get_all_analyses_diff(
@@ -271,86 +277,51 @@ def get_all_analyses_diff(
     """Récupère toutes les analyses de diff entre branches (admin uniquement)."""
     require_admin(authorization, db)
 
-    # ── Cas 1 : le modèle AnalyseDiff existe ────────────────────
-    if HAS_ANALYSE_DIFF:
-        try:
-            analyses = db.query(AnalyseDiff).order_by(
-                AnalyseDiff.created_at.desc()
-            ).all()
-            result = []
-            for a in analyses:
-                # Récupérer le dépôt lié
-                depot = None
-                user  = None
-                if hasattr(a, "depot_id") and a.depot_id:
-                    depot = db.query(Depot).filter(Depot.id == a.depot_id).first()
-                    if depot:
-                        user = db.query(User).filter(
-                            User.id == depot.proprietaire_id
-                        ).first()
+    # Requête directe avec jointures (version corrigée)
+    results = db.query(
+        AnalyseDiff.id,
+        AnalyseDiff.comparaison_id,
+        AnalyseDiff.score_qualite,
+        AnalyseDiff.score_securite,
+        AnalyseDiff.score_performance,
+        AnalyseDiff.vulnerabilites,
+        AnalyseDiff.recommandations,
+        AnalyseDiff.resultat_statut,
+        AnalyseDiff.created_at,
+        Comparaison.from_branch,
+        Comparaison.to_branch,
+        Depot.id.label("depot_id"),
+        Depot.nom.label("projet_nom"),
+        User.id.label("user_id"),
+        User.email.label("user_email")
+    ).join(
+        Comparaison, AnalyseDiff.comparaison_id == Comparaison.id
+    ).join(
+        Depot, Comparaison.depot_id == Depot.id
+    ).join(
+        User, Depot.proprietaire_id == User.id
+    ).order_by(
+        AnalyseDiff.created_at.desc()
+    ).all()
 
-                result.append({
-                    "id":             a.id,
-                    "projet_nom":     depot.nom if depot else "Inconnu",
-                    "user_email":     user.email if user else "Inconnu",
-                    "from_branch":    getattr(a, "from_branch",      None) or getattr(a, "branche_source", None),
-                    "to_branch":      getattr(a, "to_branch",        None) or getattr(a, "branche_cible",  None),
-                    "score_qualite":  getattr(a, "score_qualite",    0) or 0,
-                    "score_securite": getattr(a, "score_securite",   0) or 0,
-                    "resultat_statut":getattr(a, "resultat_statut",  None) or getattr(a, "statut", "inconnu"),
-                    "created_at":     str(a.created_at) if a.created_at else None,
-                })
-            return result
-        except Exception as e:
-            print(f"[ADMIN] Erreur AnalyseDiff: {e}")
-
-    # ── Cas 2 : fallback sur la table analyses avec depot_id ─────
-    # (analyses lancées via comparaison de branches — type="diff")
-    try:
-        analyses = db.query(Analyse).filter(
-            Analyse.depot_id != None
-        ).order_by(Analyse.created_at.desc()).all()
-
-        result = []
-        for a in analyses:
-            depot = None
-            user  = None
-            if a.depot_id:
-                depot = db.query(Depot).filter(Depot.id == a.depot_id).first()
-                if depot:
-                    user = db.query(User).filter(
-                        User.id == depot.proprietaire_id
-                    ).first()
-
-            # Chercher aussi via depot_analyse
-            if not depot and a.depot_analyse_id:
-                da = db.query(DepotAnalyse).filter(
-                    DepotAnalyse.id == a.depot_analyse_id
-                ).first()
-                if da:
-                    user = db.query(User).filter(User.id == da.user_id).first()
-                    depot_nom = da.nom
-                else:
-                    depot_nom = "Inconnu"
-            else:
-                depot_nom = depot.nom if depot else "Inconnu"
-
-            result.append({
-                "id":              a.id,
-                "projet_nom":      depot_nom,
-                "user_email":      user.email if user else "Inconnu",
-                "from_branch":     a.branche or "—",
-                "to_branch":       "main",
-                "score_qualite":   a.score_qualite  or 0,
-                "score_securite":  a.score_securite or 0,
-                "resultat_statut": a.statut or "inconnu",
-                "created_at":      str(a.created_at) if a.created_at else None,
-            })
-        return result
-
-    except Exception as e:
-        print(f"[ADMIN] Erreur fallback analyses-diff: {e}")
-        return []
+    result = []
+    for row in results:
+        result.append({
+            "id": row.id,
+            "projet_nom": row.projet_nom or "Inconnu",
+            "user_email": row.user_email or "Inconnu",
+            "from_branch": row.from_branch or "—",
+            "to_branch": row.to_branch or "—",
+            "score_qualite": row.score_qualite or 0,
+            "score_securite": row.score_securite or 0,
+            "score_performance": row.score_performance or 0,
+            "vulnerabilites": row.vulnerabilites or [],
+            "recommandations": row.recommandations or [],
+            "resultat_statut": row.resultat_statut or "inconnu",
+            "created_at": str(row.created_at) if row.created_at else None,
+        })
+    
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -392,15 +363,48 @@ def get_all_analyses(
         nb_vulns = len(vulns) if isinstance(vulns, list) else 0
 
         result.append({
-            "id":               a.id,
-            "depot_nom":        depot_nom,
-            "user_email":       user_email,
-            "branche":          a.branche,
-            "score_qualite":    a.score_qualite    or 0,
-            "score_securite":   a.score_securite   or 0,
-            "score_performance":a.score_performance or 0,
-            "statut":           a.statut,
-            "created_at":       str(a.created_at) if a.created_at else None,
-            "nb_vulns":         nb_vulns,
+            "id": a.id,
+            "depot_nom": depot_nom,
+            "user_email": user_email,
+            "branche": a.branche,
+            "score_qualite": a.score_qualite or 0,
+            "score_securite": a.score_securite or 0,
+            "score_performance": a.score_performance or 0,
+            "statut": a.statut,
+            "created_at": str(a.created_at) if a.created_at else None,
+            "nb_vulns": nb_vulns,
         })
     return result
+@router.get("/comparaisons/all")
+def get_all_diffs_admin(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),   # même pattern que comparaisons.py
+):
+    # Vérification admin — même logique que dans comparaisons.py
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+ 
+    # Jointure directe : AnalyseDiff → Comparaison → Depot → User
+    results = (
+        db.query(AnalyseDiff, Comparaison, Depot, User)
+        .join(Comparaison, AnalyseDiff.comparaison_id == Comparaison.id)
+        .join(Depot,       Comparaison.depot_id       == Depot.id)
+        .join(User,        Depot.proprietaire_id       == User.id)
+        .order_by(AnalyseDiff.created_at.desc())
+        .all()
+    )
+ 
+    return [
+        {
+            "id":              a.id,
+            "projet_nom":      d.nom,
+            "user_email":      u.email,
+            "from_branch":     c.from_branch,
+            "to_branch":       c.to_branch,
+            "score_qualite":   a.score_qualite  or 0,
+            "score_securite":  a.score_securite or 0,
+            "resultat_statut": a.resultat_statut or "",
+            "created_at":      str(a.created_at) if a.created_at else "",
+        }
+        for a, c, d, u in results
+    ]

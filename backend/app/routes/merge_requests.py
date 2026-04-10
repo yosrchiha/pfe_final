@@ -160,3 +160,110 @@ def gitlab_webhook(
         return {"message": f"MR {mr_id_gitlab} updated to {mr_statut}"}
     
     return {"message": "MR not found in local DB"}
+@router.put("/{mr_id}/close")
+def close_merge_request(
+    mr_id: int,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """
+    Ferme une Merge Request sur GitLab ET met à jour le statut en base.
+    Déclenché quand l'utilisateur clique sur "Fermer" dans l'app.
+    """
+    from app.services.gitlab_client import get_gitlab_project
+ 
+    mr = db.query(MergeRequest).filter(MergeRequest.id == mr_id).first()
+    if not mr:
+        raise HTTPException(status_code=404, detail="Merge Request introuvable")
+ 
+    # Récupérer le dépôt pour avoir le token GitLab
+    depot = db.query(DepotAnalyse).filter(
+        DepotAnalyse.id == mr.depot_analyse_id
+    ).first()
+    if not depot:
+        raise HTTPException(status_code=404, detail="Dépôt introuvable")
+ 
+    if not depot.gitlab_token:
+        raise HTTPException(status_code=400, detail="Token GitLab manquant pour ce dépôt")
+ 
+    try:
+        # Appeler l'API GitLab pour fermer la MR
+        project     = get_gitlab_project(depot.gitlab_token, depot.project_url)
+        gitlab_mr   = project.mergerequests.get(mr.mr_id_gitlab)
+ 
+        if gitlab_mr.state == "merged":
+            raise HTTPException(status_code=400, detail="Impossible de fermer une MR déjà fusionnée")
+ 
+        # Fermeture sur GitLab
+        gitlab_mr.state_event = "close"
+        gitlab_mr.save()
+ 
+        # Mettre à jour en base
+        mr.statut = "closed"
+        db.commit()
+ 
+        return {
+            "mr_id":         mr.id,
+            "mr_id_gitlab":  mr.mr_id_gitlab,
+            "statut":        "closed",
+            "gitlab_state":  gitlab_mr.state,
+            "message":       "Merge Request fermée sur GitLab"
+        }
+ 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la fermeture sur GitLab : {str(e)}"
+        )
+ 
+ 
+@router.put("/{mr_id}/reopen")
+def reopen_merge_request(
+    mr_id: int,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    """
+    Réouvre une Merge Request fermée sur GitLab ET met à jour le statut en base.
+    """
+    from app.services.gitlab_client import get_gitlab_project
+ 
+    mr = db.query(MergeRequest).filter(MergeRequest.id == mr_id).first()
+    if not mr:
+        raise HTTPException(status_code=404, detail="Merge Request introuvable")
+ 
+    depot = db.query(DepotAnalyse).filter(
+        DepotAnalyse.id == mr.depot_analyse_id
+    ).first()
+    if not depot:
+        raise HTTPException(status_code=404, detail="Dépôt introuvable")
+ 
+    try:
+        project   = get_gitlab_project(depot.gitlab_token, depot.project_url)
+        gitlab_mr = project.mergerequests.get(mr.mr_id_gitlab)
+ 
+        # Réouverture sur GitLab
+        gitlab_mr.state_event = "reopen"
+        gitlab_mr.save()
+ 
+        # Mettre à jour en base
+        mr.statut = "opened"
+        db.commit()
+ 
+        return {
+            "mr_id":        mr.id,
+            "mr_id_gitlab": mr.mr_id_gitlab,
+            "statut":       "opened",
+            "gitlab_state": gitlab_mr.state,
+            "message":      "Merge Request réouverte sur GitLab"
+        }
+ 
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la réouverture sur GitLab : {str(e)}"
+        )
+
+    
