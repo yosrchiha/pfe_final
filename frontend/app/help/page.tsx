@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import axios from "axios";
+import { useTheme } from "@/app/ThemeContext";
+import ThemeToggle from "@/app/ThemeToggle";
 
 const API = "http://127.0.0.1:8000";
 
@@ -25,20 +27,49 @@ interface TicketMessage {
 
 export default function HelpPage() {
   const router = useRouter();
+  const { theme, isDark } = useTheme();
 
-  const [isLoggedIn, setIsLoggedIn]             = useState(false);
-  const [activeTab, setActiveTab]               = useState<"faq" | "tickets">("faq");
-  const [tickets, setTickets]                   = useState<Ticket[]>([]);
-  const [selectedTicket, setSelectedTicket]     = useState<Ticket | null>(null);
-  const [messages, setMessages]                 = useState<TicketMessage[]>([]);
+  const D = {
+    bg: theme.bg,
+    card: theme.bgSecondary,
+    border: theme.border,
+    text: theme.text,
+    muted: theme.textMuted,
+    faint: theme.textFaint,
+    tag: isDark ? "#1e2538" : "#f1f5f9",
+    tagText: isDark ? "#94a3b8" : "#475569",
+    btnPrimary: isDark ? "#6366f1" : "#0f172a",
+    btnSec: isDark ? "#1e2538" : "#f1f5f9",
+    inputBg: isDark ? "#0f1117" : "white",
+    rowHover: isDark ? "#1a2030" : "#faf9fe",
+    selectedBg: isDark ? "rgba(99,102,241,0.15)" : "#eef2ff",
+    modalBg: isDark ? "#141921" : "white",
+    userMsgBg: isDark ? "#6366f1" : "#6366f1",
+    adminMsgBg: isDark ? "#1e2538" : "#f1f5f9",
+    status: {
+      open: { bg: isDark ? "#f59e0b20" : "#fef3c7", color: "#f59e0b", label: "Ouvert" },
+      in_progress: { bg: isDark ? "#6366f120" : "#eef2ff", color: "#6366f1", label: "En cours" },
+      resolved: { bg: isDark ? "#10b98120" : "#d1fae5", color: "#10b981", label: "Résolu" },
+      closed: { bg: isDark ? "#6b728020" : "#f3f4f6", color: "#94a3b8", label: "Fermé" },
+    },
+    category: {
+      support: { icon: "💬", label: "Support" },
+      bug: { icon: "🐛", label: "Bug" },
+      feature: { icon: "✨", label: "Fonctionnalité" },
+      question: { icon: "❓", label: "Question" },
+    },
+  };
+
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [messages, setMessages] = useState<TicketMessage[]>([]);
   const [newTicketSubject, setNewTicketSubject] = useState("");
   const [newTicketCategory, setNewTicketCategory] = useState("support");
   const [newTicketMessage, setNewTicketMessage] = useState("");
-  const [replyMessage, setReplyMessage]         = useState("");
-  const [loading, setLoading]                   = useState(false);
+  const [replyMessage, setReplyMessage] = useState("");
+  const [loading, setLoading] = useState(false);
   const [showNewTicketForm, setShowNewTicketForm] = useState(false);
-  const [searchQuery, setSearchQuery]           = useState("");
-  const [openFaqItems, setOpenFaqItems]         = useState<Record<number, boolean>>({});
 
   const getHeaders = () => {
     const token = localStorage.getItem("token");
@@ -51,7 +82,6 @@ export default function HelpPage() {
       setIsLoggedIn(true);
       fetchTickets();
     }
-    // Pas de redirect — la page est accessible sans login
   }, []);
 
   const fetchTickets = async () => {
@@ -90,9 +120,6 @@ export default function HelpPage() {
     }
   };
 
-  // ── L'user envoie un message dans son propre ticket ──────────────
-  // Seul l'admin peut répondre côté backend (is_admin=1)
-  // Ici c'est le user qui répond à son propre ticket (is_admin=0)
   const sendReply = async () => {
     if (!replyMessage.trim() || !selectedTicket) return;
     setLoading(true);
@@ -117,354 +144,232 @@ export default function HelpPage() {
     fetchMessages(ticket.id);
   };
 
-  const toggleFaq = (idx: number) =>
-    setOpenFaqItems(prev => ({ ...prev, [idx]: !prev[idx] }));
+  const getStatus = (status: string) => {
+    return D.status[status as keyof typeof D.status] || D.status.open;
+  };
 
-  const getStatusColor = (s: string) =>
-    ({ open: "#f59e0b", in_progress: "#6366f1", resolved: "#10b981", closed: "#94a3b8" }[s] ?? "#64748b");
-
-  const getStatusLabel = (s: string) =>
-    ({ open: "Ouvert", in_progress: "En cours", resolved: "Résolu", closed: "Fermé" }[s] ?? s);
-
-  const getCategoryIcon = (c: string) =>
-    ({ support: "💬", bug: "🐛", feature: "✨", question: "❓" }[c] ?? "📝");
-
-  const getCategoryLabel = (c: string) =>
-    ({ support: "Support", bug: "Bug", feature: "Fonctionnalité", question: "Question" }[c] ?? c);
-
-  const faqs = [
-    { category: "Général",         q: "Qu'est-ce qu'AuditPlatform ?",               a: "Une plateforme d'audit de code GitLab utilisant l'IA pour analyser qualité, sécurité et performances." },
-    { category: "Général",         q: "Comment accéder à la plateforme ?",           a: "Créez un compte ou connectez-vous via GitLab OAuth. Vous accédez ensuite à votre tableau de bord." },
-    { category: "Dépôts",          q: "Comment ajouter un dépôt GitLab ?",           a: "Rendez-vous dans 'Dépôts' → 'Ajouter un dépôt'. Entrez le nom, l'URL, la branche et le token d'accès GitLab." },
-    { category: "Dépôts",          q: "Où trouver mon token GitLab ?",               a: "GitLab → Settings → Access Tokens. Créez un token avec les scopes 'api', 'read_repository', 'write_repository'." },
-    { category: "Analyse",         q: "Comment lancer une analyse IA ?",             a: "Depuis le tableau de bord, cliquez sur 'Nouvelle analyse' ou depuis un dépôt spécifique." },
-    { category: "Analyse",         q: "Que signifie le score global ?",              a: "Score sur 100 combinant qualité, sécurité et performance du code analysé." },
-    { category: "Tests",           q: "Quels langages sont supportés ?",             a: "Python (pytest), JavaScript (Jest), Java (JUnit), PHP (PHPUnit), Ruby (RSpec)." },
-    { category: "Merge Requests",  q: "Quand une MR est-elle créée automatiquement ?", a: "Lorsque l'option 'Création auto MR' est activée lors d'une analyse." },
-    { category: "Compte",          q: "Comment réinitialiser mon mot de passe ?",    a: "Sur la page de connexion, cliquez sur 'Mot de passe oublié'. Un code OTP vous sera envoyé." },
-    { category: "Erreurs",         q: "Erreur : Token GitLab invalide",              a: "Vérifiez que le token est actif et possède les bons scopes. Générez un nouveau token si nécessaire." },
-    { category: "Erreurs",         q: "L'analyse ne se termine pas",                 a: "Vérifiez que le dépôt est accessible et que le token n'a pas expiré. Contactez le support si besoin." },
-  ];
-
-  const filteredFaqs = searchQuery
-    ? faqs.filter(f =>
-        f.q.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.a.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : faqs;
+  const getCategory = (cat: string) => {
+    return D.category[cat as keyof typeof D.category] || D.category.support;
+  };
 
   return (
     <>
       <style>{`
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family:'Inter',sans-serif; background:#f8fafc; }
-        .help-container { min-height:100vh; background:linear-gradient(135deg,#f8fafc 0%,#eef2ff 100%); }
-        .help-header { background:white; border-bottom:1px solid #eef2ff; padding:16px 32px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:100; }
-        .logo { display:flex; align-items:center; gap:12px; cursor:pointer; }
-        .logo-icon { width:36px; height:36px; background:linear-gradient(135deg,#6366f1,#8b5cf6); border-radius:10px; display:flex; align-items:center; justify-content:center; font-weight:700; color:white; font-size:18px; }
-        .logo-text { font-size:16px; font-weight:700; color:#0f172a; }
-        .header-actions { display:flex; gap:10px; align-items:center; }
-        .btn-back { background:#f1f5f9; border:none; padding:8px 18px; border-radius:40px; font-size:13px; font-weight:500; color:#475569; cursor:pointer; }
-        .btn-back:hover { background:#e2e8f0; }
-        .btn-login { background:#6366f1; border:none; padding:8px 18px; border-radius:40px; font-size:13px; font-weight:600; color:white; cursor:pointer; }
-        .btn-login:hover { background:#4f46e5; }
-        .help-main { max-width:1200px; margin:0 auto; padding:48px 32px; }
-        .help-title { text-align:center; margin-bottom:40px; }
-        .help-title h1 { font-size:36px; font-weight:700; color:#0f172a; margin-bottom:10px; }
-        .help-title p { font-size:15px; color:#64748b; }
-        .tabs { display:flex; justify-content:center; gap:12px; margin-bottom:40px; }
-        .tab-btn { padding:10px 28px; background:white; border:1px solid #e2e8f0; border-radius:60px; font-size:14px; font-weight:600; color:#475569; cursor:pointer; transition:all 0.2s; }
-        .tab-btn:hover { border-color:#6366f1; color:#6366f1; }
-        .tab-btn.active { background:#6366f1; border-color:#6366f1; color:white; }
-        .search-bar { max-width:480px; margin:0 auto 36px; position:relative; }
-        .search-input { width:100%; padding:13px 20px 13px 46px; border:1px solid #e2e8f0; border-radius:60px; font-size:14px; background:white; }
-        .search-input:focus { outline:none; border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,0.1); }
-        .search-icon { position:absolute; left:17px; top:50%; transform:translateY(-50%); font-size:17px; }
-        .faq-section { background:white; border-radius:20px; border:1px solid #eef2ff; overflow:hidden; max-width:860px; margin:0 auto; }
-        .faq-item { border-bottom:1px solid #f1f5f9; }
-        .faq-question { padding:18px 22px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; font-weight:500; color:#0f172a; }
-        .faq-question:hover { background:#faf9fe; }
-        .faq-answer { padding:0 22px 18px; color:#64748b; line-height:1.7; font-size:14px; }
-        .faq-category-label { font-size:10px; color:#6366f1; font-weight:600; margin-bottom:3px; text-transform:uppercase; letter-spacing:0.05em; }
-        .tickets-layout { display:grid; grid-template-columns:300px 1fr; gap:0; background:white; border-radius:20px; border:1px solid #eef2ff; overflow:hidden; min-height:580px; }
-        .tickets-list { border-right:1px solid #eef2ff; display:flex; flex-direction:column; }
-        .tickets-list-header { padding:18px; border-bottom:1px solid #eef2ff; }
-        .tickets-list-header h3 { font-size:15px; font-weight:600; color:#0f172a; margin-bottom:10px; }
-        .new-ticket-btn { width:100%; padding:9px; background:#6366f1; border:none; border-radius:10px; color:white; font-weight:600; cursor:pointer; font-size:13px; transition:all 0.2s; }
-        .new-ticket-btn:hover { background:#4f46e5; }
-        .tickets-scroll { flex:1; overflow-y:auto; max-height:520px; }
-        .ticket-item { padding:14px 16px; border-bottom:1px solid #f8fafc; cursor:pointer; transition:background 0.15s; }
-        .ticket-item:hover { background:#f8fafc; }
-        .ticket-item.selected { background:#eef2ff; border-left:3px solid #6366f1; }
-        .ticket-subject-row { display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:5px; }
-        .ticket-subject-text { font-size:13px; font-weight:600; color:#0f172a; flex:1; }
-        .status-pill { font-size:10px; padding:2px 8px; border-radius:20px; font-weight:600; white-space:nowrap; }
-        .ticket-meta { font-size:11px; color:#94a3b8; margin-top:4px; }
-        .ticket-detail { display:flex; flex-direction:column; }
-        .ticket-detail-head { padding:18px 22px; border-bottom:1px solid #eef2ff; }
-        .ticket-detail-subject { font-size:17px; font-weight:700; color:#0f172a; margin-bottom:6px; }
-        .ticket-detail-meta { display:flex; gap:14px; font-size:12px; color:#64748b; flex-wrap:wrap; }
-        .messages-area { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px; min-height:280px; max-height:380px; }
-        .msg-row { display:flex; flex-direction:column; max-width:75%; }
-        .msg-row.user  { align-self:flex-end; align-items:flex-end; }
-        .msg-row.admin { align-self:flex-start; align-items:flex-start; }
-        .msg-sender { font-size:10px; color:#94a3b8; margin-bottom:3px; }
-        .msg-bubble { padding:10px 15px; border-radius:18px; font-size:13px; line-height:1.55; word-wrap:break-word; }
-        .msg-row.user  .msg-bubble { background:#6366f1; color:white; border-radius:18px 18px 4px 18px; }
-        .msg-row.admin .msg-bubble { background:#f1f5f9; color:#1e293b; border-radius:18px 18px 18px 4px; }
-        .msg-time { font-size:10px; color:#94a3b8; margin-top:3px; }
-        .reply-box { padding:16px 20px; border-top:1px solid #eef2ff; display:flex; gap:10px; background:white; }
-        .reply-input { flex:1; padding:10px 14px; border:1px solid #e2e8f0; border-radius:20px; font-size:13px; resize:none; font-family:inherit; }
-        .reply-input:focus { outline:none; border-color:#6366f1; }
-        .send-btn { padding:9px 22px; background:#6366f1; border:none; border-radius:20px; color:white; font-weight:600; cursor:pointer; font-size:13px; }
-        .send-btn:hover { background:#4f46e5; }
-        .send-btn:disabled { opacity:0.5; cursor:not-allowed; }
-        .closed-notice { padding:16px; text-align:center; color:#94a3b8; font-size:13px; border-top:1px solid #eef2ff; }
-        .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; padding:48px; color:#94a3b8; gap:12px; text-align:center; }
-        .empty-state-icon { font-size:40px; }
-        .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; z-index:1000; }
-        .modal { background:white; border-radius:20px; padding:28px; width:480px; max-width:90%; }
-        .modal h3 { font-size:20px; font-weight:700; color:#0f172a; margin-bottom:18px; }
-        .modal input, .modal select, .modal textarea { width:100%; padding:11px 14px; border:1px solid #e2e8f0; border-radius:10px; margin-bottom:12px; font-family:inherit; font-size:13px; }
-        .modal input:focus, .modal select:focus, .modal textarea:focus { outline:none; border-color:#6366f1; }
-        .modal textarea { min-height:90px; resize:vertical; }
-        .modal-footer { display:flex; gap:10px; justify-content:flex-end; }
-        .btn-cancel { padding:9px 20px; background:#f1f5f9; border:none; border-radius:30px; color:#475569; cursor:pointer; font-weight:500; font-size:13px; }
-        .btn-submit { padding:9px 20px; background:#6366f1; border:none; border-radius:30px; color:white; cursor:pointer; font-weight:600; font-size:13px; }
-        .login-prompt { background:white; border:1px solid #eef2ff; border-radius:20px; padding:48px; text-align:center; max-width:480px; margin:0 auto; }
-        .login-prompt h3 { font-size:20px; font-weight:700; color:#0f172a; margin-bottom:10px; }
-        .login-prompt p { color:#64748b; font-size:14px; margin-bottom:24px; }
-        .btn-login-large { padding:12px 32px; background:#6366f1; border:none; border-radius:30px; color:white; font-weight:600; font-size:15px; cursor:pointer; }
-        .btn-login-large:hover { background:#4f46e5; }
-        @keyframes spin { to { transform:rotate(360deg); } }
-        @media (max-width:768px) {
-          .tickets-layout { grid-template-columns:1fr; }
-          .help-title h1 { font-size:26px; }
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: ${D.bg}; }
+        ::-webkit-scrollbar-thumb { background: ${D.border}; border-radius: 3px; }
       `}</style>
 
-      <div className="help-container">
+      <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text }}>
 
         {/* HEADER */}
-        <div className="help-header">
-          <div className="logo" onClick={() => router.push("/")}>
-            <div className="logo-icon">⬡</div>
-            <div className="logo-text">AuditPlatform</div>
+        <div style={{ background: D.card, borderBottom: `1px solid ${D.border}`, padding: "16px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => router.push("/")}>
+            <div style={{ width: 36, height: 36, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "white", fontSize: 18 }}>⬡</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: D.text }}>AuditPlatform</div>
           </div>
-          <div className="header-actions">
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <ThemeToggle />
             {isLoggedIn ? (
-              <button className="btn-back" onClick={() => router.push("/dashboard")}>
+              <button onClick={() => router.push("/dashboard")} style={{ background: D.btnSec, border: "none", padding: "8px 18px", borderRadius: 40, fontSize: 13, fontWeight: 500, color: D.muted, cursor: "pointer" }}>
                 ← Tableau de bord
               </button>
             ) : (
               <>
-                <button className="btn-back" onClick={() => router.push("/")}>← Accueil</button>
-                <button className="btn-login" onClick={() => router.push("/login")}>Se connecter</button>
+                <button onClick={() => router.push("/")} style={{ background: D.btnSec, border: "none", padding: "8px 18px", borderRadius: 40, fontSize: 13, fontWeight: 500, color: D.muted, cursor: "pointer" }}>← Accueil</button>
+                <button onClick={() => router.push("/login")} style={{ background: D.btnPrimary, border: "none", padding: "8px 18px", borderRadius: 40, fontSize: 13, fontWeight: 600, color: "white", cursor: "pointer" }}>Se connecter</button>
               </>
             )}
           </div>
         </div>
 
         {/* MAIN */}
-        <div className="help-main">
-
-          <div className="help-title">
-            <h1>❓ Centre d'aide</h1>
-            <p>Consultez la FAQ ou contactez notre support</p>
+        <div style={{ maxWidth: 1000, margin: "0 auto", padding: "48px 32px" }}>
+          
+          {/* TITLE */}
+          <div style={{ textAlign: "center", marginBottom: 40 }}>
+            <h1 style={{ fontSize: 32, fontWeight: 700, color: D.text, marginBottom: 10 }}>💬 Support</h1>
+            <p style={{ fontSize: 15, color: D.faint }}>Contactez notre équipe ou consultez vos tickets</p>
           </div>
 
-          {/* TABS */}
-          <div className="tabs">
-            <button
-              className={`tab-btn ${activeTab === "faq" ? "active" : ""}`}
-              onClick={() => setActiveTab("faq")}
-            >
-              📚 FAQ
-            </button>
-            <button
-              className={`tab-btn ${activeTab === "tickets" ? "active" : ""}`}
-              onClick={() => setActiveTab("tickets")}
-            >
-              💬 Tickets {isLoggedIn && tickets.length > 0 && `(${tickets.length})`}
-            </button>
-          </div>
+          {/* TICKETS SECTION */}
+          {!isLoggedIn ? (
+            <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 48, textAlign: "center", maxWidth: 480, margin: "0 auto" }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+              <h3 style={{ fontSize: 20, fontWeight: 700, color: D.text, marginBottom: 10 }}>Connexion requise</h3>
+              <p style={{ color: D.faint, fontSize: 14, marginBottom: 24 }}>Connectez-vous pour créer un ticket et contacter notre support.</p>
+              <button onClick={() => router.push("/login")} style={{ padding: "12px 32px", background: D.btnPrimary, border: "none", borderRadius: 30, color: "white", fontWeight: 600, fontSize: 15, cursor: "pointer" }}>
+                Se connecter
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 0, background: D.card, borderRadius: 20, border: `1px solid ${D.border}`, overflow: "hidden", minHeight: 580 }}>
 
-          {/* ── FAQ ─────────────────────────────────────────────── */}
-          {activeTab === "faq" && (
-            <>
-              <div className="search-bar">
-                <span className="search-icon">🔍</span>
-                <input
-                  type="text"
-                  className="search-input"
-                  placeholder="Rechercher dans la FAQ..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                />
-              </div>
-              <div className="faq-section">
-                {filteredFaqs.length === 0 ? (
-                  <div className="empty-state"><div className="empty-state-icon">🔍</div><div>Aucun résultat</div></div>
-                ) : filteredFaqs.map((faq, idx) => (
-                  <div key={idx} className="faq-item">
-                    <div className="faq-question" onClick={() => toggleFaq(idx)}>
-                      <div>
-                        <div className="faq-category-label">{faq.category}</div>
-                        <div>{faq.q}</div>
-                      </div>
-                      <span style={{ fontSize: 20, color: "#6366f1", flexShrink: 0, marginLeft: 12 }}>
-                        {openFaqItems[idx] ? "−" : "+"}
-                      </span>
-                    </div>
-                    {openFaqItems[idx] && <div className="faq-answer">{faq.a}</div>}
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* ── TICKETS ─────────────────────────────────────────── */}
-          {activeTab === "tickets" && (
-            <>
-              {/* Pas connecté → invite à se connecter */}
-              {!isLoggedIn ? (
-                <div className="login-prompt">
-                  <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
-                  <h3>Connexion requise</h3>
-                  <p>Connectez-vous pour créer un ticket et contacter notre support.</p>
-                  <button className="btn-login-large" onClick={() => router.push("/login")}>
-                    Se connecter
+              {/* LEFT - Tickets List */}
+              <div style={{ borderRight: `1px solid ${D.border}`, display: "flex", flexDirection: "column" }}>
+                <div style={{ padding: 18, borderBottom: `1px solid ${D.border}` }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, color: D.text, marginBottom: 10 }}>📋 Mes tickets</h3>
+                  <button onClick={() => setShowNewTicketForm(true)} style={{ width: "100%", padding: 9, background: D.btnPrimary, border: "none", borderRadius: 10, color: "white", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>
+                    ✨ Nouveau ticket
                   </button>
                 </div>
-              ) : (
-                <div className="tickets-layout">
-
-                  {/* Liste des tickets */}
-                  <div className="tickets-list">
-                    <div className="tickets-list-header">
-                      <h3>📋 Mes tickets</h3>
-                      <button className="new-ticket-btn" onClick={() => setShowNewTicketForm(true)}>
-                        ✨ Nouveau ticket
+                <div style={{ flex: 1, overflowY: "auto", maxHeight: 520 }}>
+                  {tickets.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 48, color: D.faint }}>
+                      <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+                      <div style={{ fontSize: 13, marginBottom: 16 }}>Aucun ticket</div>
+                      <button onClick={() => setShowNewTicketForm(true)} style={{ padding: "8px 20px", background: D.btnPrimary, border: "none", borderRadius: 20, color: "white", fontSize: 12, cursor: "pointer" }}>
+                        Créer un ticket
                       </button>
                     </div>
-                    <div className="tickets-scroll">
-                      {tickets.length === 0 ? (
-                        <div className="empty-state" style={{ padding: 32 }}>
-                          <div className="empty-state-icon">📭</div>
-                          <div style={{ fontSize: 13 }}>Aucun ticket</div>
-                          <button className="new-ticket-btn" style={{ width: "auto", padding: "8px 20px" }}
-                            onClick={() => setShowNewTicketForm(true)}>
-                            Créer un ticket
-                          </button>
-                        </div>
-                      ) : tickets.map(ticket => (
+                  ) : (
+                    tickets.map(ticket => {
+                      const status = getStatus(ticket.status);
+                      const category = getCategory(ticket.category);
+                      return (
                         <div
                           key={ticket.id}
-                          className={`ticket-item ${selectedTicket?.id === ticket.id ? "selected" : ""}`}
                           onClick={() => selectTicket(ticket)}
+                          style={{
+                            padding: "14px 16px",
+                            borderBottom: `1px solid ${D.border}`,
+                            cursor: "pointer",
+                            transition: "background 0.15s",
+                            background: selectedTicket?.id === ticket.id ? D.selectedBg : "transparent",
+                            borderLeft: selectedTicket?.id === ticket.id ? `3px solid #6366f1` : "3px solid transparent"
+                          }}
+                          onMouseEnter={e => { if (selectedTicket?.id !== ticket.id) e.currentTarget.style.background = D.rowHover; }}
+                          onMouseLeave={e => { if (selectedTicket?.id !== ticket.id) e.currentTarget.style.background = "transparent"; }}
                         >
-                          <div className="ticket-subject-row">
-                            <span className="ticket-subject-text">
-                              {getCategoryIcon(ticket.category)} {ticket.subject.length > 28 ? ticket.subject.slice(0, 28) + "…" : ticket.subject}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 5 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: D.text, flex: 1 }}>
+                              {category.icon} {ticket.subject.length > 28 ? ticket.subject.slice(0, 28) + "…" : ticket.subject}
                             </span>
-                            <span
-                              className="status-pill"
-                              style={{ background: `${getStatusColor(ticket.status)}18`, color: getStatusColor(ticket.status) }}
-                            >
-                              {getStatusLabel(ticket.status)}
+                            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 600, background: status.bg, color: status.color }}>
+                              {status.label}
                             </span>
                           </div>
-                          <div className="ticket-meta">{getCategoryLabel(ticket.category)} · {new Date(ticket.created_at).toLocaleDateString()}</div>
+                          <div style={{ fontSize: 11, color: D.faint }}>{category.label} · {new Date(ticket.created_at).toLocaleDateString()}</div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
 
-                  {/* Détail du ticket sélectionné */}
-                  <div className="ticket-detail">
-                    {!selectedTicket ? (
-                      <div className="empty-state">
-                        <div className="empty-state-icon">💬</div>
-                        <div style={{ fontWeight: 600, color: "#475569" }}>Sélectionnez un ticket</div>
-                        <div style={{ fontSize: 12 }}>pour voir la conversation avec le support</div>
+              {/* RIGHT - Ticket Detail */}
+              <div style={{ display: "flex", flexDirection: "column" }}>
+                {!selectedTicket ? (
+                  <div style={{ textAlign: "center", padding: 80, color: D.faint }}>
+                    <div style={{ fontSize: 48, marginBottom: 12 }}>💬</div>
+                    <div style={{ fontWeight: 600, color: D.muted }}>Sélectionnez un ticket</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>pour voir la conversation avec le support</div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Ticket Header */}
+                    <div style={{ padding: "18px 22px", borderBottom: `1px solid ${D.border}` }}>
+                      <div style={{ fontSize: 17, fontWeight: 700, color: D.text, marginBottom: 6 }}>
+                        {getCategory(selectedTicket.category).icon} {selectedTicket.subject}
+                      </div>
+                      <div style={{ display: "flex", gap: 14, fontSize: 12, color: D.faint, flexWrap: "wrap" }}>
+                        <span>{getCategory(selectedTicket.category).label}</span>
+                        <span style={{ color: getStatus(selectedTicket.status).color, fontWeight: 600 }}>● {getStatus(selectedTicket.status).label}</span>
+                        <span>{new Date(selectedTicket.created_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    {/* Messages */}
+                    <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 14, minHeight: 280, maxHeight: 380 }}>
+                      {messages.length === 0 ? (
+                        <div style={{ textAlign: "center", padding: 40, color: D.faint }}>Aucun message</div>
+                      ) : (
+                        messages.map(msg => (
+                          <div
+                            key={msg.id}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              maxWidth: "75%",
+                              alignSelf: msg.is_admin ? "flex-start" : "flex-end",
+                              alignItems: msg.is_admin ? "flex-start" : "flex-end"
+                            }}
+                          >
+                            <div style={{ fontSize: 10, color: D.faint, marginBottom: 3 }}>
+                              {msg.is_admin ? "🛡️ Support" : "👤 Vous"}
+                            </div>
+                            <div style={{
+                              padding: "10px 15px",
+                              borderRadius: 18,
+                              fontSize: 13,
+                              lineHeight: 1.55,
+                              background: msg.is_admin ? D.adminMsgBg : D.userMsgBg,
+                              color: msg.is_admin ? D.text : "white",
+                             
+                            }}>
+                              {msg.message}
+                            </div>
+                            <div style={{ fontSize: 10, color: D.faint, marginTop: 3 }}>
+                              {new Date(msg.created_at).toLocaleString()}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {/* Reply Box */}
+                    {selectedTicket.status === "closed" ? (
+                      <div style={{ padding: 16, textAlign: "center", color: D.faint, fontSize: 13, borderTop: `1px solid ${D.border}` }}>
+                        🔒 Ce ticket est fermé
                       </div>
                     ) : (
-                      <>
-                        <div className="ticket-detail-head">
-                          <div className="ticket-detail-subject">
-                            {getCategoryIcon(selectedTicket.category)} {selectedTicket.subject}
-                          </div>
-                          <div className="ticket-detail-meta">
-                            <span>{getCategoryLabel(selectedTicket.category)}</span>
-                            <span
-                              style={{ color: getStatusColor(selectedTicket.status), fontWeight: 600 }}
-                            >
-                              ● {getStatusLabel(selectedTicket.status)}
-                            </span>
-                            <span>{new Date(selectedTicket.created_at).toLocaleString()}</span>
-                          </div>
-                        </div>
-
-                        {/* Messages */}
-                        <div className="messages-area">
-                          {messages.length === 0 ? (
-                            <div className="empty-state"><div>Aucun message</div></div>
-                          ) : messages.map(msg => (
-                            <div
-                              key={msg.id}
-                              className={`msg-row ${msg.is_admin ? "admin" : "user"}`}
-                            >
-                              <div className="msg-sender">
-                                {msg.is_admin ? "🛡️ Support" : "👤 Vous"}
-                              </div>
-                              <div className="msg-bubble">{msg.message}</div>
-                              <div className="msg-time">
-                                {new Date(msg.created_at).toLocaleString()}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Zone de réponse — seulement si ticket pas fermé */}
-                        {selectedTicket.status === "closed" ? (
-                          <div className="closed-notice">🔒 Ce ticket est fermé</div>
-                        ) : (
-                          <div className="reply-box">
-                            <textarea
-                              className="reply-input"
-                              rows={2}
-                              placeholder="Ajouter un message..."
-                              value={replyMessage}
-                              onChange={e => setReplyMessage(e.target.value)}
-                              disabled={loading}
-                            />
-                            <button className="send-btn" onClick={sendReply} disabled={loading || !replyMessage.trim()}>
-                              {loading ? "…" : "Envoyer"}
-                            </button>
-                          </div>
-                        )}
-                      </>
+                      <div style={{ padding: "16px 20px", borderTop: `1px solid ${D.border}`, display: "flex", gap: 10, background: D.card }}>
+                        <textarea
+                          rows={2}
+                          placeholder="Ajouter un message..."
+                          value={replyMessage}
+                          onChange={e => setReplyMessage(e.target.value)}
+                          disabled={loading}
+                          style={{ flex: 1, padding: "10px 14px", border: `1px solid ${D.border}`, borderRadius: 20, fontSize: 13, resize: "none", fontFamily: "inherit", background: D.inputBg, color: D.text }}
+                        />
+                        <button
+                          onClick={sendReply}
+                          disabled={loading || !replyMessage.trim()}
+                          style={{ padding: "9px 22px", background: D.btnPrimary, border: "none", borderRadius: 20, color: "white", fontWeight: 600, cursor: "pointer", fontSize: 13, opacity: (loading || !replyMessage.trim()) ? 0.5 : 1 }}
+                        >
+                          {loading ? "…" : "Envoyer"}
+                        </button>
+                      </div>
                     )}
-                  </div>
-                </div>
-              )}
-            </>
+                  </>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {/* MODAL — Nouveau ticket */}
+      {/* MODAL - Nouveau ticket */}
       {showNewTicketForm && (
-        <div className="modal-overlay" onClick={() => setShowNewTicketForm(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3>✨ Nouveau ticket</h3>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setShowNewTicketForm(false)}>
+          <div style={{ background: D.modalBg, borderRadius: 20, padding: 28, width: 480, maxWidth: "90%" }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: 20, fontWeight: 700, color: D.text, marginBottom: 18 }}>✨ Nouveau ticket</h3>
             <input
               type="text"
               placeholder="Sujet du ticket"
               value={newTicketSubject}
               onChange={e => setNewTicketSubject(e.target.value)}
+              style={{ width: "100%", padding: "11px 14px", border: `1px solid ${D.border}`, borderRadius: 10, marginBottom: 12, background: D.inputBg, color: D.text }}
             />
-            <select value={newTicketCategory} onChange={e => setNewTicketCategory(e.target.value)}>
+            <select
+              value={newTicketCategory}
+              onChange={e => setNewTicketCategory(e.target.value)}
+              style={{ width: "100%", padding: "11px 14px", border: `1px solid ${D.border}`, borderRadius: 10, marginBottom: 12, background: D.inputBg, color: D.text }}
+            >
               <option value="support">💬 Support</option>
               <option value="bug">🐛 Bug</option>
               <option value="feature">✨ Nouvelle fonctionnalité</option>
@@ -474,13 +379,14 @@ export default function HelpPage() {
               placeholder="Décrivez votre problème en détail..."
               value={newTicketMessage}
               onChange={e => setNewTicketMessage(e.target.value)}
+              style={{ width: "100%", padding: "11px 14px", border: `1px solid ${D.border}`, borderRadius: 10, marginBottom: 12, minHeight: 90, resize: "vertical", background: D.inputBg, color: D.text }}
             />
-            <div className="modal-footer">
-              <button className="btn-cancel" onClick={() => setShowNewTicketForm(false)}>Annuler</button>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowNewTicketForm(false)} style={{ padding: "9px 20px", background: D.btnSec, border: "none", borderRadius: 30, color: D.muted, cursor: "pointer", fontWeight: 500, fontSize: 13 }}>Annuler</button>
               <button
-                className="btn-submit"
                 onClick={createTicket}
                 disabled={loading || !newTicketSubject.trim() || !newTicketMessage.trim()}
+                style={{ padding: "9px 20px", background: D.btnPrimary, border: "none", borderRadius: 30, color: "white", cursor: "pointer", fontWeight: 600, fontSize: 13, opacity: (loading || !newTicketSubject.trim() || !newTicketMessage.trim()) ? 0.5 : 1 }}
               >
                 {loading ? "…" : "Envoyer"}
               </button>

@@ -17,6 +17,8 @@ from app.models.analyse       import Analyse
 from app.routes.auth import get_current_user
 from app.models.comparaison import Comparaison
 from app.models.analyse_diff import AnalyseDiff
+from pydantic import BaseModel, EmailStr
+from app.core.security import hash_password   # ton helper existant
 
 # ── Import du modèle AnalyseDiff ──────────────────────────────────
 # Adapte le chemin selon ton app (le modèle de comparaison de branches)
@@ -408,3 +410,197 @@ def get_all_diffs_admin(
         }
         for a, c, d, u in results
     ]
+
+ 
+class CreateUserRequest(BaseModel):
+    email: str
+    username: str
+    password: str
+    role: str = "user"   # "user" ou "admin"
+ 
+@router.post("/users/create")
+def admin_create_user(
+    data: CreateUserRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Admin : crée un compte utilisateur directement."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+ 
+    # Vérifie que l'email n'existe pas déjà
+    existing = db.query(User).filter(User.email == data.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Cet email est déjà utilisé.")
+ 
+    # Vérifie que le username n'existe pas déjà
+    existing_u = db.query(User).filter(User.username == data.username).first()
+    if existing_u:
+        raise HTTPException(status_code=400, detail="Ce username est déjà pris.")
+ 
+    # Valide le rôle
+    if data.role not in ("user", "admin"):
+        raise HTTPException(status_code=400, detail="Rôle invalide : 'user' ou 'admin'.")
+ 
+    new_user = User(
+        email=data.email,
+        username=data.username,
+        hashed_password=hash_password(data.password),
+        role=data.role,
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+ 
+    return {
+        "id":       new_user.id,
+        "email":    new_user.email,
+        "username": new_user.username,
+        "role":     new_user.role,
+        "message":  "Compte créé avec succès.",
+    }
+from pydantic import BaseModel
+from typing import Optional
+ 
+class UpdateDepotRequest(BaseModel):
+    nom:         Optional[str] = None
+    project_url: Optional[str] = None
+    branche:     Optional[str] = None
+ 
+ 
+@router.put("/depots/{depot_id}")
+def admin_update_depot(
+    depot_id: int,
+    data: UpdateDepotRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Admin : modifie les informations d'un dépôt."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+ 
+    # Cherche dans Depot (modèle GitLab principal)
+    depot = db.query(Depot).filter(Depot.id == depot_id).first()
+ 
+    # Fallback : cherche dans DepotAnalyse si pas trouvé dans Depot
+    if not depot:
+        from app.models.depot_analyse import DepotAnalyse as DA
+        da = db.query(DA).filter(DA.id == depot_id).first()
+        if not da:
+            raise HTTPException(status_code=404, detail="Dépôt introuvable")
+        if data.nom:         da.nom         = data.nom.strip()
+        if data.project_url: da.project_url = data.project_url.strip()
+        if data.branche:     da.branche     = data.branche.strip()
+        db.commit()
+        db.refresh(da)
+        return {
+            "id":          da.id,
+            "nom":         da.nom,
+            "project_url": da.project_url,
+            "branche":     da.branche,
+            "message":     "Dépôt modifié avec succès.",
+        }
+ 
+    if data.nom:         depot.nom         = data.nom.strip()
+    if data.project_url: depot.project_url = data.project_url.strip()
+    if data.branche:     depot.branche     = data.branche.strip()
+    db.commit()
+    db.refresh(depot)
+ 
+    return {
+        "id":          depot.id,
+        "nom":         depot.nom,
+        "project_url": depot.project_url,
+        "branche":     depot.branche,
+        "message":     "Dépôt modifié avec succès.",
+    }
+ 
+ 
+# ── DELETE /admin/depots/{id} ── déjà présent dans Admin.py ───────
+# Rien à ajouter, il est dans le code fourni.
+# Vérification : il doit supprimer en cascade les analyses associées.
+# Si ce n'est pas le cas, adapte comme suit :
+ 
+# @router.delete("/depots/{depot_id}", status_code=204)
+# def delete_depot_admin(depot_id: int, db: Session = Depends(get_db),
+#                        current_user: User = Depends(get_current_user)):
+#     if current_user.role != "admin":
+#         raise HTTPException(status_code=403, detail="Admin requis")
+#     d = db.query(Depot).filter(Depot.id == depot_id).first()
+#     if not d:
+#         # essayer DepotAnalyse
+#         from app.models.depot_analyse import DepotAnalyse as DA
+#         da = db.query(DA).filter(DA.id == depot_id).first()
+#         if not da:
+#             raise HTTPException(status_code=404, detail="Dépôt introuvable")
+#         db.delete(da)
+#         db.commit()
+#         return
+#     db.delete(d)
+#     db.commit()
+from pydantic import BaseModel, EmailStr
+from typing import Optional
+ 
+class UpdateUserBody(BaseModel):
+    email:    Optional[EmailStr] = None
+    username: Optional[str]      = None
+ 
+ 
+@router.patch("/users/{user_id}/update")
+def update_user_info(
+    user_id: int,
+    body: UpdateUserBody,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Admin : modifie email et/ou username d'un utilisateur.
+    Vérifie l'unicité de l'email si changement.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+ 
+    # Récupérer l'utilisateur cible
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+ 
+    # ── Modifier l'email ──────────────────────────────────────
+    if body.email and body.email != u.email:
+        # Vérifier unicité
+        existing = db.query(User).filter(User.email == body.email).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Cet email est déjà utilisé par un autre compte"
+            )
+        u.email = body.email
+ 
+    # ── Modifier le username ──────────────────────────────────
+    if body.username and body.username.strip():
+        new_username = body.username.strip()
+        # Vérifier unicité username (optionnel selon ton modèle)
+        existing_u = db.query(User).filter(
+            User.username == new_username,
+            User.id != user_id
+        ).first()
+        if existing_u:
+            raise HTTPException(
+                status_code=400,
+                detail="Ce username est déjà utilisé"
+            )
+        u.username = new_username
+ 
+    db.commit()
+    db.refresh(u)
+ 
+    return {
+        "id":       u.id,
+        "email":    u.email,
+        "username": u.username,
+        "role":     u.role,
+        "message":  "Utilisateur modifié avec succès",
+    }
+ 
+ 

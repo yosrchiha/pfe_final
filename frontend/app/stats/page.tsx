@@ -7,6 +7,8 @@ import {
   LineChart, Line, BarChart, Bar, 
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
+import { useTheme } from "@/app/ThemeContext";
+import ThemeToggle from "@/app/ThemeToggle";
 
 const API = "http://127.0.0.1:8000";
 
@@ -30,20 +32,37 @@ interface StatsMRParProjet {
 
 export default function StatsPage() {
   const router = useRouter();
-  
-  // Analyses SIMPLES
+  const { theme, isDark } = useTheme();
+
+  const D = {
+    bg: theme.bg,
+    card: theme.bgSecondary,
+    border: theme.border,
+    text: theme.text,
+    muted: theme.textMuted,
+    faint: theme.textFaint,
+    tag: isDark ? "#1e2538" : "#f1f5f9",
+    tagText: isDark ? "#94a3b8" : "#475569",
+    btnPrimary: isDark ? "#6366f1" : "#0f172a",
+    btnSec: isDark ? "#1e2538" : "#f1f5f9",
+    inputBg: isDark ? "#0f1117" : "white",
+    cardHover: isDark ? "#1a2030" : "#faf9fe",
+    tooltipBg: isDark ? "#1a1c2a" : "white",
+    tooltipBorder: isDark ? "#2a2f45" : "#e2e8f0",
+    chartGrid: isDark ? "#2a2f45" : "#e2e8f0",
+    chartText: isDark ? "#94a3b8" : "#64748b",
+  };
+
   const [simplesParJour, setSimplesParJour] = useState<StatsParJour[]>([]);
   const [simplesParProjet, setSimplesParProjet] = useState<StatsParProjet[]>([]);
   const [totalSimples, setTotalSimples] = useState(0);
   const [totalProjetsSimples, setTotalProjetsSimples] = useState(0);
   
-  // Analyses DIFF
   const [diffParJour, setDiffParJour] = useState<StatsParJour[]>([]);
   const [diffParProjet, setDiffParProjet] = useState<StatsParProjet[]>([]);
   const [totalDiff, setTotalDiff] = useState(0);
   const [totalProjetsDiff, setTotalProjetsDiff] = useState(0);
   
-  // Merge Requests
   const [mrParProjet, setMrParProjet] = useState<StatsMRParProjet[]>([]);
   const [totalMR, setTotalMR] = useState(0);
   const [mrTests, setMrTests] = useState(0);
@@ -69,9 +88,6 @@ export default function StatsPage() {
       const me = await axios.get(`${API}/auth/me`, { headers: getHeaders() });
       const userId = me.data.id;
       
-      // ============================================================
-      // PARTIE 1 : ANALYSES SIMPLES (depots_analyse + analyses)
-      // ============================================================
       const depotsSimplesRes = await axios.get(`${API}/analyses/depots-user/${userId}`, { headers: getHeaders() });
       const depotsSimples = depotsSimplesRes.data;
       
@@ -100,9 +116,6 @@ export default function StatsPage() {
         }
       }
 
-      // ============================================================
-      // PARTIE 2 : ANALYSES DIFF (depots + comparaisons + analyses_diff)
-      // ============================================================
       const depotsDiffRes = await axios.get(`${API}/depots/user/${userId}`, { headers: getHeaders() });
       const depotsDiff = depotsDiffRes.data;
       
@@ -139,16 +152,12 @@ export default function StatsPage() {
         }
       }
 
-      // ============================================================
-      // PARTIE 3 : MERGE REQUESTS (tests + auto_merge + force)
-      // ============================================================
       const mrProjetsMap: Record<string, { tests: number; autoMerge: number; force: number }> = {};
       let totalMRCount = 0;
       let totalMRTests = 0;
       let totalMRAutoMerge = 0;
       let totalMRForce = 0;
 
-      // Récupérer les MR de tests pour chaque dépôt simple
       for (const depot of depotsSimples) {
         try {
           const mrRes = await axios.get(`${API}/merge-requests/depot/${depot.id}`, { headers: getHeaders() });
@@ -176,7 +185,6 @@ export default function StatsPage() {
         }
       }
 
-      // Récupérer les MR de diff pour chaque dépôt diff
       for (const depot of depotsDiff) {
         try {
           const mrRes = await axios.get(`${API}/merge-requests-diff/depot/${depot.id}`, { headers: getHeaders() });
@@ -211,7 +219,6 @@ export default function StatsPage() {
         .sort((a, b) => b.total - a.total)
         .slice(0, 10);
 
-      // Transformation des données pour les graphiques
       const simplesJoursData = Object.entries(simplesJoursMap)
         .map(([date, count]) => ({ date, count }))
         .sort((a, b) => a.date.localeCompare(b.date))
@@ -259,156 +266,189 @@ export default function StatsPage() {
     fetchStats();
   }, []);
 
+  if (loading) {
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-6 py-8">
+    <div style={{ minHeight: "100vh", background: D.bg, display: "flex", alignItems: "center", justifyContent: "center", color: D.faint }}>
+      <div style={{ 
+        width: 24, 
+        height: 24, 
+        borderLeftWidth: 2,
+        borderRightWidth: 2,
+        borderBottomWidth: 2,
+        borderTopWidth: 2,
+        borderLeftStyle: "solid",
+        borderRightStyle: "solid",
+        borderBottomStyle: "solid",
+        borderTopStyle: "solid",
+        borderLeftColor: D.border,
+        borderRightColor: D.border,
+        borderBottomColor: D.border,
+        borderTopColor: "#6366f1",
+        borderRadius: "50%", 
+        animation: "spin 0.6s linear infinite", 
+        marginRight: 12 
+      }} />
+      Chargement des statistiques...
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div style={{ background: D.tooltipBg, border: `1px solid ${D.tooltipBorder}`, borderRadius: 12, padding: "10px 14px", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
+          <p style={{ margin: 0, fontSize: 12, color: D.text }}>{label}</p>
+          {payload.map((p: any, idx: number) => (
+            <p key={idx} style={{ margin: "4px 0 0", fontSize: 12, color: p.color }}>
+              {p.name}: {p.value}
+            </p>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: D.bg }}>
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: "32px 24px" }}>
         
-        {/* HEADER */}
-        <div className="flex justify-between items-center mb-8">
+        {/* HEADER avec ThemeToggle */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">📊 Statistiques détaillées</h1>
-            <p className="text-gray-500 mt-1">Analyses simples | Analyses Diff | Merge Requests</p>
+            <h1 style={{ fontSize: 32, fontWeight: 700, color: D.text, letterSpacing: "-0.02em" }}>📊 Statistiques détaillées</h1>
+            <p style={{ color: D.faint, marginTop: 4 }}>Analyses simples | Analyses Diff | Merge Requests</p>
           </div>
-          <button
-            onClick={() => router.push("/dashboard")}
-            className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl transition"
-          >
-            ← Retour
-          </button>
-        </div>
-
-        {/* LIGNE 1 : STATS CARDS - Analyses */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
-                <span className="text-indigo-600 text-xl">📊</span>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-gray-900">{totalSimples}</div>
-                <div className="text-sm text-gray-500">Analyses simples</div>
-              </div>
-            </div>
-            <div className="text-xs text-gray-400 mt-2">{totalProjetsSimples} projet(s)</div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
-                <span className="text-emerald-600 text-xl">🔄</span>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-gray-900">{totalDiff}</div>
-                <div className="text-sm text-gray-500">Analyses Diff</div>
-              </div>
-            </div>
-            <div className="text-xs text-gray-400 mt-2">{totalProjetsDiff} projet(s)</div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                <span className="text-purple-600 text-xl">🔀</span>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-gray-900">{totalMR}</div>
-                <div className="text-sm text-gray-500">Merge Requests totales</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-            <div className="flex gap-2 justify-between">
-              <div className="text-center">
-                <div className="text-xl font-bold text-indigo-600">{mrTests}</div>
-                <div className="text-xs text-gray-500">🧪 Tests</div>
-              </div>
-              <div className="text-center">
-                <div className="text-xl font-bold text-amber-600">{mrAutoMerge}</div>
-                <div className="text-xs text-gray-500">⚡ Auto</div>
-              </div>
-              <div className="text-center">
-                <div className="text-xl font-bold text-red-600">{mrForce}</div>
-                <div className="text-xs text-gray-500">⚠️ Force</div>
-              </div>
-            </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <ThemeToggle />
+            <button onClick={() => router.push("/dashboard")} style={{ padding: "10px 20px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 12, color: D.muted, fontSize: 14, fontWeight: 500, cursor: "pointer" }}>
+              ← Retour
+            </button>
           </div>
         </div>
 
-        {/* GRAPHIQUE 1 : Analyses par jour (comparaison SIMPLES vs DIFF) */}
-        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm mb-8">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">📈 Analyses par jour (30 derniers jours)</h2>
-          <p className="text-sm text-gray-500 mb-6">Comparaison entre analyses simples et analyses Diff</p>
+        {/* STATS CARDS */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 24, marginBottom: 32 }}>
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 40, height: 40, background: "rgba(99,102,241,0.1)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 20, color: "#6366f1" }}>📊</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: D.text }}>{totalSimples}</div>
+                <div style={{ fontSize: 13, color: D.faint }}>Analyses simples</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: D.faint, marginTop: 8 }}>{totalProjetsSimples} projet(s)</div>
+          </div>
+
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 40, height: 40, background: "rgba(16,185,129,0.1)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 20, color: "#10b981" }}>🔄</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: D.text }}>{totalDiff}</div>
+                <div style={{ fontSize: 13, color: D.faint }}>Analyses Diff</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: D.faint, marginTop: 8 }}>{totalProjetsDiff} projet(s)</div>
+          </div>
+
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 40, height: 40, background: "rgba(139,92,246,0.1)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 20, color: "#8b5cf6" }}>🔀</span>
+              </div>
+              <div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: D.text }}>{totalMR}</div>
+                <div style={{ fontSize: 13, color: D.faint }}>Merge Requests totales</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 20 }}>
+            <div style={{ display: "flex", gap: 16, justifyContent: "space-between" }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: "#6366f1" }}>{mrTests}</div>
+                <div style={{ fontSize: 10, color: D.faint }}>🧪 Tests</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: "#f59e0b" }}>{mrAutoMerge}</div>
+                <div style={{ fontSize: 10, color: D.faint }}>⚡ Auto</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: "#ef4444" }}>{mrForce}</div>
+                <div style={{ fontSize: 10, color: D.faint }}>⚠️ Force</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* GRAPHIQUE 1 : Analyses par jour */}
+        <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 24, marginBottom: 32 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, color: D.text, marginBottom: 8 }}>📈 Analyses par jour (30 derniers jours)</h2>
+          <p style={{ fontSize: 13, color: D.faint, marginBottom: 24 }}>Comparaison entre analyses simples et analyses Diff</p>
           
-          {loading ? (
-            <div className="h-80 flex items-center justify-center text-gray-400">Chargement...</div>
-          ) : (
-            <ResponsiveContainer width="100%" height={350}>
-              <LineChart>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="date" stroke="#94a3b8" fontSize={12} />
-                <YAxis stroke="#94a3b8" fontSize={12} />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'white', borderRadius: '12px', border: '1px solid #e2e8f0' }}
-                />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  data={simplesParJour}
-                  dataKey="count" 
-                  name="Analyses simples"
-                  stroke="#6366f1" 
-                  strokeWidth={2}
-                  dot={{ fill: '#6366f1', r: 4 }}
-                />
-                <Line 
-                  type="monotone" 
-                  data={diffParJour}
-                  dataKey="count" 
-                  name="Analyses Diff"
-                  stroke="#10b981" 
-                  strokeWidth={2}
-                  dot={{ fill: '#10b981', r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
+          <ResponsiveContainer width="100%" height={350}>
+            <LineChart>
+              <CartesianGrid strokeDasharray="3 3" stroke={D.chartGrid} />
+              <XAxis dataKey="date" stroke={D.chartText} fontSize={12} />
+              <YAxis stroke={D.chartText} fontSize={12} />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ color: D.text }} />
+              <Line 
+                type="monotone" 
+                data={simplesParJour}
+                dataKey="count" 
+                name="Analyses simples"
+                stroke="#6366f1" 
+                strokeWidth={2}
+                dot={{ fill: '#6366f1', r: 4 }}
+              />
+              <Line 
+                type="monotone" 
+                data={diffParJour}
+                dataKey="count" 
+                name="Analyses Diff"
+                stroke="#10b981" 
+                strokeWidth={2}
+                dot={{ fill: '#10b981', r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
 
-        {/* GRAPHIQUE 2 : Top projets (deux graphiques côte à côte) */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">📊 Top projets (analyses simples)</h2>
-            {loading ? (
-              <div className="h-80 flex items-center justify-center text-gray-400">Chargement...</div>
-            ) : simplesParProjet.length === 0 ? (
-              <div className="h-80 flex items-center justify-center text-gray-400">Aucune donnée</div>
+        {/* GRAPHIQUE 2 : Top projets */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 32, marginBottom: 32 }}>
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 24 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: D.text, marginBottom: 16 }}>📊 Top projets (analyses simples)</h2>
+            {simplesParProjet.length === 0 ? (
+              <div style={{ height: 350, display: "flex", alignItems: "center", justifyContent: "center", color: D.faint }}>Aucune donnée</div>
             ) : (
               <ResponsiveContainer width="100%" height={350}>
                 <BarChart data={simplesParProjet} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis type="number" stroke="#94a3b8" fontSize={12} />
-                  <YAxis type="category" dataKey="projet" stroke="#94a3b8" fontSize={12} width={150} />
-                  <Tooltip />
+                  <CartesianGrid strokeDasharray="3 3" stroke={D.chartGrid} />
+                  <XAxis type="number" stroke={D.chartText} fontSize={12} />
+                  <YAxis type="category" dataKey="projet" stroke={D.chartText} fontSize={12} width={150} />
+                  <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="count" name="Analyses simples" fill="#6366f1" radius={[0, 8, 8, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">📊 Top projets (analyses Diff)</h2>
-            {loading ? (
-              <div className="h-80 flex items-center justify-center text-gray-400">Chargement...</div>
-            ) : diffParProjet.length === 0 ? (
-              <div className="h-80 flex items-center justify-center text-gray-400">Aucune donnée</div>
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 24 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, color: D.text, marginBottom: 16 }}>📊 Top projets (analyses Diff)</h2>
+            {diffParProjet.length === 0 ? (
+              <div style={{ height: 350, display: "flex", alignItems: "center", justifyContent: "center", color: D.faint }}>Aucune donnée</div>
             ) : (
               <ResponsiveContainer width="100%" height={350}>
                 <BarChart data={diffParProjet} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis type="number" stroke="#94a3b8" fontSize={12} />
-                  <YAxis type="category" dataKey="projet" stroke="#94a3b8" fontSize={12} width={150} />
-                  <Tooltip />
+                  <CartesianGrid strokeDasharray="3 3" stroke={D.chartGrid} />
+                  <XAxis type="number" stroke={D.chartText} fontSize={12} />
+                  <YAxis type="category" dataKey="projet" stroke={D.chartText} fontSize={12} width={150} />
+                  <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="count" name="Analyses Diff" fill="#10b981" radius={[0, 8, 8, 0]} />
                 </BarChart>
               </ResponsiveContainer>
@@ -416,23 +456,21 @@ export default function StatsPage() {
           </div>
         </div>
 
-        {/* GRAPHIQUE 3 : Merge Requests par projet (barres empilées) */}
-        <div className="bg-white rounded-xl border border-gray-100 p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">🔀 Merge Requests par projet</h2>
-          <p className="text-sm text-gray-500 mb-6">Répartition des MR (Tests / Auto-merge / Forcées)</p>
+        {/* GRAPHIQUE 3 : Merge Requests par projet */}
+        <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 24 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 600, color: D.text, marginBottom: 8 }}>🔀 Merge Requests par projet</h2>
+          <p style={{ fontSize: 13, color: D.faint, marginBottom: 24 }}>Répartition des MR (Tests / Auto-merge / Forcées)</p>
           
-          {loading ? (
-            <div className="h-80 flex items-center justify-center text-gray-400">Chargement...</div>
-          ) : mrParProjet.length === 0 ? (
-            <div className="h-80 flex items-center justify-center text-gray-400">Aucune Merge Request</div>
+          {mrParProjet.length === 0 ? (
+            <div style={{ height: 400, display: "flex", alignItems: "center", justifyContent: "center", color: D.faint }}>Aucune Merge Request</div>
           ) : (
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={mrParProjet}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="projet" stroke="#94a3b8" fontSize={12} angle={-45} textAnchor="end" height={80} />
-                <YAxis stroke="#94a3b8" fontSize={12} />
-                <Tooltip />
-                <Legend />
+                <CartesianGrid strokeDasharray="3 3" stroke={D.chartGrid} />
+                <XAxis dataKey="projet" stroke={D.chartText} fontSize={12} angle={-45} textAnchor="end" height={80} />
+                <YAxis stroke={D.chartText} fontSize={12} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ color: D.text }} />
                 <Bar dataKey="tests" name="🧪 MR Tests" stackId="a" fill="#6366f1" radius={[4, 0, 0, 4]} />
                 <Bar dataKey="autoMerge" name="⚡ MR Auto-merge" stackId="a" fill="#f59e0b" />
                 <Bar dataKey="force" name="⚠️ MR Forcées" stackId="a" fill="#ef4444" radius={[0, 4, 4, 0]} />

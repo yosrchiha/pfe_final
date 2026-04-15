@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
+import { useTheme } from "@/app/ThemeContext";
+import ThemeToggle from "@/app/ThemeToggle";
 
 const API = "http://127.0.0.1:8000";
 
@@ -42,6 +44,23 @@ interface Comparaison {
 
 export default function ComparaisonsPage() {
   const router = useRouter();
+  const { theme, isDark } = useTheme();
+
+  const D = {
+    bg: theme.bg,
+    card: theme.bgSecondary,
+    border: theme.border,
+    text: theme.text,
+    muted: theme.textMuted,
+    faint: theme.textFaint,
+    tag: isDark ? "#1e2538" : "#f1f5f9",
+    tagText: isDark ? "#94a3b8" : "#475569",
+    btnPrimary: isDark ? "#6366f1" : "#0f172a",
+    btnSec: isDark ? "#1e2538" : "#f1f5f9",
+    rowHover: isDark ? "#1a2030" : "#faf9fe",
+    modalBg: isDark ? "#141921" : "white",
+  };
+
   const [depots, setDepots] = useState<Depot[]>([]);
   const [selectedDepot, setSelectedDepot] = useState<Depot | null>(null);
   const [comparaisons, setComparaisons] = useState<Comparaison[]>([]);
@@ -58,7 +77,6 @@ export default function ComparaisonsPage() {
     return { Authorization: jwt ? `Bearer ${jwt}` : "" };
   };
 
-  // Charger tous les dépôts
   useEffect(() => {
     const fetchDepots = async () => {
       try {
@@ -84,18 +102,15 @@ export default function ComparaisonsPage() {
     fetchDepots();
   }, []);
 
-  // Charger les comparaisons d'un dépôt
   const fetchComparaisons = async (depot: Depot) => {
     setLoadingDetails(true);
     setSelectedDepot(depot);
     setSelectedComparaison(null);
     setSelectedAnalyse(null);
     try {
-      // Récupérer les comparaisons du dépôt via l'endpoint /comparaisons/depot/{depot_id}
       const res = await axios.get(`${API}/comparaisons/depot/${depot.id}`, { headers: getHeaders() });
       const data = res.data;
       
-      // Pour chaque comparaison, récupérer les analyses associées
       const comparaisonsWithAnalyses = await Promise.all(
         data.map(async (comp: any) => {
           const analysesRes = await axios.get(`${API}/comparaisons/${comp.id}/analyses`, { headers: getHeaders() });
@@ -131,6 +146,7 @@ export default function ComparaisonsPage() {
   );
 
   const colorScore = (s: number) => {
+    if (!s && s !== 0) return "#94a3b8";
     if (s >= 75) return "#10b981";
     if (s >= 50) return "#f59e0b";
     return "#ef4444";
@@ -145,7 +161,7 @@ export default function ComparaisonsPage() {
       case "aucun_changement":
         return { bg: "#fef3c7", color: "#f59e0b", icon: "○", label: "Aucun changement" };
       default:
-        return { bg: "#f1f5f9", color: "#64748b", icon: "⏳", label: "En cours" };
+        return { bg: D.tag, color: D.muted, icon: "⏳", label: "En cours" };
     }
   };
 
@@ -154,407 +170,67 @@ export default function ComparaisonsPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-        .page {
-          min-height: 100vh;
-          background: #f8fafc;
-          font-family: 'Inter', sans-serif;
-          color: #1e293b;
-          display: flex;
-        }
-
-        /* Sidebar */
-        .sidebar {
-          width: 320px;
-          background: white;
-          border-right: 1px solid #eef2ff;
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-          position: sticky;
-          top: 0;
-        }
-        .sidebar-header {
-          padding: 24px;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .sidebar-header h2 {
-          font-size: 18px;
-          font-weight: 700;
-          color: #0f172a;
-          margin-bottom: 4px;
-        }
-        .sidebar-header p {
-          font-size: 12px;
-          color: #64748b;
-        }
-        .search-box {
-          padding: 16px;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .search-input {
-          width: 100%;
-          padding: 10px 14px;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          font-size: 13px;
-          outline: none;
-          transition: all 0.2s;
-        }
-        .search-input:focus {
-          border-color: #6366f1;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-        }
-        .depots-list {
-          flex: 1;
-          overflow-y: auto;
-          padding: 8px;
-        }
-        .depot-item {
-          padding: 14px 16px;
-          margin: 4px 8px;
-          border-radius: 12px;
-          cursor: pointer;
-          transition: all 0.2s;
-          border: 1px solid transparent;
-        }
-        .depot-item:hover {
-          background: #f8fafc;
-          border-color: #eef2ff;
-        }
-        .depot-item.active {
-          background: #eef2ff;
-          border-color: #c7d2fe;
-        }
-        .depot-nom {
-          font-size: 14px;
-          font-weight: 600;
-          color: #0f172a;
-          margin-bottom: 4px;
-        }
-        .depot-url {
-          font-size: 10px;
-          color: #64748b;
-          font-family: monospace;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .depot-date {
-          font-size: 10px;
-          color: #94a3b8;
-          margin-top: 6px;
-        }
-
-        /* Main content */
-        .main-content {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-        .topbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 20px 32px;
-          background: white;
-          border-bottom: 1px solid #eef2ff;
-        }
-        .back-btn {
-          background: #f1f5f9;
-          border: none;
-          border-radius: 10px;
-          padding: 8px 16px;
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          color: #475569;
-          transition: all 0.2s;
-        }
-        .back-btn:hover {
-          background: #e2e8f0;
-          color: #0f172a;
-        }
-        .title-section h1 {
-          font-size: 24px;
-          font-weight: 700;
-          color: #0f172a;
-          letter-spacing: -0.02em;
-          margin-bottom: 4px;
-        }
-        .title-section p {
-          font-size: 13px;
-          color: #64748b;
-        }
-
-        /* Stats */
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 16px;
-          padding: 20px 32px;
-          background: white;
-          border-bottom: 1px solid #eef2ff;
-        }
-        .stat-card {
-          background: #f8fafc;
-          border-radius: 16px;
-          padding: 16px;
-          text-align: center;
-        }
-        .stat-value {
-          font-size: 28px;
-          font-weight: 700;
-          margin-bottom: 4px;
-        }
-        .stat-label {
-          font-size: 12px;
-          color: #64748b;
-        }
-
-        /* Filters */
-        .filters {
-          display: flex;
-          gap: 12px;
-          padding: 16px 32px;
-          background: white;
-          border-bottom: 1px solid #eef2ff;
-          flex-wrap: wrap;
-          align-items: center;
-        }
-        .filter-select {
-          padding: 8px 16px;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          font-size: 13px;
-          background: white;
-          cursor: pointer;
-        }
-
-        /* Table */
-        .table-container {
-          margin: 24px 32px;
-          background: white;
-          border-radius: 20px;
-          border: 1px solid #eef2ff;
-          overflow: auto;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th {
-          text-align: left;
-          padding: 14px 20px;
-          font-size: 12px;
-          font-weight: 600;
-          color: #64748b;
-          background: #fefefe;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        td {
-          padding: 14px 20px;
-          font-size: 13px;
-          border-bottom: 1px solid #f8fafc;
-          vertical-align: middle;
-        }
-        .table-row {
-          cursor: pointer;
-          transition: background 0.15s;
-        }
-        .table-row:hover {
-          background: #faf9fe;
-        }
-        .score-cell {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .score-value {
-          font-weight: 600;
-          font-family: monospace;
-        }
-        .score-bar {
-          width: 60px;
-          height: 4px;
-          background: #e2e8f0;
-          border-radius: 2px;
-          overflow: hidden;
-        }
-        .score-bar-fill {
-          height: 4px;
-          border-radius: 2px;
-        }
-        .badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 4px 12px;
-          border-radius: 30px;
-          font-size: 11px;
-          font-weight: 500;
-        }
-        .empty-state {
-          text-align: center;
-          padding: 60px 20px;
-          color: #94a3b8;
-        }
-        .empty-icon {
-          font-size: 48px;
-          margin-bottom: 16px;
-        }
-        .loading-state {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 12px;
-          padding: 60px;
-          color: #64748b;
-        }
-        .spinner {
-          width: 20px;
-          height: 20px;
-          border: 2px solid #e2e8f0;
-          border-top-color: #6366f1;
-          border-radius: 50%;
-          animation: spin 0.6s linear infinite;
-        }
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-
-        /* Modal */
-        .modal-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.5);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 100;
-        }
-        .modal {
-          background: white;
-          border-radius: 24px;
-          width: 90%;
-          max-width: 600px;
-          max-height: 80vh;
-          overflow-y: auto;
-          animation: slideUp 0.3s ease;
-        }
-        .modal-header {
-          padding: 20px 24px;
-          border-bottom: 1px solid #f1f5f9;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-        .modal-header h3 {
-          font-size: 18px;
-          font-weight: 700;
-          color: #0f172a;
-        }
-        .modal-close {
-          background: #f1f5f9;
-          border: none;
-          border-radius: 8px;
-          width: 32px;
-          height: 32px;
-          cursor: pointer;
-          font-size: 18px;
-        }
-        .modal-content {
-          padding: 24px;
-        }
-        .detail-section {
-          margin-bottom: 20px;
-        }
-        .detail-label {
-          font-size: 11px;
-          font-weight: 600;
-          color: #94a3b8;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          margin-bottom: 6px;
-        }
-        .detail-value {
-          font-size: 14px;
-          color: #1e293b;
-        }
-        .scores-row {
-          display: flex;
-          gap: 16px;
-          margin: 16px 0;
-        }
-        .score-item {
-          flex: 1;
-          background: #f8fafc;
-          border-radius: 12px;
-          padding: 12px;
-          text-align: center;
-        }
-        .score-item-value {
-          font-size: 24px;
-          font-weight: 700;
-        }
-        .mr-link {
-          color: #6366f1;
-          text-decoration: none;
-          word-break: break-all;
-        }
-        .mr-link:hover {
-          text-decoration: underline;
-        }
-
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        @media (max-width: 900px) {
-          .sidebar { display: none; }
-          .stats-grid { grid-template-columns: repeat(2, 1fr); }
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: ${D.bg}; }
+        ::-webkit-scrollbar-thumb { background: ${D.border}; border-radius: 3px; }
       `}</style>
 
-      <div className="page">
+      <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text, display: "flex" }}>
+        
         {/* Sidebar des dépôts */}
-        <div className="sidebar">
-          <div className="sidebar-header">
-            <h2>📁 Mes dépôts</h2>
-            <p>Sélectionnez un dépôt pour voir ses comparaisons</p>
+        <div style={{ width: 320, background: D.card, borderRight: `1px solid ${D.border}`, display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0 }}>
+          <div style={{ padding: 24, borderBottom: `1px solid ${D.border}` }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: D.text, marginBottom: 4 }}>📁 Mes dépôts</h2>
+            <p style={{ fontSize: 12, color: D.faint }}>Sélectionnez un dépôt pour voir ses comparaisons</p>
           </div>
-          <div className="search-box">
+          <div style={{ padding: 16, borderBottom: `1px solid ${D.border}` }}>
             <input
               type="text"
-              className="search-input"
               placeholder="🔍 Rechercher un dépôt..."
               value={search}
               onChange={e => setSearch(e.target.value)}
+              style={{ width: "100%", padding: "10px 14px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, outline: "none", background: D.bg, color: D.text }}
             />
           </div>
-          <div className="depots-list">
+          <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
             {loading ? (
-              <div className="loading-state"><div className="spinner" /> Chargement...</div>
+              <div style={{ textAlign: "center", padding: 40, color: D.faint }}>
+                <div style={{ 
+                  width: 20, 
+                  height: 20, 
+                  border: `2px solid ${D.border}`,
+                  borderTop: `2px solid #6366f1`,
+                  borderRadius: "50%", 
+                  animation: "spin 0.6s linear infinite", 
+                  margin: "0 auto 12px" 
+                }} />
+                Chargement...
+              </div>
             ) : filteredDepots.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">📭</div>
+              <div style={{ textAlign: "center", padding: 40, color: D.faint }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
                 <div>Aucun dépôt trouvé</div>
-                <button className="back-btn" style={{ marginTop: 16 }} onClick={() => router.push("/analyse")}>
-                  + Lancer une analyse
-                </button>
               </div>
             ) : (
               filteredDepots.map(depot => (
                 <div
                   key={depot.id}
-                  className={`depot-item ${selectedDepot?.id === depot.id ? "active" : ""}`}
                   onClick={() => handleDepotClick(depot)}
+                  style={{
+                    padding: "14px 16px",
+                    margin: "4px 8px",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    border: `1px solid ${selectedDepot?.id === depot.id ? "#6366f1" : "transparent"}`,
+                    background: selectedDepot?.id === depot.id ? "rgba(99,102,241,0.12)" : "transparent"
+                  }}
                 >
-                  <div className="depot-nom">{depot.nom}</div>
-                  <div className="depot-url">{depot.project_url}</div>
-                  <div className="depot-date">{new Date(depot.created_at).toLocaleDateString()}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: D.text, marginBottom: 4 }}>{depot.nom}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{depot.project_url}</div>
+                  <div style={{ fontSize: 10, color: D.faint, marginTop: 6 }}>{new Date(depot.created_at).toLocaleDateString()}</div>
                 </div>
               ))
             )}
@@ -562,52 +238,55 @@ export default function ComparaisonsPage() {
         </div>
 
         {/* Main content */}
-        <div className="main-content">
-          <div className="topbar">
-            <div className="title-section">
-              <h1>Historique des comparaisons</h1>
-              <p>
-                {selectedDepot 
-                  ? `Comparaisons pour ${selectedDepot.nom}`
-                  : "Sélectionnez un dépôt dans la barre latérale"}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          
+          {/* Topbar */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 32px", background: D.card, borderBottom: `1px solid ${D.border}` }}>
+            <div>
+              <h1 style={{ fontSize: 24, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", marginBottom: 4 }}>Historique des comparaisons</h1>
+              <p style={{ fontSize: 13, color: D.faint }}>
+                {selectedDepot ? `Comparaisons pour ${selectedDepot.nom}` : "Sélectionnez un dépôt dans la barre latérale"}
               </p>
             </div>
-            <button className="back-btn" onClick={() => router.push("/dashboard")}>
-              ← Tableau de bord
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <ThemeToggle />
+              <button onClick={() => router.push("/dashboard")} style={{ background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
+                ← Tableau de bord
+              </button>
+            </div>
           </div>
 
           {selectedDepot && (
             <>
               {/* Stats */}
-              <div className="stats-grid">
-                <div className="stat-card">
-                  <div className="stat-value" style={{ color: "#6366f1" }}>{comparaisons.length}</div>
-                  <div className="stat-label">Comparaisons</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, padding: "20px 32px", background: D.card, borderBottom: `1px solid ${D.border}` }}>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: "#6366f1", marginBottom: 4 }}>{comparaisons.length}</div>
+                  <div style={{ fontSize: 12, color: D.faint }}>Comparaisons</div>
                 </div>
-                <div className="stat-card">
-                  <div className="stat-value" style={{ color: "#10b981" }}>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>
                     {comparaisons.filter(c => c.analyses?.some(a => a.score_qualite >= 75)).length}
                   </div>
-                  <div className="stat-label">Score ≥ 75%</div>
+                  <div style={{ fontSize: 12, color: D.faint }}>Score ≥ 75%</div>
                 </div>
-                <div className="stat-card">
-                  <div className="stat-value" style={{ color: "#f59e0b" }}>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: "#f59e0b", marginBottom: 4 }}>
                     {comparaisons.filter(c => c.analyses?.some(a => a.score_qualite >= 50 && a.score_qualite < 75)).length}
                   </div>
-                  <div className="stat-label">Score 50-74%</div>
+                  <div style={{ fontSize: 12, color: D.faint }}>Score 50-74%</div>
                 </div>
-                <div className="stat-card">
-                  <div className="stat-value" style={{ color: "#ef4444" }}>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: "#ef4444", marginBottom: 4 }}>
                     {comparaisons.filter(c => c.analyses?.some(a => a.score_qualite < 50)).length}
                   </div>
-                  <div className="stat-label">Score &lt; 50%</div>
+                  <div style={{ fontSize: 12, color: D.faint }}>Score &lt; 50%</div>
                 </div>
               </div>
 
               {/* Filtres */}
-              <div className="filters">
-                <select className="filter-select" value={filterResultat} onChange={e => setFilterResultat(e.target.value)}>
+              <div style={{ display: "flex", gap: 12, padding: "16px 32px", background: D.card, borderBottom: `1px solid ${D.border}`, flexWrap: "wrap", alignItems: "center" }}>
+                <select value={filterResultat} onChange={e => setFilterResultat(e.target.value)} style={{ padding: "8px 16px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, background: D.card, color: D.text, cursor: "pointer" }}>
                   <option value="tous">Tous les résultats</option>
                   <option value="merge_autorise">✅ Merge autorisé</option>
                   <option value="merge_bloque">🚫 Merge bloqué</option>
@@ -616,102 +295,70 @@ export default function ComparaisonsPage() {
               </div>
 
               {/* Table des comparaisons */}
-              <div className="table-container">
+              <div style={{ margin: "24px 32px", background: D.card, borderRadius: 20, border: `1px solid ${D.border}`, overflow: "auto" }}>
                 {loadingDetails ? (
-                  <div className="loading-state"><div className="spinner" /> Chargement...</div>
+                  <div style={{ textAlign: "center", padding: 60, color: D.faint }}>
+                    <div style={{ 
+                      width: 20, 
+                      height: 20, 
+                      border: `2px solid ${D.border}`,
+                      borderTop: `2px solid #6366f1`,
+                      borderRadius: "50%", 
+                      animation: "spin 0.6s linear infinite", 
+                      margin: "0 auto 12px" 
+                    }} />
+                    Chargement...
+                  </div>
                 ) : comparaisons.length === 0 ? (
-                  <div className="empty-state">
-                    <div className="empty-icon">🔍</div>
+                  <div style={{ textAlign: "center", padding: 60, color: D.faint }}>
+                    <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
                     <div>Aucune comparaison trouvée pour ce dépôt</div>
-                    <button className="back-btn" style={{ marginTop: 16 }} onClick={() => router.push("/add-repository")}>
-                      + Comparer des branches
-                    </button>
                   </div>
                 ) : (
-                  <table>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
-                        <th>Date</th>
-                        <th>Branches</th>
-                        <th>Commits</th>
-                        <th>Qualité</th>
-                        <th>Sécurité</th>
-                        <th>Performance</th>
-                        <th>Résultat</th>
-                        <th>MR</th>
+                        {["Date", "Branches", "Commits", "Qualité", "Sécurité", "Performance", "Résultat", "MR"].map(h => (
+                          <th key={h} style={{ textAlign: "left", padding: "14px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {comparaisons.map(comp => {
-                        // Prendre la dernière analyse de chaque comparaison
                         const latestAnalyse = comp.analyses?.[0];
                         if (!latestAnalyse) return null;
-                        
                         const resultat = getResultatBadge(latestAnalyse.resultat_statut);
-                        
                         return (
-                          <tr 
-                            key={comp.id} 
-                            className="table-row" 
-                            onClick={() => handleComparaisonClick(comp, latestAnalyse)}
-                          >
-                            <td style={{ fontFamily: "monospace", fontSize: 12 }}>
-                              {new Date(comp.created_at).toLocaleDateString()}
-                            </td>
-                            <td>
-                              <span className="badge" style={{ background: "#eef2ff", color: "#6366f1" }}>
+                          <tr key={comp.id} onClick={() => handleComparaisonClick(comp, latestAnalyse)} style={{ cursor: "pointer", borderBottom: `1px solid ${D.border}` }}>
+                            <td style={{ padding: "14px 20px", fontFamily: "monospace", fontSize: 12, color: D.muted }}>{new Date(comp.created_at).toLocaleDateString()}</td>
+                            <td style={{ padding: "14px 20px" }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 500, background: D.tag, color: "#6366f1" }}>
                                 {comp.from_branch} → {comp.to_branch}
                               </span>
                             </td>
-                            <td>{comp.commits_count} commit(s)</td>
-                            <td>
-                              <div className="score-cell">
-                                <span className="score-value" style={{ color: colorScore(latestAnalyse.score_qualite) }}>
-                                  {latestAnalyse.score_qualite || "—"}
-                                </span>
-                                <div className="score-bar">
-                                  <div className="score-bar-fill" style={{ width: `${latestAnalyse.score_qualite || 0}%`, background: colorScore(latestAnalyse.score_qualite || 0) }} />
+                            <td style={{ padding: "14px 20px", color: D.muted }}>{comp.commits_count} commit(s)</td>
+                            {[latestAnalyse.score_qualite, latestAnalyse.score_securite, latestAnalyse.score_performance].map((s, idx) => (
+                              <td key={idx} style={{ padding: "14px 20px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <span style={{ fontWeight: 600, fontFamily: "monospace", color: colorScore(s) }}>{s || "—"}</span>
+                                  <div style={{ width: 60, height: 4, background: D.border, borderRadius: 2, overflow: "hidden" }}>
+                                    <div style={{ width: `${s || 0}%`, height: 4, borderRadius: 2, background: colorScore(s || 0) }} />
+                                  </div>
                                 </div>
-                              </div>
-                            </td>
-                            <td>
-                              <div className="score-cell">
-                                <span className="score-value" style={{ color: colorScore(latestAnalyse.score_securite) }}>
-                                  {latestAnalyse.score_securite || "—"}
-                                </span>
-                                <div className="score-bar">
-                                  <div className="score-bar-fill" style={{ width: `${latestAnalyse.score_securite || 0}%`, background: colorScore(latestAnalyse.score_securite || 0) }} />
-                                </div>
-                              </div>
-                            </td>
-                            <td>
-                              <div className="score-cell">
-                                <span className="score-value" style={{ color: colorScore(latestAnalyse.score_performance) }}>
-                                  {latestAnalyse.score_performance || "—"}
-                                </span>
-                                <div className="score-bar">
-                                  <div className="score-bar-fill" style={{ width: `${latestAnalyse.score_performance || 0}%`, background: colorScore(latestAnalyse.score_performance || 0) }} />
-                                </div>
-                              </div>
-                            </td>
-                            <td>
-                              <span className="badge" style={{ background: resultat.bg, color: resultat.color }}>
+                              </td>
+                            ))}
+                            <td style={{ padding: "14px 20px" }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 500, background: resultat.bg, color: resultat.color }}>
                                 {resultat.icon} {resultat.label}
                               </span>
                             </td>
-                            <td>
-                              {latestAnalyse.mr_created ? (
-                                <a 
-                                  href={latestAnalyse.mr_url || "#"} 
-                                  target="_blank" 
-                                  rel="noreferrer" 
-                                  className="mr-link"
-                                  onClick={e => e.stopPropagation()}
-                                >
+                            <td style={{ padding: "14px 20px" }}>
+                              {latestAnalyse.mr_created && latestAnalyse.mr_url ? (
+                                <a href={latestAnalyse.mr_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: "#6366f1", textDecoration: "none", fontSize: 12 }}>
                                   🔀 Voir MR
                                 </a>
                               ) : (
-                                <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span>
+                                <span style={{ color: D.faint, fontSize: 11 }}>—</span>
                               )}
                             </td>
                           </tr>
@@ -725,9 +372,9 @@ export default function ComparaisonsPage() {
           )}
 
           {!selectedDepot && !loading && (
-            <div className="empty-state" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div>
-                <div className="empty-icon">📁</div>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: D.faint }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>📁</div>
                 <div>Sélectionnez un dépôt dans la barre latérale</div>
               </div>
             </div>
@@ -737,79 +384,65 @@ export default function ComparaisonsPage() {
 
       {/* Modal Détail */}
       {showDetailModal && selectedComparaison && selectedAnalyse && (
-        <div className="modal-overlay" onClick={() => setShowDetailModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>📊 Détail de l'analyse</h3>
-              <button className="modal-close" onClick={() => setShowDetailModal(false)}>✕</button>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setShowDetailModal(false)}>
+          <div style={{ background: D.modalBg, borderRadius: 24, width: "90%", maxWidth: 600, maxHeight: "80vh", overflowY: "auto", animation: "slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
+            <div style={{ padding: "20px 24px", borderBottom: `1px solid ${D.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: D.text }}>📊 Détail de l'analyse</h3>
+              <button onClick={() => setShowDetailModal(false)} style={{ background: D.btnSec, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 18, color: D.muted }}>✕</button>
             </div>
-            <div className="modal-content">
-              <div className="detail-section">
-                <div className="detail-label">Date</div>
-                <div className="detail-value">{new Date(selectedAnalyse.created_at).toLocaleString()}</div>
+            <div style={{ padding: 24 }}>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Date</div>
+                <div style={{ fontSize: 14, color: D.text }}>{new Date(selectedAnalyse.created_at).toLocaleString()}</div>
               </div>
-              <div className="detail-section">
-                <div className="detail-label">Branches comparées</div>
-                <div className="detail-value">
-                  <span className="badge" style={{ background: "#eef2ff", color: "#6366f1" }}>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Branches comparées</div>
+                <div style={{ fontSize: 14, color: D.text }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 12, background: D.tag, color: "#6366f1" }}>
                     {selectedComparaison.from_branch} → {selectedComparaison.to_branch}
                   </span>
                 </div>
               </div>
-              <div className="detail-section">
-                <div className="detail-label">Commits</div>
-                <div className="detail-value">{selectedComparaison.commits_count} commit(s)</div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Commits</div>
+                <div style={{ fontSize: 14, color: D.text }}>{selectedComparaison.commits_count} commit(s)</div>
               </div>
               
-              <div className="detail-label">Scores</div>
-              <div className="scores-row">
-                <div className="score-item">
-                  <div className="score-item-value" style={{ color: colorScore(selectedAnalyse.score_qualite) }}>
-                    {selectedAnalyse.score_qualite || "—"}
+              <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Scores</div>
+              <div style={{ display: "flex", gap: 16, margin: "16px 0" }}>
+                {[
+                  { label: "Qualité", val: selectedAnalyse.score_qualite },
+                  { label: "Sécurité", val: selectedAnalyse.score_securite },
+                  { label: "Performance", val: selectedAnalyse.score_performance },
+                ].map(s => (
+                  <div key={s.label} style={{ flex: 1, background: D.bg, borderRadius: 12, padding: 12, textAlign: "center" }}>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: colorScore(s.val) }}>{s.val || "—"}</div>
+                    <div style={{ fontSize: 11, color: D.faint }}>{s.label}</div>
                   </div>
-                  <div style={{ fontSize: 11, color: "#64748b" }}>Qualité</div>
-                </div>
-                <div className="score-item">
-                  <div className="score-item-value" style={{ color: colorScore(selectedAnalyse.score_securite) }}>
-                    {selectedAnalyse.score_securite || "—"}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#64748b" }}>Sécurité</div>
-                </div>
-                <div className="score-item">
-                  <div className="score-item-value" style={{ color: colorScore(selectedAnalyse.score_performance) }}>
-                    {selectedAnalyse.score_performance || "—"}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#64748b" }}>Performance</div>
-                </div>
+                ))}
               </div>
 
               {selectedAnalyse.vulnerabilites_count > 0 && (
-                <div className="detail-section">
-                  <div className="detail-label">Vulnérabilités détectées</div>
-                  <div className="detail-value" style={{ color: "#ef4444" }}>
-                    ⚠️ {selectedAnalyse.vulnerabilites_count} vulnérabilité(s)
-                  </div>
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Vulnérabilités détectées</div>
+                  <div style={{ fontSize: 14, color: "#ef4444" }}>⚠️ {selectedAnalyse.vulnerabilites_count} vulnérabilité(s)</div>
                 </div>
               )}
 
               {selectedAnalyse.mr_created && selectedAnalyse.mr_url && (
-                <div className="detail-section">
-                  <div className="detail-label">Merge Request associée</div>
-                  <a href={selectedAnalyse.mr_url} target="_blank" rel="noreferrer" className="mr-link">
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Merge Request associée</div>
+                  <a href={selectedAnalyse.mr_url} target="_blank" rel="noreferrer" style={{ color: "#6366f1", textDecoration: "none" }}>
                     🔀 {selectedAnalyse.mr_title || "Voir la MR sur GitLab"} →
                   </a>
                 </div>
               )}
 
               <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
-                <button
-                  className="back-btn"
-                  onClick={() => router.push(`/analyse/rapport?analyse_id=${selectedAnalyse.id}`)}
-                  style={{ flex: 1 }}
-                >
+                <button onClick={() => router.push(`/analyse/rapport?analyse_id=${selectedAnalyse.id}`)} style={{ flex: 1, padding: "10px", background: D.btnPrimary, border: "none", borderRadius: 12, color: "white", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                   📄 Voir le rapport complet
                 </button>
-                <button className="back-btn" onClick={() => setShowDetailModal(false)}>
+                <button onClick={() => setShowDetailModal(false)} style={{ flex: 1, padding: "10px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
                   Fermer
                 </button>
               </div>

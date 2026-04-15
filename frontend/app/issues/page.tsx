@@ -1,8 +1,9 @@
-// frontend/app/issues/page.tsx
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
+import { useTheme } from "@/app/ThemeContext";
+import ThemeToggle from "@/app/ThemeToggle";
 
 const API = "http://127.0.0.1:8000";
 
@@ -30,8 +31,36 @@ interface Issue {
 
 export default function IssuesPage() {
   const router = useRouter();
+  const { theme, isDark } = useTheme();
 
-  // États
+  const D = {
+    bg: theme.bg,
+    card: theme.bgSecondary,
+    border: theme.border,
+    text: theme.text,
+    muted: theme.textMuted,
+    faint: theme.textFaint,
+    tag: isDark ? "#1e2538" : "#f1f5f9",
+    tagText: isDark ? "#94a3b8" : "#475569",
+    btnPrimary: isDark ? "#6366f1" : "#0f172a",
+    btnSec: isDark ? "#1e2538" : "#f1f5f9",
+    inputBg: isDark ? "#0f1117" : "white",
+    rowHover: isDark ? "#1a2030" : "#faf9fe",
+    selectedBg: isDark ? "rgba(99,102,241,0.15)" : "#eef2ff",
+    codeBg: isDark ? "#0f1117" : "#f8fafc",
+    cardBg: isDark ? "#131625" : "white",
+    severity: {
+      CRITIQUE: { bg: isDark ? "#ef444420" : "#fef2f2", text: "#ef4444", icon: "🔴", label: "Critique" },
+      HAUTE:    { bg: isDark ? "#f9731620" : "#fff7ed", text: "#f97316", icon: "🟠", label: "Haute" },
+      MOYENNE:  { bg: isDark ? "#eab30820" : "#fffbeb", text: "#eab308", icon: "🟡", label: "Moyenne" },
+      FAIBLE:   { bg: isDark ? "#10b98120" : "#ecfdf5", text: "#10b981", icon: "🟢", label: "Faible" },
+    },
+    statut: {
+      opened: { bg: isDark ? "#6366f120" : "#eef2ff", text: "#6366f1", icon: "○", label: "Ouverte" },
+      closed: { bg: isDark ? "#10b98120" : "#dcfce7", text: "#10b981", icon: "✓", label: "Fermée" },
+    },
+  };
+
   const [projets, setProjets] = useState<Projet[]>([]);
   const [projetSelectionne, setProjetSelectionne] = useState<Projet | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -56,7 +85,6 @@ export default function IssuesPage() {
     return { Authorization: jwt ? `Bearer ${jwt}` : "" };
   };
 
-  // Charger les projets de l'utilisateur
   useEffect(() => {
     const fetchProjets = async () => {
       setLoading(true);
@@ -80,7 +108,6 @@ export default function IssuesPage() {
     fetchProjets();
   }, []);
 
-  // Charger les issues d'un projet
   const fetchIssues = async (projetId: number) => {
     setLoadingIssues(true);
     try {
@@ -105,28 +132,24 @@ export default function IssuesPage() {
     }
   };
 
-  // Sélectionner un projet
   const selectionnerProjet = (projet: Projet) => {
     setProjetSelectionne(projet);
     setSelectedIssue(null);
     fetchIssues(projet.id);
   };
 
-  // Synchroniser le statut d'une issue
   const syncStatus = async (id: number) => {
     try {
       const res = await axios.patch(`${API}/issues/${id}/sync`, {}, { headers: getHeaders() });
       setIssues(prev => prev.map(issue => 
         issue.id === id ? { ...issue, statut: res.data.statut } : issue
       ));
-      // Mettre à jour les stats
       fetchIssues(projetSelectionne!.id);
     } catch (e) {
       alert("Erreur synchronisation");
     }
   };
 
-  // Filtrage des issues
   const filtered = issues.filter(issue => {
     const matchSearch = 
       issue.titre?.toLowerCase().includes(search.toLowerCase()) ||
@@ -140,17 +163,11 @@ export default function IssuesPage() {
   });
 
   const severiteConfig = (s: string) => {
-    switch(s) {
-      case "CRITIQUE": return { bg: "#fef2f2", text: "#b91c1c", border: "#fecaca", icon: "🔴", label: "Critique" };
-      case "HAUTE":    return { bg: "#fff7ed", text: "#c2410c", border: "#ffedd5", icon: "🟠", label: "Haute" };
-      case "MOYENNE":  return { bg: "#fffbeb", text: "#b45309", border: "#fef3c7", icon: "🟡", label: "Moyenne" };
-      default:         return { bg: "#ecfdf5", text: "#047857", border: "#a7f3d0", icon: "🟢", label: "Faible" };
-    }
+    return D.severity[s as keyof typeof D.severity] || D.severity.FAIBLE;
   };
 
   const statutConfig = (s: string) => {
-    if (s === "opened") return { bg: "#eef2ff", text: "#4338ca", border: "#c7d2fe", icon: "○", label: "Ouverte" };
-    return { bg: "#dcfce7", text: "#15803d", border: "#bbf7d0", icon: "✓", label: "Fermée" };
+    return D.statut[s as keyof typeof D.statut] || D.statut.opened;
   };
 
   return (
@@ -158,478 +175,54 @@ export default function IssuesPage() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-        .page {
-          min-height: 100vh;
-          background: #f8fafc;
-          font-family: 'Inter', sans-serif;
-          color: #1e293b;
-          display: flex;
-        }
-
-        /* Sidebar projets */
-        .projets-sidebar {
-          width: 320px;
-          background: white;
-          border-right: 1px solid #eef2ff;
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-          position: sticky;
-          top: 0;
-        }
-        .sidebar-header {
-          padding: 24px;
-          border-bottom: 1px solid #f1f5f9;
-        }
-        .sidebar-header h2 {
-          font-size: 16px;
-          font-weight: 600;
-          color: #0f172a;
-          margin-bottom: 4px;
-        }
-        .sidebar-header p {
-          font-size: 12px;
-          color: #64748b;
-        }
-        .projets-list {
-          flex: 1;
-          overflow-y: auto;
-          padding: 8px;
-        }
-        .projet-item {
-          padding: 14px 16px;
-          margin: 4px 8px;
-          border-radius: 12px;
-          cursor: pointer;
-          transition: all 0.2s;
-          border: 1px solid transparent;
-        }
-        .projet-item:hover {
-          background: #f8fafc;
-          border-color: #eef2ff;
-        }
-        .projet-item.active {
-          background: #eef2ff;
-          border-color: #c7d2fe;
-        }
-        .projet-nom {
-          font-size: 14px;
-          font-weight: 600;
-          color: #0f172a;
-          margin-bottom: 4px;
-        }
-        .projet-url {
-          font-size: 10px;
-          color: #64748b;
-          font-family: monospace;
-          margin-bottom: 6px;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .projet-meta {
-          display: flex;
-          gap: 6px;
-        }
-        .projet-badge {
-          font-size: 10px;
-          padding: 2px 8px;
-          background: #f1f5f9;
-          border-radius: 12px;
-          color: #475569;
-        }
-
-        /* Main content */
-        .main-content {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-        .topbar {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 20px 32px;
-          background: white;
-          border-bottom: 1px solid #eef2ff;
-        }
-        .back-btn {
-          background: #f1f5f9;
-          border: none;
-          border-radius: 10px;
-          padding: 8px 16px;
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          color: #475569;
-          transition: all 0.2s;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-        .back-btn:hover {
-          background: #e2e8f0;
-          color: #0f172a;
-        }
-        .title-section h1 {
-          font-size: 24px;
-          font-weight: 700;
-          color: #0f172a;
-          letter-spacing: -0.02em;
-          margin: 0 0 4px 0;
-        }
-        .title-section p {
-          font-size: 13px;
-          color: #64748b;
-          margin: 0;
-        }
-
-        /* Stats grid */
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 12px;
-          padding: 20px 32px;
-          background: white;
-          border-bottom: 1px solid #eef2ff;
-        }
-        .stat-card {
-          background: #f8fafc;
-          border-radius: 16px;
-          padding: 12px;
-          text-align: center;
-        }
-        .stat-value {
-          font-size: 24px;
-          font-weight: 700;
-          margin-bottom: 4px;
-        }
-        .stat-label {
-          font-size: 10px;
-          color: #64748b;
-          font-weight: 500;
-        }
-
-        /* Filters */
-        .filters {
-          display: flex;
-          gap: 12px;
-          padding: 16px 32px;
-          background: white;
-          border-bottom: 1px solid #eef2ff;
-          flex-wrap: wrap;
-          align-items: center;
-        }
-        .search-wrapper {
-          position: relative;
-          flex: 1;
-          min-width: 260px;
-        }
-        .search-icon {
-          position: absolute;
-          left: 14px;
-          top: 50%;
-          transform: translateY(-50%);
-          color: #94a3b8;
-          font-size: 14px;
-        }
-        .search-input {
-          width: 100%;
-          padding: 10px 16px 10px 42px;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          font-size: 14px;
-          background: white;
-        }
-        .search-input:focus {
-          outline: none;
-          border-color: #6366f1;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-        }
-        .filter-select {
-          padding: 10px 16px;
-          border: 1px solid #e2e8f0;
-          border-radius: 12px;
-          font-size: 13px;
-          background: white;
-          color: #475569;
-          cursor: pointer;
-        }
-        .result-count {
-          font-size: 13px;
-          color: #64748b;
-          background: #f1f5f9;
-          padding: 5px 12px;
-          border-radius: 20px;
-        }
-
-        /* Cards grid */
-        .cards-grid {
-          flex: 1;
-          overflow-y: auto;
-          padding: 24px 32px;
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-          gap: 20px;
-        }
-        .issue-card {
-          background: white;
-          border: 1px solid #eef2ff;
-          border-radius: 20px;
-          padding: 20px;
-          transition: all 0.2s;
-          cursor: pointer;
-          border-left: 4px solid;
-        }
-        .issue-card:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 20px rgba(0,0,0,0.05);
-          border-color: #e2e8f0;
-        }
-        .issue-card.selected {
-          border-color: #6366f1;
-          background: #faf9fe;
-        }
-        .card-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-bottom: 12px;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-        .severity-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 4px 12px;
-          border-radius: 30px;
-          font-size: 11px;
-          font-weight: 600;
-        }
-        .status-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 4px 12px;
-          border-radius: 30px;
-          font-size: 11px;
-          font-weight: 500;
-        }
-        .card-title {
-          font-size: 15px;
-          font-weight: 600;
-          color: #0f172a;
-          margin-bottom: 8px;
-          line-height: 1.4;
-        }
-        .card-location {
-          font-size: 11px;
-          color: #64748b;
-          font-family: monospace;
-          margin-bottom: 8px;
-        }
-        .card-description {
-          font-size: 12px;
-          color: #475569;
-          background: #f8fafc;
-          padding: 10px 12px;
-          border-radius: 12px;
-          margin: 12px 0;
-          line-height: 1.5;
-        }
-        .card-footer {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          margin-top: 12px;
-        }
-        .card-date {
-          font-size: 10px;
-          color: #94a3b8;
-          font-family: monospace;
-        }
-        .sync-btn {
-          background: transparent;
-          border: 1px solid #e2e8f0;
-          border-radius: 8px;
-          padding: 5px 12px;
-          font-size: 11px;
-          cursor: pointer;
-          color: #64748b;
-          transition: all 0.2s;
-        }
-        .sync-btn:hover {
-          background: #f1f5f9;
-          border-color: #cbd5e1;
-        }
-
-        /* Empty state */
-        .empty-state {
-          text-align: center;
-          padding: 80px 20px;
-          color: #94a3b8;
-        }
-        .empty-icon {
-          font-size: 64px;
-          margin-bottom: 20px;
-          opacity: 0.5;
-        }
-
-        /* Loading */
-        .loading-state {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 12px;
-          padding: 60px;
-          color: #64748b;
-        }
-        .spinner {
-          width: 20px;
-          height: 20px;
-          border: 2px solid #e2e8f0;
-          border-top-color: #6366f1;
-          border-radius: 50%;
-          animation: spin 0.6s linear infinite;
-        }
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-
-        /* Panel latéral détail */
-        .detail-panel {
-          position: fixed;
-          right: 0;
-          top: 0;
-          width: 480px;
-          height: 100vh;
-          background: white;
-          border-left: 1px solid #eef2ff;
-          transform: translateX(100%);
-          transition: transform 0.3s ease;
-          z-index: 20;
-          display: flex;
-          flex-direction: column;
-          box-shadow: -4px 0 20px rgba(0,0,0,0.05);
-        }
-        .detail-panel.open {
-          transform: translateX(0);
-        }
-        .panel-header {
-          padding: 24px;
-          border-bottom: 1px solid #f1f5f9;
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-        }
-        .panel-title {
-          font-size: 16px;
-          font-weight: 700;
-          color: #0f172a;
-          margin-bottom: 6px;
-        }
-        .panel-sub {
-          font-size: 11px;
-          color: #64748b;
-          font-family: monospace;
-        }
-        .panel-close {
-          background: #f1f5f9;
-          border: none;
-          border-radius: 8px;
-          width: 28px;
-          height: 28px;
-          cursor: pointer;
-          font-size: 16px;
-          color: #64748b;
-        }
-        .panel-content {
-          flex: 1;
-          overflow-y: auto;
-          padding: 24px;
-        }
-        .info-group {
-          margin-bottom: 20px;
-        }
-        .info-label {
-          font-size: 10px;
-          font-weight: 600;
-          color: #94a3b8;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          margin-bottom: 6px;
-        }
-        .info-value {
-          font-size: 13px;
-          color: #1e293b;
-          word-break: break-word;
-        }
-        .info-link {
-          color: #6366f1;
-          text-decoration: none;
-        }
-        .code-block {
-          background: #f8fafc;
-          border: 1px solid #eef2ff;
-          border-radius: 12px;
-          padding: 14px;
-          font-family: monospace;
-          font-size: 12px;
-          white-space: pre-wrap;
-        }
-
-        .panel-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0,0,0,0.3);
-          z-index: 15;
-          display: none;
-        }
-        .panel-overlay.open {
-          display: block;
-        }
-
-        @media (max-width: 900px) {
-          .projets-sidebar { display: none; }
-          .stats-grid { grid-template-columns: repeat(4, 1fr); }
-          .cards-grid { grid-template-columns: 1fr; }
-          .detail-panel { width: 100%; }
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: ${D.bg}; }
+        ::-webkit-scrollbar-thumb { background: ${D.border}; border-radius: 3px; }
       `}</style>
 
-      <div className="page">
+      <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text, display: "flex" }}>
+
         {/* Sidebar des projets */}
-        <div className="projets-sidebar">
-          <div className="sidebar-header">
-            <h2>Mes projets</h2>
-            <p>Sélectionnez un projet pour voir ses issues</p>
+        <div style={{ width: 320, background: D.card, borderRight: `1px solid ${D.border}`, display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0 }}>
+          <div style={{ padding: 24, borderBottom: `1px solid ${D.border}` }}>
+            <h2 style={{ fontSize: 16, fontWeight: 600, color: D.text, marginBottom: 4 }}>Mes projets</h2>
+            <p style={{ fontSize: 12, color: D.faint }}>Sélectionnez un projet pour voir ses issues</p>
           </div>
-          <div className="projets-list">
+          <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
             {loading ? (
-              <div className="loading-state"><div className="spinner" /> Chargement...</div>
+              <div style={{ textAlign: "center", padding: 40, color: D.faint }}>
+                <div style={{ width: 20, height: 20, border: `2px solid ${D.border}`, borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.6s linear infinite", margin: "0 auto 12px" }} />
+                Chargement...
+              </div>
             ) : projets.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">📁</div>
+              <div style={{ textAlign: "center", padding: 40, color: D.faint }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>📁</div>
                 <div>Aucun projet analysé</div>
-                <button className="back-btn" style={{ marginTop: 16 }} onClick={() => router.push("/analyse")}>
-                  Lancer une analyse
-                </button>
               </div>
             ) : (
               projets.map(projet => (
                 <div
                   key={projet.id}
-                  className={`projet-item ${projetSelectionne?.id === projet.id ? "active" : ""}`}
                   onClick={() => selectionnerProjet(projet)}
+                  style={{
+                    padding: "14px 16px",
+                    margin: "4px 8px",
+                    borderRadius: 12,
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    borderTop: `1px solid ${projetSelectionne?.id === projet.id ? "#6366f1" : "transparent"}`,
+                    borderRight: `1px solid ${projetSelectionne?.id === projet.id ? "#6366f1" : "transparent"}`,
+                    borderBottom: `1px solid ${projetSelectionne?.id === projet.id ? "#6366f1" : "transparent"}`,
+                    borderLeft: `1px solid ${projetSelectionne?.id === projet.id ? "#6366f1" : "transparent"}`,
+                    background: projetSelectionne?.id === projet.id ? D.selectedBg : "transparent"
+                  }}
                 >
-                  <div className="projet-nom">{projet.nom}</div>
-                  <div className="projet-url">{projet.project_url}</div>
-                  <div className="projet-meta">
-                    <span className="projet-badge">{projet.branche}</span>
-                    <span className="projet-badge">{new Date(projet.created_at).toLocaleDateString()}</span>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: D.text, marginBottom: 4 }}>{projet.nom}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontFamily: "monospace", marginBottom: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{projet.project_url}</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <span style={{ fontSize: 10, padding: "2px 8px", background: D.tag, borderRadius: 12, color: D.tagText }}>{projet.branche}</span>
+                    <span style={{ fontSize: 10, padding: "2px 8px", background: D.tag, borderRadius: 12, color: D.tagText }}>{new Date(projet.created_at).toLocaleDateString()}</span>
                   </div>
                 </div>
               ))
@@ -638,63 +231,96 @@ export default function IssuesPage() {
         </div>
 
         {/* Main content */}
-        <div className="main-content">
-          <div className="topbar">
-            <div className="title-section">
-              <h1>Issues GitLab</h1>
-              <p>
-                {projetSelectionne 
-                  ? `Issues détectées pour ${projetSelectionne.nom}`
-                  : "Sélectionnez un projet à gauche"}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          
+          {/* Topbar */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 32px", background: D.card, borderBottom: `1px solid ${D.border}` }}>
+            <div>
+              <h1 style={{ fontSize: 24, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", margin: "0 0 4px 0" }}>Issues GitLab</h1>
+              <p style={{ fontSize: 13, color: D.faint, margin: 0 }}>
+                {projetSelectionne ? `Issues détectées pour ${projetSelectionne.nom}` : "Sélectionnez un projet à gauche"}
               </p>
             </div>
-            <button className="back-btn" onClick={() => router.push("/dashboard")}>
-              ← Tableau de bord
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <ThemeToggle />
+              <button onClick={() => router.push("/dashboard")} style={{ background: D.btnSec, border: "none", borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted, display: "flex", alignItems: "center", gap: 6 }}>
+                ← Tableau de bord
+              </button>
+            </div>
           </div>
 
           {projetSelectionne && (
             <>
               {/* Stats */}
-              <div className="stats-grid">
-                <div className="stat-card"><div className="stat-value" style={{ color: "#6366f1" }}>{stats.total}</div><div className="stat-label">Total</div></div>
-                <div className="stat-card"><div className="stat-value" style={{ color: "#f59e0b" }}>{stats.ouvertes}</div><div className="stat-label">Ouvertes</div></div>
-                <div className="stat-card"><div className="stat-value" style={{ color: "#10b981" }}>{stats.fermees}</div><div className="stat-label">Fermées</div></div>
-                <div className="stat-card"><div className="stat-value" style={{ color: "#ef4444" }}>{stats.critiques}</div><div className="stat-label">Critiques</div></div>
-                <div className="stat-card"><div className="stat-value" style={{ color: "#f97316" }}>{stats.hautes}</div><div className="stat-label">Hautes</div></div>
-                <div className="stat-card"><div className="stat-value" style={{ color: "#eab308" }}>{stats.moyennes}</div><div className="stat-label">Moyennes</div></div>
-                <div className="stat-card"><div className="stat-value" style={{ color: "#10b981" }}>{stats.faibles}</div><div className="stat-label">Faibles</div></div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 12, padding: "20px 32px", background: D.card, borderBottom: `1px solid ${D.border}` }}>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#6366f1", marginBottom: 4 }}>{stats.total}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontWeight: 500 }}>Total</div>
+                </div>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#f59e0b", marginBottom: 4 }}>{stats.ouvertes}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontWeight: 500 }}>Ouvertes</div>
+                </div>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>{stats.fermees}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontWeight: 500 }}>Fermées</div>
+                </div>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#ef4444", marginBottom: 4 }}>{stats.critiques}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontWeight: 500 }}>Critiques</div>
+                </div>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#f97316", marginBottom: 4 }}>{stats.hautes}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontWeight: 500 }}>Hautes</div>
+                </div>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#eab308", marginBottom: 4 }}>{stats.moyennes}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontWeight: 500 }}>Moyennes</div>
+                </div>
+                <div style={{ background: D.bg, borderRadius: 16, padding: 12, textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>{stats.faibles}</div>
+                  <div style={{ fontSize: 10, color: D.faint, fontWeight: 500 }}>Faibles</div>
+                </div>
               </div>
 
               {/* Filtres */}
-              <div className="filters">
-                <div className="search-wrapper">
-                  <span className="search-icon">🔍</span>
-                  <input className="search-input" placeholder="Rechercher par titre, fichier..." value={search} onChange={e => setSearch(e.target.value)} />
+              <div style={{ display: "flex", gap: 12, padding: "16px 32px", background: D.card, borderBottom: `1px solid ${D.border}`, flexWrap: "wrap", alignItems: "center" }}>
+                <div style={{ position: "relative", flex: 1, minWidth: 260 }}>
+                  <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: D.faint, fontSize: 14 }}>🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Rechercher par titre, fichier..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    style={{ width: "100%", padding: "10px 16px 10px 42px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 14, background: D.inputBg, color: D.text, outline: "none" }}
+                  />
                 </div>
-                <select className="filter-select" value={filterSeverite} onChange={e => setFilterSeverite(e.target.value)}>
+                <select value={filterSeverite} onChange={e => setFilterSeverite(e.target.value)} style={{ padding: "10px 16px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, background: D.inputBg, color: D.text, cursor: "pointer" }}>
                   <option value="tous">Toutes sévérités</option>
                   <option value="CRITIQUE">🔴 Critique</option>
                   <option value="HAUTE">🟠 Haute</option>
                   <option value="MOYENNE">🟡 Moyenne</option>
                   <option value="FAIBLE">🟢 Faible</option>
                 </select>
-                <select className="filter-select" value={filterStatut} onChange={e => setFilterStatut(e.target.value)}>
+                <select value={filterStatut} onChange={e => setFilterStatut(e.target.value)} style={{ padding: "10px 16px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, background: D.inputBg, color: D.text, cursor: "pointer" }}>
                   <option value="tous">Tous statuts</option>
                   <option value="opened">○ Ouvertes</option>
                   <option value="closed">✓ Fermées</option>
                 </select>
-                <span className="result-count">{filtered.length} résultat(s)</span>
-                <button className="sync-btn" onClick={() => fetchIssues(projetSelectionne.id)}>↻ Rafraîchir</button>
+                <span style={{ fontSize: 13, color: D.faint, background: D.tag, padding: "5px 12px", borderRadius: 20 }}>{filtered.length} résultat(s)</span>
+                <button onClick={() => fetchIssues(projetSelectionne.id)} style={{ background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 8, padding: "5px 12px", fontSize: 11, cursor: "pointer", color: D.muted }}>↻ Rafraîchir</button>
               </div>
 
               {/* Cards Grid */}
-              <div className="cards-grid">
+              <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))", gap: 20 }}>
                 {loadingIssues ? (
-                  <div className="loading-state"><div className="spinner" /> Chargement des issues...</div>
+                  <div style={{ textAlign: "center", padding: 60, color: D.faint }}>
+                    <div style={{ width: 20, height: 20, border: `2px solid ${D.border}`, borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.6s linear infinite", margin: "0 auto 12px" }} />
+                    Chargement des issues...
+                  </div>
                 ) : filtered.length === 0 ? (
-                  <div className="empty-state">
-                    <div className="empty-icon">◇</div>
+                  <div style={{ textAlign: "center", padding: 80, color: D.faint }}>
+                    <div style={{ fontSize: 64, marginBottom: 20, opacity: 0.5 }}>◇</div>
                     <div>Aucune issue trouvée pour ce projet</div>
                   </div>
                 ) : (
@@ -704,24 +330,33 @@ export default function IssuesPage() {
                     return (
                       <div
                         key={issue.id}
-                        className={`issue-card ${selectedIssue?.id === issue.id ? "selected" : ""}`}
                         onClick={() => setSelectedIssue(issue)}
-                        style={{ borderLeftColor: severity.text }}
+                        style={{
+                          background: selectedIssue?.id === issue.id ? D.selectedBg : D.cardBg,
+                          borderTop: `1px solid ${D.border}`,
+                          borderRight: `1px solid ${D.border}`,
+                          borderBottom: `1px solid ${D.border}`,
+                          borderLeft: `4px solid ${severity.text}`,
+                          borderRadius: 20,
+                          padding: 20,
+                          transition: "all 0.2s",
+                          cursor: "pointer"
+                        }}
                       >
-                        <div className="card-header">
-                          <span className="severity-badge" style={{ background: severity.bg, color: severity.text }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 600, background: severity.bg, color: severity.text }}>
                             {severity.icon} {severity.label}
                           </span>
-                          <span className="status-badge" style={{ background: status.bg, color: status.text }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 500, background: status.bg, color: status.text }}>
                             {status.icon} {status.label}
                           </span>
                         </div>
-                        <div className="card-title">{issue.titre}</div>
-                        <div className="card-location">📄 {issue.fichier} — ligne {issue.ligne}</div>
-                        <div className="card-description">💡 {issue.description?.slice(0, 150)}...</div>
-                        <div className="card-footer">
-                          <span className="card-date">{new Date(issue.created_at).toLocaleDateString()}</span>
-                          <button className="sync-btn" onClick={(e) => { e.stopPropagation(); syncStatus(issue.id); }}>↻ Sync</button>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: D.text, marginBottom: 8, lineHeight: 1.4 }}>{issue.titre}</div>
+                        <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace", marginBottom: 8 }}>📄 {issue.fichier} — ligne {issue.ligne}</div>
+                        <div style={{ fontSize: 12, color: D.muted, background: D.bg, padding: "10px 12px", borderRadius: 12, margin: "12px 0", lineHeight: 1.5 }}>💡 {issue.description?.slice(0, 150)}...</div>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
+                          <span style={{ fontSize: 10, color: D.faint, fontFamily: "monospace" }}>{new Date(issue.created_at).toLocaleDateString()}</span>
+                          <button onClick={(e) => { e.stopPropagation(); syncStatus(issue.id); }} style={{ background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 8, padding: "5px 12px", fontSize: 11, cursor: "pointer", color: D.muted }}>↻ Sync</button>
                         </div>
                       </div>
                     );
@@ -732,61 +367,67 @@ export default function IssuesPage() {
           )}
 
           {!projetSelectionne && !loading && (
-            <div className="empty-state" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div>
-                <div className="empty-icon">📁</div>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: D.faint }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 64, marginBottom: 20, opacity: 0.5 }}>📁</div>
                 <div>Sélectionnez un projet dans la barre latérale</div>
               </div>
             </div>
           )}
         </div>
-
-        {/* Panel latéral détail */}
-        <div className={`panel-overlay ${selectedIssue ? "open" : ""}`} onClick={() => setSelectedIssue(null)} />
-        <div className={`detail-panel ${selectedIssue ? "open" : ""}`}>
-          {selectedIssue && (
-            <>
-              <div className="panel-header">
-                <div>
-                  <div className="panel-title">{selectedIssue.titre}</div>
-                  <div className="panel-sub">Issue #{selectedIssue.id} · {new Date(selectedIssue.created_at).toLocaleString()}</div>
-                </div>
-                <button className="panel-close" onClick={() => setSelectedIssue(null)}>✕</button>
-              </div>
-              <div className="panel-content">
-                <div className="info-group">
-                  <div className="info-label">Lien GitLab</div>
-                  <a href={selectedIssue.issue_url} target="_blank" rel="noreferrer" className="info-link">{selectedIssue.issue_url}</a>
-                </div>
-                <div className="info-group">
-                  <div className="info-label">Sévérité</div>
-                  <span className="severity-badge" style={{ background: severiteConfig(selectedIssue.severite).bg, color: severiteConfig(selectedIssue.severite).text }}>
-                    {severiteConfig(selectedIssue.severite).icon} {severiteConfig(selectedIssue.severite).label}
-                  </span>
-                </div>
-                <div className="info-group">
-                  <div className="info-label">Type</div>
-                  <div className="info-value">{selectedIssue.type_vuln}</div>
-                </div>
-                <div className="info-group">
-                  <div className="info-label">Localisation</div>
-                  <div className="info-value" style={{ fontFamily: "monospace" }}>📄 {selectedIssue.fichier} — ligne {selectedIssue.ligne}</div>
-                </div>
-                <div className="info-group">
-                  <div className="info-label">Description complète</div>
-                  <div className="code-block">{selectedIssue.description}</div>
-                </div>
-                <div className="info-group">
-                  <div className="info-label">Statut</div>
-                  <span className="status-badge" style={{ background: statutConfig(selectedIssue.statut).bg, color: statutConfig(selectedIssue.statut).text }}>
-                    {statutConfig(selectedIssue.statut).icon} {statutConfig(selectedIssue.statut).label}
-                  </span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
       </div>
+
+      {/* Panel latéral détail */}
+      {selectedIssue && (
+        <>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 15, display: "block" }} onClick={() => setSelectedIssue(null)} />
+          <div style={{
+            position: "fixed", right: 0, top: 0, width: 480, height: "100vh",
+            background: D.card, borderLeft: `1px solid ${D.border}`,
+            transform: "translateX(0)", transition: "transform 0.3s ease",
+            zIndex: 20, display: "flex", flexDirection: "column",
+            boxShadow: "-4px 0 20px rgba(0,0,0,0.05)"
+          }}>
+            <div style={{ padding: 24, borderBottom: `1px solid ${D.border}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: D.text, marginBottom: 6 }}>{selectedIssue.titre}</div>
+                <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace" }}>Issue #{selectedIssue.id} · {new Date(selectedIssue.created_at).toLocaleString()}</div>
+              </div>
+              <button onClick={() => setSelectedIssue(null)} style={{ background: D.btnSec, border: "none", borderRadius: 8, width: 28, height: 28, cursor: "pointer", fontSize: 16, color: D.muted }}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Lien GitLab</div>
+                <a href={selectedIssue.issue_url} target="_blank" rel="noreferrer" style={{ color: "#6366f1", textDecoration: "none", fontSize: 13 }}>{selectedIssue.issue_url}</a>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Sévérité</div>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 600, background: severiteConfig(selectedIssue.severite).bg, color: severiteConfig(selectedIssue.severite).text }}>
+                  {severiteConfig(selectedIssue.severite).icon} {severiteConfig(selectedIssue.severite).label}
+                </span>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Type</div>
+                <div style={{ fontSize: 13, color: D.text }}>{selectedIssue.type_vuln}</div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Localisation</div>
+                <div style={{ fontSize: 13, color: D.text, fontFamily: "monospace" }}>📄 {selectedIssue.fichier} — ligne {selectedIssue.ligne}</div>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Description complète</div>
+                <pre style={{ background: D.codeBg, border: `1px solid ${D.border}`, borderRadius: 12, padding: 14, fontFamily: "monospace", fontSize: 12, whiteSpace: "pre-wrap", color: D.text }}>{selectedIssue.description}</pre>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Statut</div>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 500, background: statutConfig(selectedIssue.statut).bg, color: statutConfig(selectedIssue.statut).text }}>
+                  {statutConfig(selectedIssue.statut).icon} {statutConfig(selectedIssue.statut).label}
+                </span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

@@ -1,10 +1,10 @@
-// frontend/app/analyse/page.tsx (version modifiée)
-
 "use client";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
+import { useTheme } from "@/app/ThemeContext";
+import ThemeToggle from "@/app/ThemeToggle";
 
 const API = "http://127.0.0.1:8000";
 
@@ -17,6 +17,24 @@ interface GitLabProjet {
 
 export default function AnalysePage() {
   const router = useRouter();
+  const { theme, isDark } = useTheme();
+
+  const D = {
+    bg: theme.bg,
+    card: theme.bgSecondary,
+    border: theme.border,
+    text: theme.text,
+    muted: theme.textMuted,
+    faint: theme.textFaint,
+    tag: isDark ? "#1e2538" : "#f1f5f9",
+    tagText: isDark ? "#94a3b8" : "#475569",
+    btnPrimary: isDark ? "#6366f1" : "#0f172a",
+    btnSec: isDark ? "#1e2538" : "#f1f5f9",
+    inputBg: isDark ? "#0f1117" : "white",
+    stepBg: isDark ? "#1a2030" : "#f1f5f9",
+    stepActiveBg: isDark ? "#6366f1" : "#0f172a",
+    stepText: isDark ? "#94a3b8" : "#94a3b8",
+  };
 
   // ── Formulaire ─────────────────────────────────────────
   const [token,      setToken]      = useState("");
@@ -40,53 +58,45 @@ export default function AnalysePage() {
     return { Authorization: jwt ? `Bearer ${jwt}` : "" };
   };
 
-  // ── Charger les projets GitLab avec le token ──────────
-  // frontend/app/analyse/page.tsx
-
-const chargerProjets = async () => {
-  if (!token.trim()) {
-    setErreur("Veuillez saisir un token GitLab");
-    return;
-  }
-  setLoadingProjets(true);
-  setErreur("");
-  setProjets([]);
-  setProjetChoisi(null);
-
-  try {
-    const res = await axios.post(
-      `${API}/explorer/gitlab/projets`,
-      { token },  // ← format correct : objet avec token
-      { headers: getHeaders() }
-    );
-    setProjets(res.data);
-    if (res.data.length === 0) {
-      setErreur("Aucun projet trouvé avec ce token");
+  const chargerProjets = async () => {
+    if (!token.trim()) {
+      setErreur("Veuillez saisir un token GitLab");
+      return;
     }
-  } catch (e: any) {
-    // ✅ Gestion correcte des erreurs
-    const detail = e.response?.data?.detail;
-    
-    if (Array.isArray(detail)) {
-      // Pydantic validation error
-      const messages = detail.map((d: any) => d.msg).join(", ");
-      setErreur(messages);
-    } else if (typeof detail === "string") {
-      setErreur(detail);
-    } else if (detail && typeof detail === "object" && detail.message) {
-      setErreur(detail.message);
-    } else {
-      setErreur("Token invalide ou impossible de se connecter à GitLab");
-    }
-  } finally {
-    setLoadingProjets(false);
-  }
-};
+    setLoadingProjets(true);
+    setErreur("");
+    setProjets([]);
+    setProjetChoisi(null);
 
-  // ── Sélectionner un projet ────────────────────────────
+    try {
+      const res = await axios.post(
+        `${API}/explorer/gitlab/projets`,
+        { token },
+        { headers: getHeaders() }
+      );
+      setProjets(res.data);
+      if (res.data.length === 0) {
+        setErreur("Aucun projet trouvé avec ce token");
+      }
+    } catch (e: any) {
+      const detail = e.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        const messages = detail.map((d: any) => d.msg).join(", ");
+        setErreur(messages);
+      } else if (typeof detail === "string") {
+        setErreur(detail);
+      } else if (detail && typeof detail === "object" && detail.message) {
+        setErreur(detail.message);
+      } else {
+        setErreur("Token invalide ou impossible de se connecter à GitLab");
+      }
+    } finally {
+      setLoadingProjets(false);
+    }
+  };
+
   const selectionnerProjet = (projet: GitLabProjet) => {
     setProjetChoisi(projet);
-    // Optionnel : charger les branches du projet
   };
 
   const lancerAnalyse = async () => {
@@ -153,247 +163,91 @@ const chargerProjets = async () => {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-        .page {
-          min-height: 100vh;
-          background: #f8fafc;
-          font-family: 'Inter', sans-serif;
-          color: #1e293b;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 32px 24px;
-        }
-
-        .container {
-          width: 100%;
-          max-width: 680px;
-          margin: 0 auto;
-        }
-
-        .header { text-align: center; margin-bottom: 32px; }
-        .badge {
-          display: inline-flex; align-items: center; gap: 8px;
-          background: #f1f5f9; border: 1px solid #e2e8f0;
-          border-radius: 100px; padding: 5px 16px;
-          font-size: 12px; font-weight: 500; color: #475569;
-          margin-bottom: 16px;
-        }
-        .badge-dot { width: 8px; height: 8px; background: #6366f1; border-radius: 50%; }
-        .title { font-size: 32px; font-weight: 700; color: #0f172a; letter-spacing: -0.02em; margin-bottom: 8px; }
-        .subtitle { font-size: 15px; color: #64748b; }
-
-        .steps {
-          display: flex; align-items: center; justify-content: center;
-          gap: 12px; margin-bottom: 32px;
-        }
-        .step { display: flex; align-items: center; gap: 8px; }
-        .step-number {
-          width: 32px; height: 32px; border-radius: 50%;
-          display: flex; align-items: center; justify-content: center;
-          font-size: 13px; font-weight: 600;
-          background: #f1f5f9; color: #94a3b8; border: 1px solid #e2e8f0;
-        }
-        .step-number.active { background: #0f172a; border-color: #0f172a; color: white; }
-        .step-label { font-size: 13px; font-weight: 500; color: #64748b; }
-        .step-label.active { color: #0f172a; font-weight: 600; }
-        .step-separator { width: 40px; height: 1px; background: #e2e8f0; }
-
-        .card {
-          background: white; border: 1px solid #eef2ff;
-          border-radius: 24px; padding: 28px;
-          margin-bottom: 20px;
-        }
-        .card-title {
-          font-size: 16px; font-weight: 600; color: #0f172a;
-          margin-bottom: 20px; padding-bottom: 12px;
-          border-bottom: 2px solid #f1f5f9;
-        }
-
-        .field { margin-bottom: 20px; }
-        .field:last-child { margin-bottom: 0; }
-        .label {
-          display: block; font-size: 13px; font-weight: 600;
-          color: #334155; margin-bottom: 6px;
-        }
-        .input {
-          width: 100%; padding: 12px 14px;
-          border: 1px solid #e2e8f0; border-radius: 12px;
-          font-size: 14px; font-family: monospace;
-          background: white; transition: all 0.2s;
-        }
-        .input:focus {
-          outline: none; border-color: #6366f1;
-          box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
-        }
-        .hint { display: block; font-size: 11px; color: #94a3b8; margin-top: 5px; }
-
-        /* Liste des projets */
-        .projets-list {
-          margin-top: 16px;
-          border: 1px solid #eef2ff;
-          border-radius: 14px;
-          overflow: hidden;
-        }
-        .projet-item {
-          display: flex; align-items: center;
-          padding: 14px 16px;
-          border-bottom: 1px solid #f1f5f9;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-        .projet-item:last-child { border-bottom: none; }
-        .projet-item:hover { background: #f8fafc; }
-        .projet-item.selected {
-          background: #eef2ff;
-          border-left: 3px solid #6366f1;
-        }
-        .projet-info { flex: 1; }
-        .projet-nom { font-size: 14px; font-weight: 600; color: #0f172a; margin-bottom: 2px; }
-        .projet-chemin { font-size: 11px; color: #64748b; font-family: monospace; }
-        .projet-icon { font-size: 18px; color: #94a3b8; }
-
-        .btn-secondary {
-          width: 100%; padding: 10px;
-          background: #f1f5f9; border: 1px solid #e2e8f0;
-          border-radius: 12px; font-size: 13px; font-weight: 500;
-          color: #475569; cursor: pointer;
-          transition: all 0.2s; margin-top: 16px;
-        }
-        .btn-secondary:hover { background: #eef2ff; border-color: #cbd5e1; }
-
-        .option {
-          display: flex; align-items: flex-start; gap: 12px;
-          padding: 14px 0; border-bottom: 1px solid #f1f5f9;
-        }
-        .option:last-child { border-bottom: none; }
-        .checkbox { width: 18px; height: 18px; accent-color: #6366f1; margin-top: 2px; cursor: pointer; }
-        .option-content { flex: 1; cursor: pointer; }
-        .option-title { font-size: 14px; font-weight: 600; color: #1e293b; margin-bottom: 4px; }
-        .option-desc { font-size: 12px; color: #64748b; line-height: 1.4; }
-
-        .seuil-wrap { margin-top: 20px; padding-top: 8px; }
-        .seuil-row { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
-        .range { flex: 1; height: 4px; accent-color: #6366f1; cursor: pointer; }
-        .seuil-value { font-size: 18px; font-weight: 700; font-family: monospace; min-width: 55px; text-align: right; }
-
-        .error {
-          background: #fef2f2; border: 1px solid #fee2e2;
-          border-radius: 14px; padding: 14px 18px;
-          font-size: 13px; color: #ef4444;
-          margin-bottom: 20px; display: flex; align-items: center; gap: 10px;
-        }
-
-        .btn {
-          width: 100%; padding: 14px 24px;
-          background: #0f172a; color: white;
-          border: none; border-radius: 14px;
-          font-size: 15px; font-weight: 600;
-          cursor: pointer; transition: all 0.2s;
-          display: flex; align-items: center; justify-content: center; gap: 10px;
-        }
-        .btn:hover:not(:disabled) { background: #1e293b; transform: translateY(-1px); }
-        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        .spinner {
-          width: 18px; height: 18px;
-          border: 2px solid rgba(255,255,255,0.3);
-          border-top-color: white;
-          border-radius: 50%;
-          animation: spin 0.6s linear infinite;
-        }
         @keyframes spin { to { transform: rotate(360deg); } }
-
-        .back-link {
-          display: inline-flex; align-items: center; gap: 6px;
-          background: transparent; border: none;
-          font-size: 13px; color: #64748b;
-          cursor: pointer; margin-bottom: 20px;
-        }
-        .back-link:hover { color: #0f172a; }
-
-        .loading-projets {
-          text-align: center; padding: 24px;
-          color: #64748b; font-size: 13px;
-        }
       `}</style>
 
-      <div className="page">
-        <div className="container">
+      <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 24px" }}>
+        <div style={{ width: "100%", maxWidth: 680, margin: "0 auto" }}>
 
-          <button className="back-link" onClick={() => router.push("/dashboard")}>
-            ← Retour au tableau de bord
-          </button>
-
-          <div className="header">
-            <div className="badge">
-              <div className="badge-dot" />
-              AuditPlatform · IA
-            </div>
-            <h1 className="title">Analyser un projet</h1>
-            <p className="subtitle">Entrez votre token GitLab pour charger vos projets</p>
+          {/* Topbar avec ThemeToggle et retour */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <button onClick={() => router.push("/dashboard")} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "transparent", border: "none", fontSize: 13, color: D.muted, cursor: "pointer" }}>
+              ← Retour au tableau de bord
+            </button>
+            <ThemeToggle />
           </div>
 
-          <div className="steps">
-            <div className="step">
-              <div className="step-number active">1</div>
-              <span className="step-label active">Token</span>
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: D.tag, border: `1px solid ${D.border}`, borderRadius: 100, padding: "5px 16px", fontSize: 12, fontWeight: 500, color: D.muted, marginBottom: 16 }}>
+              <div style={{ width: 8, height: 8, background: "#6366f1", borderRadius: "50%" }} />
+              AuditPlatform · IA
             </div>
-            <div className="step-separator" />
-            <div className="step">
-              <div className="step-number">2</div>
-              <span className="step-label">Projet</span>
-            </div>
-            <div className="step-separator" />
-            <div className="step">
-              <div className="step-number">3</div>
-              <span className="step-label">Résultats</span>
-            </div>
+            <h1 style={{ fontSize: 32, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", marginBottom: 8 }}>Ajouter un projet</h1>
+            <p style={{ fontSize: 15, color: D.faint }}>Entrez votre token GitLab pour charger vos projets</p>
+          </div>
+
+          {/* Steps */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 32 }}>
+            {[
+              { num: 1, label: "Token", active: true },
+              { num: 2, label: "Projet", active: !!projetChoisi },
+              { num: 3, label: "Résultats", active: false },
+            ].map((step, idx) => (
+              <div key={step.num} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 600, background: step.active ? D.stepActiveBg : D.stepBg, color: step.active ? "white" : D.stepText, border: `1px solid ${step.active ? D.stepActiveBg : D.border}` }}>
+                  {step.num}
+                </div>
+                <span style={{ fontSize: 13, fontWeight: step.active ? 600 : 500, color: step.active ? D.text : D.muted }}>{step.label}</span>
+                {idx < 2 && <div style={{ width: 40, height: 1, background: D.border, marginLeft: 8 }} />}
+              </div>
+            ))}
           </div>
 
           {/* Card 1 — Token et projets */}
-          <div className="card">
-            <div className="card-title">🔑 Token GitLab</div>
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 24, padding: 28, marginBottom: 20 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: D.text, marginBottom: 20, paddingBottom: 12, borderBottom: `2px solid ${D.border}` }}>🔑 Token GitLab</div>
 
-            <div className="field">
-              <label className="label">Token d'accès personnel</label>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: D.muted, marginBottom: 6 }}>Token d'accès personnel</label>
               <input
-                className="input"
                 type="password"
                 placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
                 value={token}
                 onChange={e => setToken(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && chargerProjets()}
+                style={{ width: "100%", padding: "12px 14px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 14, fontFamily: "monospace", background: D.inputBg, color: D.text, outline: "none" }}
               />
-              <span className="hint">
-                GitLab → Settings → Access Tokens → scopes : api, read_repository
-              </span>
+              <span style={{ display: "block", fontSize: 11, color: D.faint, marginTop: 5 }}>GitLab → Settings → Access Tokens → scopes : api, read_repository</span>
             </div>
 
             <button
-              className="btn-secondary"
               onClick={chargerProjets}
               disabled={loadingProjets}
+              style={{ width: "100%", padding: 10, background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, fontWeight: 500, color: D.muted, cursor: "pointer" }}
             >
-              {loadingProjets ? <><div className="spinner" /> Chargement...</> : "🔍 Charger mes projets"}
+              {loadingProjets ? "Chargement..." : "🔍 Charger mes projets"}
             </button>
 
             {projets.length > 0 && (
               <>
-                <div className="card-title" style={{ marginTop: 24, marginBottom: 12 }}>
-                  📁 Sélectionnez un projet ({projets.length})
-                </div>
-                <div className="projets-list">
+                <div style={{ fontSize: 16, fontWeight: 600, color: D.text, marginTop: 24, marginBottom: 12 }}>📁 Sélectionnez un projet ({projets.length})</div>
+                <div style={{ marginTop: 16, border: `1px solid ${D.border}`, borderRadius: 14, overflow: "hidden" }}>
                   {projets.map(projet => (
                     <div
                       key={projet.id}
-                      className={`projet-item ${projetChoisi?.id === projet.id ? "selected" : ""}`}
                       onClick={() => selectionnerProjet(projet)}
+                      style={{
+                        display: "flex", alignItems: "center", padding: "14px 16px",
+                        borderBottom: `1px solid ${D.border}`, cursor: "pointer",
+                        background: projetChoisi?.id === projet.id ? "rgba(99,102,241,0.12)" : "transparent",
+                        borderLeft: projetChoisi?.id === projet.id ? `3px solid #6366f1` : "3px solid transparent"
+                      }}
                     >
-                      <div className="projet-info">
-                        <div className="projet-nom">{projet.nom}</div>
-                        <div className="projet-chemin">{projet.chemin}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: D.text, marginBottom: 2 }}>{projet.nom}</div>
+                        <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace" }}>{projet.chemin}</div>
                       </div>
-                      <div className="projet-icon">→</div>
+                      <div style={{ fontSize: 18, color: D.faint }}>→</div>
                     </div>
                   ))}
                 </div>
@@ -401,58 +255,56 @@ const chargerProjets = async () => {
             )}
           </div>
 
-          {/* Card 2 — Branche et options (visible seulement si projet sélectionné) */}
+          {/* Card 2 — Branche et options */}
           {projetChoisi && (
             <>
-              <div className="card">
-                <div className="card-title">🌿 Branche</div>
-                <div className="field">
-                  <label className="label">Branche à analyser</label>
+              <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 24, padding: 28, marginBottom: 20 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, color: D.text, marginBottom: 20, paddingBottom: 12, borderBottom: `2px solid ${D.border}` }}>🌿 Branche</div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: D.muted, marginBottom: 6 }}>Branche à analyser</label>
                   <input
-                    className="input"
                     type="text"
                     placeholder="main"
                     value={branche}
                     onChange={e => setBranche(e.target.value)}
+                    style={{ width: "100%", padding: "12px 14px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 14, background: D.inputBg, color: D.text, outline: "none" }}
                   />
-                  <span className="hint">
-                    Laissez "main" pour analyser la branche principale
-                  </span>
+                  <span style={{ display: "block", fontSize: 11, color: D.faint, marginTop: 5 }}>Laissez "main" pour analyser la branche principale</span>
                 </div>
               </div>
 
-              <div className="card">
-                <div className="card-title">⚙️ Options d'analyse</div>
+              <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 24, padding: 28, marginBottom: 20 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, color: D.text, marginBottom: 20, paddingBottom: 12, borderBottom: `2px solid ${D.border}` }}>⚙️ Options d'analyse</div>
 
-                <div className="option">
-                  <input type="checkbox" id="owasp" checked={owasp} onChange={e => setOwasp(e.target.checked)} className="checkbox" />
-                  <label htmlFor="owasp" className="option-content">
-                    <div className="option-title">Analyse OWASP Top 10</div>
-                    <div className="option-desc">Détecte les 10 failles de sécurité les plus critiques</div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 0", borderBottom: `1px solid ${D.border}` }}>
+                  <input type="checkbox" checked={owasp} onChange={e => setOwasp(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#6366f1", marginTop: 2, cursor: "pointer" }} />
+                  <label style={{ flex: 1, cursor: "pointer" }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: D.text, marginBottom: 4 }}>Analyse OWASP Top 10</div>
+                    <div style={{ fontSize: 12, color: D.faint }}>Détecte les 10 failles de sécurité les plus critiques</div>
                   </label>
                 </div>
 
-                <div className="option">
-                  <input type="checkbox" id="autoTests" checked={autoTests} onChange={e => setAutoTests(e.target.checked)} className="checkbox" />
-                  <label htmlFor="autoTests" className="option-content">
-                    <div className="option-title">Générer les tests unitaires</div>
-                    <div className="option-desc">L'IA génère automatiquement des tests unitaires</div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 0", borderBottom: `1px solid ${D.border}` }}>
+                  <input type="checkbox" checked={autoTests} onChange={e => setAutoTests(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#6366f1", marginTop: 2, cursor: "pointer" }} />
+                  <label style={{ flex: 1, cursor: "pointer" }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: D.text, marginBottom: 4 }}>Générer les tests unitaires</div>
+                    <div style={{ fontSize: 12, color: D.faint }}>L'IA génère automatiquement des tests unitaires</div>
                   </label>
                 </div>
 
-                <div className="option">
-                  <input type="checkbox" id="autoMr" checked={autoMr} onChange={e => setAutoMr(e.target.checked)} className="checkbox" />
-                  <label htmlFor="autoMr" className="option-content">
-                    <div className="option-title">Créer une Merge Request</div>
-                    <div className="option-desc">Pousse les tests et crée une MR automatique</div>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 0", borderBottom: `1px solid ${D.border}` }}>
+                  <input type="checkbox" checked={autoMr} onChange={e => setAutoMr(e.target.checked)} style={{ width: 18, height: 18, accentColor: "#6366f1", marginTop: 2, cursor: "pointer" }} />
+                  <label style={{ flex: 1, cursor: "pointer" }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: D.text, marginBottom: 4 }}>Créer une Merge Request</div>
+                    <div style={{ fontSize: 12, color: D.faint }}>Pousse les tests et crée une MR automatique</div>
                   </label>
                 </div>
 
-                <div className="seuil-wrap">
-                  <label className="label">Seuil minimum de qualité</label>
-                  <div className="seuil-row">
-                    <input type="range" min={0} max={100} value={seuil} onChange={e => setSeuil(parseInt(e.target.value))} className="range" />
-                    <span className="seuil-value" style={{ color: colorScore(seuil) }}>{seuil}%</span>
+                <div style={{ marginTop: 20, paddingTop: 8 }}>
+                  <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: D.muted, marginBottom: 6 }}>Seuil minimum de qualité</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 12 }}>
+                    <input type="range" min={0} max={100} value={seuil} onChange={e => setSeuil(parseInt(e.target.value))} style={{ flex: 1, height: 4, accentColor: "#6366f1", cursor: "pointer" }} />
+                    <span style={{ fontSize: 18, fontWeight: 700, fontFamily: "monospace", minWidth: 55, textAlign: "right", color: colorScore(seuil) }}>{seuil}%</span>
                   </div>
                 </div>
               </div>
@@ -460,18 +312,18 @@ const chargerProjets = async () => {
           )}
 
           {erreur && (
-            <div className="error">
+            <div style={{ background: "rgba(239,68,68,0.1)", border: `1px solid rgba(239,68,68,0.3)`, borderRadius: 14, padding: "14px 18px", fontSize: 13, color: "#ef4444", marginBottom: 20, display: "flex", alignItems: "center", gap: 10 }}>
               <span>⚠️</span> {erreur}
             </div>
           )}
 
           <button
-            className="btn"
             onClick={lancerAnalyse}
             disabled={loading || !projetChoisi}
+            style={{ width: "100%", padding: "14px 24px", background: D.btnPrimary, color: "white", border: "none", borderRadius: 14, fontSize: 15, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, opacity: (loading || !projetChoisi) ? 0.6 : 1 }}
           >
             {loading ? (
-              <><div className="spinner" /> Analyse en cours...</>
+              <><div style={{ width: 18, height: 18, border: `2px solid rgba(255,255,255,0.3)`, borderTopColor: "white", borderRadius: "50%", animation: "spin 0.6s linear infinite" }} /> Analyse en cours...</>
             ) : (
               "Lancer l'analyse →"
             )}

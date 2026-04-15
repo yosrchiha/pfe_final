@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
+import { useTheme } from "@/app/ThemeContext";
+import ThemeToggle from "@/app/ThemeToggle";
 
 const API = "http://127.0.0.1:8000";
 
@@ -31,22 +33,25 @@ interface MergeRequest {
   analyse_resultat_statut?: string | null;
 }
 
-// ── HELPERS ──────────────────────────────────────────────────────
-const TYPE_CONFIG: Record<string, { icon: string; label: string; color: string; bg: string; border: string }> = {
-  tests:      { icon: "🧪", label: "Tests IA",    color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe" },
-  auto_merge: { icon: "⚡", label: "Auto-merge",  color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
-  diff:       { icon: "🔬", label: "Diff IA",     color: "#059669", bg: "#ecfdf5", border: "#a7f3d0" },
-  force:      { icon: "⚠️", label: "Forcée",      color: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
+// ── HELPERS (thème dynamique) ───────────────────────────────────
+const getTypeConfig = (type: string, isDark: boolean) => {
+  const base = {
+    tests:      { icon: "🧪", label: "Tests IA",    color: "#7c3aed", bg: isDark ? "#2e1a4a" : "#f5f3ff", border: isDark ? "#4a1d96" : "#ddd6fe" },
+    auto_merge: { icon: "⚡", label: "Auto-merge",  color: "#d97706", bg: isDark ? "#3b2206" : "#fffbeb", border: isDark ? "#8b5c0a" : "#fde68a" },
+    diff:       { icon: "🔬", label: "Diff IA",     color: "#059669", bg: isDark ? "#064e3b" : "#ecfdf5", border: isDark ? "#0b7b5a" : "#a7f3d0" },
+    force:      { icon: "⚠️", label: "Forcée",      color: "#dc2626", bg: isDark ? "#4a0a0a" : "#fef2f2", border: isDark ? "#991b1b" : "#fecaca" },
+  };
+  return base[type as keyof typeof base] || { icon: "🔀", label: type, color: "#64748b", bg: isDark ? "#1e2538" : "#f8fafc", border: isDark ? "#334155" : "#e2e8f0" };
 };
 
-const STATUT_CONFIG: Record<string, { dot: string; label: string; color: string; bg: string }> = {
-  opened: { dot: "#f59e0b", label: "Ouverte",    color: "#92400e", bg: "#fef3c7" },
-  merged: { dot: "#10b981", label: "Fusionnée",  color: "#065f46", bg: "#d1fae5" },
-  closed: { dot: "#6b7280", label: "Fermée",     color: "#374151", bg: "#f3f4f6" },
+const getStatutConfig = (s: string, isDark: boolean) => {
+  const base = {
+    opened: { dot: "#f59e0b", label: "Ouverte",    color: "#f59e0b", bg: isDark ? "#3b2206" : "#fef3c7" },
+    merged: { dot: "#10b981", label: "Fusionnée",  color: "#10b981", bg: isDark ? "#064e3b" : "#d1fae5" },
+    closed: { dot: "#6b7280", label: "Fermée",     color: "#94a3b8", bg: isDark ? "#1a1f2e" : "#f3f4f6" },
+  };
+  return base[s as keyof typeof base] || { dot: "#94a3b8", label: s, color: "#64748b", bg: isDark ? "#1e2538" : "#f1f5f9" };
 };
-
-function getType(type: string)   { return TYPE_CONFIG[type]   || { icon: "🔀", label: type,   color: "#64748b", bg: "#f8fafc", border: "#e2e8f0" }; }
-function getStatut(s: string)    { return STATUT_CONFIG[s]    || { dot: "#94a3b8", label: s,   color: "#475569", bg: "#f1f5f9" }; }
 
 function ScoreDot({ score }: { score: number | null | undefined }) {
   if (score == null) return <span style={{ color: "#94a3b8", fontSize: 11 }}>—</span>;
@@ -64,6 +69,26 @@ function ScoreDot({ score }: { score: number | null | undefined }) {
 // ════════════════════════════════════════════════════════════════
 export default function MergeRequestsPage() {
   const router = useRouter();
+  const { theme, isDark } = useTheme();
+
+  const D = {
+    bg: theme.bg,
+    card: theme.bgSecondary,
+    border: theme.border,
+    text: theme.text,
+    muted: theme.textMuted,
+    faint: theme.textFaint,
+    tag: isDark ? "#1e2538" : "#f1f5f9",
+    tagText: isDark ? "#94a3b8" : "#475569",
+    btnPrimary: isDark ? "#6366f1" : "#0f172a",
+    btnSec: isDark ? "#1e2538" : "#f1f5f9",
+    inputBg: isDark ? "#0f1117" : "white",
+    rowHover: isDark ? "#1a2030" : "#faf9fe",
+    selectedBg: isDark ? "rgba(99,102,241,0.15)" : "#eef2ff",
+    codeBg: isDark ? "#0f1117" : "#f8fafc",
+    cardBg: isDark ? "#131625" : "white",
+    modalBg: isDark ? "#141921" : "white",
+  };
 
   const [projets, setProjets]           = useState<Projet[]>([]);
   const [projetFiltre, setProjetFiltre] = useState<number | "all">("all");
@@ -96,11 +121,9 @@ export default function MergeRequestsPage() {
       const me = await axios.get(`${API}/auth/me`, { headers: headers() });
       const userId = me.data.id;
 
-      // Charger projets
       const projRes = await axios.get(`${API}/analyses/depots-user/${userId}`, { headers: headers() });
       setProjets(projRes.data);
 
-      // Charger dépôts des deux sources
       const [resAnalyses, resDepots] = await Promise.allSettled([
         axios.get(`${API}/analyses/depots-user/${userId}`, { headers: headers() }),
         axios.get(`${API}/depots/user/${userId}`,          { headers: headers() }),
@@ -116,10 +139,8 @@ export default function MergeRequestsPage() {
         }
       }
 
-      // Charger MR de chaque dépôt
       let all: MergeRequest[] = [];
       for (const depot of depots) {
-        // MR tests/analyses
         try {
           const r = await axios.get(`${API}/merge-requests/depot/${depot.id}`, { headers: headers() });
           for (const mr of r.data) {
@@ -128,7 +149,6 @@ export default function MergeRequestsPage() {
               branche_cible: mr.branche_cible || "", statut: mr.statut || "opened" });
           }
         } catch {}
-        // MR diff
         try {
           const r = await axios.get(`${API}/merge-requests-diff/depot/${depot.id}`, { headers: headers() });
           for (const mr of r.data) {
@@ -154,9 +174,6 @@ export default function MergeRequestsPage() {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   // ── FERMER / ROUVRIR UNE MR ───────────────────────────────────
-  // Cette fonction :
-  // 1. Appelle le backend → qui appelle l'API GitLab pour fermer/rouvrir la MR
-  // 2. Met à jour l'état local immédiatement
   const toggleMrStatut = async (mr: MergeRequest) => {
     const isDiff = mr.type_mr === "auto_merge" || mr.type_mr === "diff" || mr.type_mr === "force";
     const newStatut = mr.statut === "opened" ? "closed" : "opened";
@@ -164,18 +181,15 @@ export default function MergeRequestsPage() {
 
     setActionLoading(mr.id);
     try {
-      // Appel backend pour fermer/rouvrir sur GitLab
       const endpoint = isDiff
         ? `${API}/merge-requests-diff/${mr.id}/${action}`
         : `${API}/merge-requests/${mr.id}/${action}`;
 
       await axios.put(endpoint, {}, { headers: headers() });
 
-      // Mettre à jour l'état local
       setMrs(prev => prev.map(m =>
         m.id === mr.id ? { ...m, statut: newStatut } : m
       ));
-      // Mettre à jour le modal si ouvert
       if (selectedMr?.id === mr.id) {
         setSelectedMr(prev => prev ? { ...prev, statut: newStatut } : null);
       }
@@ -238,14 +252,13 @@ export default function MergeRequestsPage() {
     force:   filtered.filter(m => m.type_mr === "force").length,
   };
 
-  // ════════════════════════════════════════════════════════════
-  // RENDER
-  // ════════════════════════════════════════════════════════════
+  const typeConfig = (type: string) => getTypeConfig(type, isDark);
+  const statutConfig = (s: string) => getStatutConfig(s, isDark);
+
   return (
-    <div style={{ minHeight: "100vh", background: "#0f1117", fontFamily: "'DM Sans',system-ui,sans-serif", color: "#e2e8f0" }}>
+    <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'DM Sans',system-ui,sans-serif", color: D.text }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-      {/* ── TOAST ── */}
       {toast && (
         <div style={{
           position: "fixed", top: 20, right: 20, zIndex: 9999,
@@ -254,7 +267,6 @@ export default function MergeRequestsPage() {
           color: "#fff", borderRadius: 12, padding: "12px 20px",
           fontSize: 13, fontWeight: 500, boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
           display: "flex", alignItems: "center", gap: 8,
-          animation: "slideIn 0.3s ease",
         }}>
           {toast.ok ? "✓" : "✕"} {toast.msg}
         </div>
@@ -263,71 +275,63 @@ export default function MergeRequestsPage() {
       <style>{`
         @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @keyframes fadeUp  { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        .mr-row:hover { background: #1a1f2e !important; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .mr-row:hover { background: ${D.rowHover} !important; }
         .action-btn:hover { opacity: 0.85; transform: scale(0.97); }
         .action-btn { transition: all 0.15s ease; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #1a1f2e; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-track { background: ${D.card}; }
+        ::-webkit-scrollbar-thumb { background: ${D.border}; border-radius: 3px; }
       `}</style>
 
       <div style={{ maxWidth: 1320, margin: "0 auto", padding: "32px 24px" }}>
 
-        {/* ── HEADER ── */}
+        {/* ── HEADER avec ThemeToggle ── */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32 }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
               <div style={{ width: 40, height: 40, borderRadius: 10, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🔀</div>
-              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: "#f1f5f9", letterSpacing: "-0.02em" }}>
-                Merge Requests
-              </h1>
+              <h1 style={{ margin: 0, fontSize: 26, fontWeight: 700, color: D.text, letterSpacing: "-0.02em" }}>Merge Requests</h1>
             </div>
-            <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>
-              Toutes les MR générées par l'IA — tests, diff, auto-merge
-            </p>
+            <p style={{ margin: 0, color: D.faint, fontSize: 13 }}>Toutes les MR générées par l'IA — tests, diff, auto-merge</p>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={fetchAll}
-              style={{ padding: "8px 16px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 10, color: "#94a3b8", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-              ↻ Rafraîchir
-            </button>
-            <button onClick={() => router.push("/dashboard")}
-              style={{ padding: "8px 16px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 10, color: "#94a3b8", fontSize: 13, cursor: "pointer", fontWeight: 500 }}>
-              ← Retour
-            </button>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <ThemeToggle />
+            <button onClick={fetchAll} style={{ padding: "8px 16px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, color: D.muted, fontSize: 13, cursor: "pointer", fontWeight: 500 }}>↻ Rafraîchir</button>
+            <button onClick={() => router.push("/dashboard")} style={{ padding: "8px 16px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, color: D.muted, fontSize: 13, cursor: "pointer", fontWeight: 500 }}>← Retour</button>
           </div>
         </div>
 
         {/* ── STATS BAND ── */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 10, marginBottom: 24 }}>
           {[
-            { label: "Total",      value: stats.total,  color: "#6366f1", bg: "#1e1b4b" },
-            { label: "Ouvertes",   value: stats.opened, color: "#f59e0b", bg: "#1c1409" },
-            { label: "Fusionnées", value: stats.merged, color: "#10b981", bg: "#022c22" },
-            { label: "Fermées",    value: stats.closed, color: "#94a3b8", bg: "#1a1f2e" },
-            { label: "🧪 Tests",   value: stats.tests,  color: "#7c3aed", bg: "#1e1b4b" },
-            { label: "⚡ Auto",    value: stats.auto,   color: "#d97706", bg: "#1c1409" },
-            { label: "🔬 Diff",    value: stats.diff,   color: "#059669", bg: "#022c22" },
-            { label: "⚠️ Force",   value: stats.force,  color: "#ef4444", bg: "#1f0909" },
+            { label: "Total",      value: stats.total,  color: "#6366f1" },
+            { label: "Ouvertes",   value: stats.opened, color: "#f59e0b" },
+            { label: "Fusionnées", value: stats.merged, color: "#10b981" },
+            { label: "Fermées",    value: stats.closed, color: "#94a3b8" },
+            { label: "🧪 Tests",   value: stats.tests,  color: "#7c3aed" },
+            { label: "⚡ Auto",    value: stats.auto,   color: "#d97706" },
+            { label: "🔬 Diff",    value: stats.diff,   color: "#059669" },
+            { label: "⚠️ Force",   value: stats.force,  color: "#ef4444" },
           ].map(s => (
-            <div key={s.label} style={{ background: s.bg, border: `1px solid ${s.color}33`, borderRadius: 12, padding: "14px 10px", textAlign: "center" }}>
+            <div key={s.label} style={{ background: D.card, border: `1px solid ${s.color}33`, borderRadius: 12, padding: "14px 10px", textAlign: "center" }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: s.color, fontFamily: "'DM Mono',monospace" }}>{s.value}</div>
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 11, color: D.faint, marginTop: 2 }}>{s.label}</div>
             </div>
           ))}
         </div>
 
         {/* ── FILTRES ── */}
-        <div style={{ background: "#141921", border: "1px solid #1e2538", borderRadius: 14, padding: "16px 20px", marginBottom: 20, display: "flex", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 14, padding: "16px 20px", marginBottom: 20, display: "flex", flexWrap: "wrap", gap: 10 }}>
           <select value={projetFiltre === "all" ? "all" : String(projetFiltre)}
             onChange={e => setProjetFiltre(e.target.value === "all" ? "all" : Number(e.target.value))}
-            style={{ padding: "8px 12px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#94a3b8", fontSize: 13, cursor: "pointer", outline: "none" }}>
+            style={{ padding: "8px 12px", background: D.inputBg, border: `1px solid ${D.border}`, borderRadius: 9, color: D.muted, fontSize: 13, cursor: "pointer", outline: "none" }}>
             <option value="all">📁 Tous les projets</option>
             {projets.map(p => <option key={p.id} value={p.id}>{p.nom}</option>)}
           </select>
 
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
-            style={{ padding: "8px 12px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#94a3b8", fontSize: 13, cursor: "pointer", outline: "none" }}>
+            style={{ padding: "8px 12px", background: D.inputBg, border: `1px solid ${D.border}`, borderRadius: 9, color: D.muted, fontSize: 13, cursor: "pointer", outline: "none" }}>
             <option value="all">🏷️ Tous les types</option>
             <option value="tests">🧪 Tests IA</option>
             <option value="auto_merge">⚡ Auto-merge</option>
@@ -336,7 +340,7 @@ export default function MergeRequestsPage() {
           </select>
 
           <select value={filterStatut} onChange={e => setFilterStatut(e.target.value)}
-            style={{ padding: "8px 12px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#94a3b8", fontSize: 13, cursor: "pointer", outline: "none" }}>
+            style={{ padding: "8px 12px", background: D.inputBg, border: `1px solid ${D.border}`, borderRadius: 9, color: D.muted, fontSize: 13, cursor: "pointer", outline: "none" }}>
             <option value="all">🔄 Tous les statuts</option>
             <option value="opened">🟡 Ouvertes</option>
             <option value="merged">🟢 Fusionnées</option>
@@ -345,28 +349,27 @@ export default function MergeRequestsPage() {
 
           <input type="text" placeholder="🔍 Rechercher titre, branche, projet..."
             value={search} onChange={e => setSearch(e.target.value)}
-            style={{ flex: 1, minWidth: 200, padding: "8px 14px", background: "#1e2538", border: "1px solid #2d3748", borderRadius: 9, color: "#e2e8f0", fontSize: 13, outline: "none" }} />
+            style={{ flex: 1, minWidth: 200, padding: "8px 14px", background: D.inputBg, border: `1px solid ${D.border}`, borderRadius: 9, color: D.text, fontSize: 13, outline: "none" }} />
         </div>
 
         {/* ── TABLE ── */}
         {loading ? (
-          <div style={{ textAlign: "center", padding: "80px 0", color: "#475569" }}>
-            <div style={{ width: 36, height: 36, border: "3px solid #1e2538", borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.7s linear infinite", margin: "0 auto 12px" }} />
-            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <div style={{ textAlign: "center", padding: "80px 0", color: D.faint }}>
+            <div style={{ width: 36, height: 36, border: `3px solid ${D.border}`, borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.7s linear infinite", margin: "0 auto 12px" }} />
             Chargement des Merge Requests...
           </div>
         ) : filtered.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "80px 0", background: "#141921", borderRadius: 16, border: "1px solid #1e2538" }}>
+          <div style={{ textAlign: "center", padding: "80px 0", background: D.card, borderRadius: 16, border: `1px solid ${D.border}` }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🔀</div>
-            <p style={{ color: "#475569", fontSize: 14 }}>Aucune Merge Request trouvée</p>
+            <p style={{ color: D.faint, fontSize: 14 }}>Aucune Merge Request trouvée</p>
           </div>
         ) : (
-          <div style={{ background: "#141921", border: "1px solid #1e2538", borderRadius: 16, overflow: "hidden" }}>
+          <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, overflow: "hidden" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
-                <tr style={{ background: "#0f1117", borderBottom: "1px solid #1e2538" }}>
+                <tr style={{ background: D.bg, borderBottom: `1px solid ${D.border}` }}>
                   {["Projet", "Type", "Titre", "Branches", "Statut", "Scores IA", "Date", "Actions"].map(h => (
-                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#475569", textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>
+                    <th key={h} style={{ padding: "11px 16px", textAlign: "left", fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>
                       {h}
                     </th>
                   ))}
@@ -374,31 +377,23 @@ export default function MergeRequestsPage() {
               </thead>
               <tbody>
                 {filtered.map((mr, i) => {
-                  const type   = getType(mr.type_mr);
-                  const statut = getStatut(mr.statut);
-                  const isDiff = mr.type_mr === "auto_merge" || mr.type_mr === "diff" || mr.type_mr === "force";
+                  const type   = typeConfig(mr.type_mr);
+                  const statut = statutConfig(mr.statut);
                   const isLoading = actionLoading === mr.id;
 
                   return (
                     <tr key={`${mr.type_mr}-${mr.id}`} className="mr-row"
-                      style={{ borderBottom: "1px solid #1a1f2e", cursor: "pointer", transition: "background 0.15s", animation: `fadeUp 0.2s ease ${i * 0.02}s both` }}
+                      style={{ borderBottom: `1px solid ${D.border}`, cursor: "pointer", transition: "background 0.15s", animation: `fadeUp 0.2s ease ${i * 0.02}s both` }}
                       onClick={() => setSelectedMr(mr)}>
 
-                      {/* Projet */}
                       <td style={{ padding: "12px 16px" }}>
-                        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>
-                          📁 {mr.depot_nom || "—"}
-                        </span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: D.text }}>📁 {mr.depot_nom || "—"}</span>
                       </td>
-
-                      {/* Type */}
                       <td style={{ padding: "12px 16px" }}>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: type.bg, color: type.color, border: `1px solid ${type.border}` }}>
                           {type.icon} {type.label}
                         </span>
                       </td>
-
-                      {/* Titre */}
                       <td style={{ padding: "12px 16px", maxWidth: 260 }}>
                         {mr.mr_url ? (
                           <a href={mr.mr_url} target="_blank" rel="noopener noreferrer"
@@ -407,57 +402,45 @@ export default function MergeRequestsPage() {
                             {mr.titre?.slice(0, 55) || "Sans titre"}
                           </a>
                         ) : (
-                          <span style={{ color: "#94a3b8", fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          <span style={{ color: D.muted, fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {mr.titre?.slice(0, 55) || "Sans titre"}
                           </span>
                         )}
                       </td>
-
-                      {/* Branches */}
                       <td style={{ padding: "12px 16px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                          <code style={{ fontSize: 11, background: "#1e2538", padding: "2px 7px", borderRadius: 5, color: "#fbbf24", fontFamily: "'DM Mono',monospace" }}>
+                          <code style={{ fontSize: 11, background: D.inputBg, padding: "2px 7px", borderRadius: 5, color: "#fbbf24", fontFamily: "'DM Mono',monospace" }}>
                             {(mr.branche_source || "?").slice(0, 16)}
                           </code>
-                          <span style={{ color: "#475569", fontSize: 11 }}>→</span>
-                          <code style={{ fontSize: 11, background: "#1e2538", padding: "2px 7px", borderRadius: 5, color: "#34d399", fontFamily: "'DM Mono',monospace" }}>
+                          <span style={{ color: D.faint, fontSize: 11 }}>→</span>
+                          <code style={{ fontSize: 11, background: D.inputBg, padding: "2px 7px", borderRadius: 5, color: "#34d399", fontFamily: "'DM Mono',monospace" }}>
                             {(mr.branche_cible || "?").slice(0, 12)}
                           </code>
                         </div>
                       </td>
-
-                      {/* Statut */}
                       <td style={{ padding: "12px 16px" }}>
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: statut.bg, color: statut.color }}>
                           <span style={{ width: 6, height: 6, borderRadius: "50%", background: statut.dot }} />
                           {statut.label}
                         </span>
                       </td>
-
-                      {/* Scores IA */}
                       <td style={{ padding: "12px 16px" }}>
                         {(mr.analyse_score_qualite != null || mr.analyse_score_securite != null) ? (
                           <div style={{ display: "flex", gap: 8 }}>
-                            <div style={{ fontSize: 10, color: "#64748b" }}>Q<br /><ScoreDot score={mr.analyse_score_qualite} /></div>
-                            <div style={{ fontSize: 10, color: "#64748b" }}>S<br /><ScoreDot score={mr.analyse_score_securite} /></div>
+                            <div style={{ fontSize: 10, color: D.faint }}>Q<br /><ScoreDot score={mr.analyse_score_qualite} /></div>
+                            <div style={{ fontSize: 10, color: D.faint }}>S<br /><ScoreDot score={mr.analyse_score_securite} /></div>
                           </div>
                         ) : (
-                          <span style={{ color: "#334155", fontSize: 12 }}>—</span>
+                          <span style={{ color: D.faint, fontSize: 12 }}>—</span>
                         )}
                       </td>
-
-                      {/* Date */}
                       <td style={{ padding: "12px 16px" }}>
-                        <span style={{ fontSize: 12, color: "#475569", fontFamily: "'DM Mono',monospace" }}>
+                        <span style={{ fontSize: 12, color: D.faint, fontFamily: "'DM Mono',monospace" }}>
                           {new Date(mr.created_at).toLocaleDateString("fr-FR")}
                         </span>
                       </td>
-
-                      {/* Actions */}
                       <td style={{ padding: "12px 16px" }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: "flex", gap: 6 }}>
-
-                          {/* Bouton Fermer / Rouvrir — FONCTIONNALITÉ PRINCIPALE */}
                           {mr.statut !== "merged" && (
                             <button className="action-btn"
                               onClick={() => toggleMrStatut(mr)}
@@ -466,20 +449,18 @@ export default function MergeRequestsPage() {
                               style={{
                                 padding: "5px 12px", border: "none", borderRadius: 8, cursor: isLoading ? "not-allowed" : "pointer",
                                 fontSize: 11, fontWeight: 600,
-                                background: mr.statut === "opened" ? "#1f0909" : "#022c22",
-                                color:      mr.statut === "opened" ? "#ef4444" : "#10b981",
+                                background: mr.statut === "opened" ? (isDark ? "#4a0a0a" : "#fef2f2") : (isDark ? "#064e3b" : "#d1fae5"),
+                                color: mr.statut === "opened" ? "#ef4444" : "#10b981",
                                 opacity: isLoading ? 0.6 : 1,
                               }}>
                               {isLoading ? "..." : mr.statut === "opened" ? "✕ Fermer" : "↩ Rouvrir"}
                             </button>
                           )}
-
-                          {/* Bouton Sync */}
                           <button className="action-btn"
                             onClick={() => syncMr(mr)}
                             disabled={isLoading}
                             title="Synchroniser le statut depuis GitLab"
-                            style={{ padding: "5px 10px", border: "1px solid #2d3748", borderRadius: 8, cursor: "pointer", fontSize: 11, background: "transparent", color: "#64748b" }}>
+                            style={{ padding: "5px 10px", border: `1px solid ${D.border}`, borderRadius: 8, cursor: "pointer", fontSize: 11, background: "transparent", color: D.muted }}>
                             {isLoading ? "..." : "↻"}
                           </button>
                         </div>
@@ -496,96 +477,86 @@ export default function MergeRequestsPage() {
         {selectedMr && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20, backdropFilter: "blur(4px)" }}
             onClick={() => setSelectedMr(null)}>
-            <div style={{ background: "#141921", border: "1px solid #1e2538", borderRadius: 20, width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}
+            <div style={{ background: D.modalBg, border: `1px solid ${D.border}`, borderRadius: 20, width: "100%", maxWidth: 520, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}
               onClick={e => e.stopPropagation()}>
 
-              {/* Modal Header */}
-              <div style={{ padding: "20px 24px", borderBottom: "1px solid #1e2538", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ padding: "20px 24px", borderBottom: `1px solid ${D.border}`, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ flex: 1, marginRight: 16 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 20 }}>{getType(selectedMr.type_mr).icon}</span>
-                    <span style={{ ...{}, background: getType(selectedMr.type_mr).bg, color: getType(selectedMr.type_mr).color, border: `1px solid ${getType(selectedMr.type_mr).border}`, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
-                      {getType(selectedMr.type_mr).label}
+                    <span style={{ fontSize: 20 }}>{typeConfig(selectedMr.type_mr).icon}</span>
+                    <span style={{ background: typeConfig(selectedMr.type_mr).bg, color: typeConfig(selectedMr.type_mr).color, border: `1px solid ${typeConfig(selectedMr.type_mr).border}`, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
+                      {typeConfig(selectedMr.type_mr).label}
                     </span>
-                    <span style={{ background: getStatut(selectedMr.statut).bg, color: getStatut(selectedMr.statut).color, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
-                      {getStatut(selectedMr.statut).label}
+                    <span style={{ background: statutConfig(selectedMr.statut).bg, color: statutConfig(selectedMr.statut).color, padding: "2px 10px", borderRadius: 20, fontSize: 12, fontWeight: 600 }}>
+                      {statutConfig(selectedMr.statut).label}
                     </span>
                   </div>
-                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "#f1f5f9", lineHeight: 1.4 }}>
+                  <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: D.text, lineHeight: 1.4 }}>
                     {selectedMr.titre || "Sans titre"}
                   </h3>
-                  <p style={{ margin: "4px 0 0", color: "#475569", fontSize: 12, fontFamily: "'DM Mono',monospace" }}>
+                  <p style={{ margin: "4px 0 0", color: D.faint, fontSize: 12, fontFamily: "'DM Mono',monospace" }}>
                     MR #{selectedMr.mr_id_gitlab} · {new Date(selectedMr.created_at).toLocaleString("fr-FR")}
                   </p>
                 </div>
                 <button onClick={() => setSelectedMr(null)}
-                  style={{ background: "#1e2538", border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", color: "#64748b", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  style={{ background: D.btnSec, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", color: D.muted, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   ✕
                 </button>
               </div>
 
-              {/* Modal Body */}
               <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-
-                {/* Projet */}
                 <div>
-                  <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Projet</div>
-                  <div style={{ fontSize: 14, color: "#e2e8f0", fontWeight: 500 }}>📁 {selectedMr.depot_nom}</div>
+                  <div style={{ fontSize: 11, color: D.faint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Projet</div>
+                  <div style={{ fontSize: 14, color: D.text, fontWeight: 500 }}>📁 {selectedMr.depot_nom}</div>
                 </div>
 
-                {/* Branches */}
                 <div>
-                  <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Branches</div>
-                  <div style={{ background: "#0f1117", borderRadius: 10, padding: "10px 14px", fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
+                  <div style={{ fontSize: 11, color: D.faint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Branches</div>
+                  <div style={{ background: D.bg, borderRadius: 10, padding: "10px 14px", fontFamily: "'DM Mono',monospace", fontSize: 13 }}>
                     <span style={{ color: "#fbbf24" }}>{selectedMr.branche_source}</span>
-                    <span style={{ color: "#475569", margin: "0 8px" }}>→</span>
+                    <span style={{ color: D.faint, margin: "0 8px" }}>→</span>
                     <span style={{ color: "#34d399" }}>{selectedMr.branche_cible}</span>
                   </div>
                 </div>
 
-                {/* Lien GitLab */}
                 {selectedMr.mr_url && (
                   <div>
-                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Lien GitLab</div>
-                    <a href={selectedMr.mr_url} target="_blank" rel="noopener noreferrer"
-                      style={{ color: "#818cf8", fontSize: 13, wordBreak: "break-all", textDecoration: "none" }}>
+                    <div style={{ fontSize: 11, color: D.faint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Lien GitLab</div>
+                    <a href={selectedMr.mr_url} target="_blank" rel="noopener noreferrer" style={{ color: "#818cf8", fontSize: 13, wordBreak: "break-all", textDecoration: "none" }}>
                       {selectedMr.mr_url}
                     </a>
                   </div>
                 )}
 
-                {/* Scores IA */}
                 {(selectedMr.analyse_score_qualite != null || selectedMr.analyse_score_securite != null) && (
                   <div>
-                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Scores IA</div>
+                    <div style={{ fontSize: 11, color: D.faint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Scores IA</div>
                     <div style={{ display: "flex", gap: 10 }}>
                       {[
                         { label: "Qualité",     score: selectedMr.analyse_score_qualite },
                         { label: "Sécurité",    score: selectedMr.analyse_score_securite },
                         { label: "Performance", score: selectedMr.analyse_score_performance },
                       ].map(s => s.score != null && (
-                        <div key={s.label} style={{ flex: 1, background: "#0f1117", borderRadius: 10, padding: "10px", textAlign: "center" }}>
+                        <div key={s.label} style={{ flex: 1, background: D.bg, borderRadius: 10, padding: "10px", textAlign: "center" }}>
                           <div style={{ fontSize: 20, fontWeight: 700, color: s.score >= 80 ? "#10b981" : s.score >= 60 ? "#f59e0b" : "#ef4444", fontFamily: "'DM Mono',monospace" }}>
                             {s.score}
                           </div>
-                          <div style={{ fontSize: 10, color: "#475569", marginTop: 2 }}>{s.label}</div>
+                          <div style={{ fontSize: 10, color: D.faint, marginTop: 2 }}>{s.label}</div>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
 
-                {/* Description */}
                 {selectedMr.description && (
                   <div>
-                    <div style={{ fontSize: 11, color: "#475569", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Description</div>
-                    <div style={{ background: "#0f1117", borderRadius: 10, padding: "12px 14px", fontSize: 12, color: "#94a3b8", whiteSpace: "pre-wrap", maxHeight: 150, overflowY: "auto", lineHeight: 1.6 }}>
+                    <div style={{ fontSize: 11, color: D.faint, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Description</div>
+                    <div style={{ background: D.bg, borderRadius: 10, padding: "12px 14px", fontSize: 12, color: D.muted, whiteSpace: "pre-wrap", maxHeight: 150, overflowY: "auto", lineHeight: 1.6 }}>
                       {selectedMr.description}
                     </div>
                   </div>
                 )}
 
-                {/* Actions du modal */}
                 <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
                   {selectedMr.statut !== "merged" && (
                     <button
@@ -593,8 +564,8 @@ export default function MergeRequestsPage() {
                       disabled={actionLoading === selectedMr.id}
                       style={{
                         flex: 1, padding: "11px",
-                        background: selectedMr.statut === "opened" ? "#7f1d1d" : "#064e3b",
-                        color: selectedMr.statut === "opened" ? "#fca5a5" : "#6ee7b7",
+                        background: selectedMr.statut === "opened" ? (isDark ? "#4a0a0a" : "#fef2f2") : (isDark ? "#064e3b" : "#d1fae5"),
+                        color: selectedMr.statut === "opened" ? "#ef4444" : "#10b981",
                         border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600,
                         cursor: "pointer", transition: "opacity 0.2s",
                       }}>
@@ -607,11 +578,11 @@ export default function MergeRequestsPage() {
                   )}
                   <button onClick={() => syncMr(selectedMr)}
                     disabled={actionLoading === selectedMr.id}
-                    style={{ flex: 1, padding: "11px", background: "#1e2538", color: "#94a3b8", border: "1px solid #2d3748", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                    style={{ flex: 1, padding: "11px", background: D.btnSec, color: D.muted, border: `1px solid ${D.border}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
                     ↻ Synchroniser
                   </button>
                   <button onClick={() => setSelectedMr(null)}
-                    style={{ padding: "11px 16px", background: "#0f1117", color: "#64748b", border: "1px solid #1e2538", borderRadius: 10, fontSize: 13, cursor: "pointer" }}>
+                    style={{ padding: "11px 16px", background: D.bg, color: D.muted, border: `1px solid ${D.border}`, borderRadius: 10, fontSize: 13, cursor: "pointer" }}>
                     Fermer
                   </button>
                 </div>

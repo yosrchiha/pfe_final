@@ -51,12 +51,9 @@ def list_depots(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     return db.query(Depot).offset(skip).limit(limit).all()
 
 
-# ── GET /user/{user_id} ──────────────────────────────────────────
 @router.get("/user/{user_id}", response_model=List[DepotResponse])
 def get_user_depots(user_id: int, db: Session = Depends(get_db)):
     depots = db.query(Depot).filter(Depot.proprietaire_id == user_id).all()
-    if not depots:
-        raise HTTPException(status_code=404, detail="Aucun dépôt trouvé pour cet utilisateur")
     return depots
 
 

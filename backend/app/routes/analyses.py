@@ -28,6 +28,8 @@ from app.services.gitlab_client import (
 )
 from app.models.export_rapport import ExportRapport
 from app.schemas.export_rapport import ExportRapportCreate
+from pydantic import BaseModel as PydanticBaseModel
+from typing import Optional
 
 router = APIRouter(prefix="/analyses", tags=["Analyses"])
 
@@ -803,3 +805,97 @@ def exporter_pdf(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur génération PDF: {str(e)}")
+
+class ModifierDepotRequest(PydanticBaseModel):
+    nom         : Optional[str] = None
+    project_url : Optional[str] = None
+    branche     : Optional[str] = None
+ 
+    model_config = {"from_attributes": True}
+ 
+# IMPORTANT : appeler .model_rebuild() après la définition
+# pour que Pydantic v2 finalise le schema avant que FastAPI
+# ne l'utilise dans la résolution des dépendances.
+ModifierDepotRequest.model_rebuild()
+ 
+ 
+# ════════════════════════════════════════════════════════
+# ENDPOINT — Modifier un dépôt
+# PUT /analyses/depots/{depot_id}
+# ════════════════════════════════════════════════════════
+@router.put("/depots/{depot_id}")
+def modifier_depot(
+    depot_id      : int,
+    data          : ModifierDepotRequest,   # ← plus d'alias, plus de Body()
+    db            : Session = Depends(get_db),
+    authorization : str     = Header(None)
+):
+    """
+    Modifie le nom, l'URL ou la branche d'un dépôt analyse.
+    Le frontend envoie : { "nom": "...", "project_url": "...", "branche": "..." }
+    """
+    user_id = get_user_id_from_token(authorization, db)
+ 
+    depot = db.query(DepotAnalyse).filter(
+        DepotAnalyse.id      == depot_id,
+        DepotAnalyse.user_id == user_id
+    ).first()
+ 
+    if not depot:
+        raise HTTPException(
+            status_code=404,
+            detail="Dépôt introuvable ou accès non autorisé"
+        )
+ 
+    if data.nom is not None and data.nom.strip():
+        depot.nom = data.nom.strip()
+ 
+    if data.project_url is not None and data.project_url.strip():
+        depot.project_url = data.project_url.strip()
+ 
+    if data.branche is not None and data.branche.strip():
+        depot.branche = data.branche.strip()
+ 
+    db.commit()
+    db.refresh(depot)
+ 
+    return {
+        "id"          : depot.id,
+        "nom"         : depot.nom,
+        "project_url" : depot.project_url,
+        "branche"     : depot.branche,
+        "created_at"  : str(depot.created_at),
+        "message"     : "Dépôt modifié avec succès"
+    }
+ 
+ 
+# ════════════════════════════════════════════════════════
+# ENDPOINT — Supprimer un dépôt + toutes ses analyses
+# DELETE /analyses/depots/{depot_id}
+# ════════════════════════════════════════════════════════
+@router.delete("/depots/{depot_id}", status_code=204)
+def supprimer_depot(
+    depot_id      : int,
+    db            : Session = Depends(get_db),
+    authorization : str     = Header(None)
+):
+    """
+    Supprime le dépôt et tout ce qui lui est lié en cascade.
+    """
+    user_id = get_user_id_from_token(authorization, db)
+ 
+    depot = db.query(DepotAnalyse).filter(
+        DepotAnalyse.id      == depot_id,
+        DepotAnalyse.user_id == user_id
+    ).first()
+ 
+    if not depot:
+        raise HTTPException(
+            status_code=404,
+            detail="Dépôt introuvable ou accès non autorisé"
+        )
+ 
+    db.delete(depot)
+    db.commit()
+    # 204 No Content
+ 
