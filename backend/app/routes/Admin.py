@@ -112,20 +112,24 @@ def get_stats(db: Session = Depends(get_db)):
 # ══════════════════════════════════════════════════════════════════
 @router.get("/users", response_model=List[UserAdminOut])
 def get_all_users(db: Session = Depends(get_db)):
-    users = db.query(User).order_by(User.id).all()
-    result = []
-    for u in users:
-        depot_count = db.query(func.count(Depot.id)).filter(
-            Depot.proprietaire_id == u.id
-        ).scalar()
-        result.append(UserAdminOut(
+    # UNE SEULE requête avec jointure au lieu de N+1
+    results = (
+        db.query(User, func.count(Depot.id).label("depot_count"))
+        .outerjoin(Depot, Depot.proprietaire_id == User.id)
+        .group_by(User.id)
+        .order_by(User.id)
+        .all()
+    )
+    return [
+        UserAdminOut(
             id=u.id, email=u.email,
             username=getattr(u, "username", None),
             role=u.role, is_active=u.is_active,
             created_at=getattr(u, "created_at", None),
-            depot_count=depot_count,
-        ))
-    return result
+            depot_count=count,
+        )
+        for u, count in results
+    ]
 
 
 @router.get("/users/{user_id}", response_model=UserAdminOut)

@@ -133,3 +133,74 @@ def get_feedback_stats(
         ],
         "by_rating": [{"rating": r, "count": cnt} for r, cnt in by_rating]
     }
+# Ajouter dans backend/app/routes/feedback.py
+# UNE SEULE route à ajouter — les autres restent identiques
+
+# ════════════════════════════════════════════════════════
+# GET /feedback/public
+# Feedbacks anonymisés accessibles SANS authentification
+# (pour la landing page)
+# ════════════════════════════════════════════════════════
+@router.get("/public")
+def get_public_feedbacks(
+    limit: int = 12,
+    db: Session = Depends(get_db)
+):
+    """
+    Retourne les feedbacks récents pour la landing page.
+    - Anonymisés : username remplacé par "Utilisateur X"
+    - Limité à `limit` résultats (par défaut 12)
+    - Triés par date décroissante
+    - Retourne uniquement les feedbacks avec note >= 3
+      (pour ne montrer que des avis positifs en vitrine)
+    """
+    feedbacks = (
+        db.query(Feedback)
+        .filter(Feedback.rating >= 3)
+        .order_by(Feedback.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    # Récupérer les usernames depuis la table User
+    # sans exposer l'email complet
+    result = []
+    for i, f in enumerate(feedbacks):
+        # Récupérer le user pour afficher le prénom seulement
+        user = db.query(User).filter(User.id == f.user_id).first()
+
+        # Anonymiser : "Sarah M." depuis "sarah.martin@email.com"
+        # ou depuis le username
+        if user and user.username:
+            display_name = user.username.split("@")[0]  # enlève le domaine si email
+            # Capitaliser et raccourcir
+            parts = display_name.replace(".", " ").replace("_", " ").split()
+            if len(parts) >= 2:
+                display_name = f"{parts[0].capitalize()} {parts[1][0].upper()}."
+            else:
+                display_name = parts[0].capitalize() if parts else f"Utilisateur {i+1}"
+        else:
+            display_name = f"Utilisateur {i+1}"
+
+        result.append({
+            "id":          f.id,
+            "rating":      f.rating,
+            "category":    f.category,
+            "comment":     f.comment,
+            "projet_nom":  f.projet_nom,
+            "created_at":  f.created_at.isoformat(),
+            "username":    display_name,  # anonymisé
+        })
+
+    # Stats globales (pour le score moyen affiché en landing)
+    from sqlalchemy import func
+    total     = db.query(func.count(Feedback.id)).scalar() or 0
+    avg_query = db.query(func.avg(Feedback.rating)).scalar()
+    avg       = round(float(avg_query), 1) if avg_query else 0.0
+
+    return {
+        "feedbacks":    result,
+        "total":        total,
+        "average":      avg,
+        "shown":        len(result),
+    }

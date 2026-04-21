@@ -111,16 +111,22 @@ D. MAINTENABILITÉ
 
 RÈGLE ABSOLUE : Tu DOIS signaler au minimum 2 problèmes par fichier fourni.
 
+RÈGLE SUR LES NUMÉROS DE LIGNE :
+Le code fourni est numéroté ligne par ligne au format "   N | code".
+Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
+Ne jamais inventer un numéro de ligne — lis le préfixe numérique dans le code fourni.
+Si un problème est global (pas lié à une ligne précise), utilise ligne = 0.
+
 Structure JSON de retour :
 {
     "score_qualite": <int entre 0 et 100>,
     "vulnerabilites": [
         {
-            "fichier": "<chemin du fichier>",
-            "ligne": <numéro de ligne ou 0 si global>,
-            "type": "<catégorie exacte : Complexité | Duplication | Lisibilité | Maintenabilité>",
+            "fichier": "<chemin exact du fichier tel qu'indiqué après FICHIER :>",
+            "ligne": <numéro entier lu dans le préfixe "N |" du code, ou 0 si global>,
+            "type": "<catégorie exacte : Complexité | Duplication | Lisibilité | Maintenabilité | Docstring manquant | Commentaire absent | Nommage ambigu | Gestion erreurs | SOLID-S | SOLID-O>",
             "severite": "<HAUTE | MOYENNE | FAIBLE>",
-            "suggestion": "<correction précise et concrète>"
+            "suggestion": "<correction précise et concrète, en une phrase>"
         }
     ],
     "recommandations": [
@@ -131,7 +137,7 @@ Structure JSON de retour :
     ]
 }
 
-Code source à auditer :
+Code source à auditer (chaque ligne est préfixée par son numéro) :
 {code_text}
 """
 
@@ -195,7 +201,9 @@ SECRETS ET DONNÉES SENSIBLES
    - Variables d'environnement non utilisées correctement
 
 RÈGLE ABSOLUE : Chaque vulnérabilité doit être précisément localisée (fichier + ligne).
-Si la ligne exacte n'est pas identifiable, mets ligne = 1 et ajoute une note dans la suggestion.
+Le code fourni est numéroté ligne par ligne au format "   N | code".
+Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
+Ne jamais inventer un numéro de ligne. Si la localisation est impossible, mets ligne = 1.
 Attribue CRITIQUE aux vulnérabilités exploitables directement, HAUTE aux risques élevés.
 
 Structure JSON de retour :
@@ -203,9 +211,9 @@ Structure JSON de retour :
     "score_securite": <int entre 0 et 100>,
     "vulnerabilites": [
         {
-            "fichier": "<chemin du fichier>",
-            "ligne": <numéro de ligne, TOUJOURS > 0>,
-            "type": "<référence OWASP ou type précis>",
+            "fichier": "<chemin exact du fichier tel qu'indiqué après FICHIER :>",
+            "ligne": <numéro entier lu dans le préfixe "N |" du code — TOUJOURS > 0>,
+            "type": "<référence OWASP ou type précis, ex: A03 — INJECTION>",
             "severite": "<CRITIQUE | HAUTE | MOYENNE | FAIBLE>",
             "suggestion": "<correction précise et concrète>"
         }
@@ -218,7 +226,7 @@ Structure JSON de retour :
     ]
 }
 
-Code source à auditer :
+Code source à auditer (chaque ligne est préfixée par son numéro) :
 {code_text}
 """
 
@@ -252,15 +260,17 @@ D. APPELS RÉSEAU ET API EXTERNES
    - Absence de mécanisme de cache pour des données rarement modifiées
 
 RÈGLE ABSOLUE : Tu DOIS signaler au minimum 2 problèmes de performance par fichier.
+Le code fourni est numéroté ligne par ligne au format "   N | code".
+Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
 
 Structure JSON de retour :
 {
     "score_performance": <int entre 0 et 100>,
     "vulnerabilites": [
         {
-            "fichier": "<chemin du fichier>",
-            "ligne": <numéro de ligne>,
-            "type": "<catégorie exacte : N+1 | SELECT* | Boucle O(n²) | Mémoire | Ressource>",
+            "fichier": "<chemin exact du fichier tel qu'indiqué après FICHIER :>",
+            "ligne": <numéro entier lu dans le préfixe "N |" du code>,
+            "type": "<catégorie exacte : N+1 | SELECT* | Boucle O(n²) | Mémoire | Ressource | Timeout absent | Cache absent>",
             "severite": "<HAUTE | MOYENNE | FAIBLE>",
             "suggestion": "<correction précise avec estimation de gain>"
         }
@@ -273,7 +283,7 @@ Structure JSON de retour :
     ]
 }
 
-Code source à auditer :
+Code source à auditer (chaque ligne est préfixée par son numéro) :
 {code_text}
 """
 
@@ -303,13 +313,16 @@ D. NOMMAGE COMME DOCUMENTATION IMPLICITE
    - Toute variable booléenne dont le nom n'indique pas son état (ex: flag au lieu de is_active) est signalée
    - Toute fonction dont le nom ne reflète pas précisément son action est signalée
 
+Le code fourni est numéroté ligne par ligne au format "   N | code".
+Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
+
 Structure JSON de retour :
 {
     "score_documentation": <int entre 0 et 100>,
     "vulnerabilites": [
         {
-            "fichier": "<chemin du fichier>",
-            "ligne": <numéro de ligne>,
+            "fichier": "<chemin exact du fichier tel qu'indiqué après FICHIER :>",
+            "ligne": <numéro entier lu dans le préfixe "N |" du code, ou 0 si global>,
             "type": "<catégorie : Docstring manquant | Commentaire absent | Nommage ambigu>",
             "severite": "<MOYENNE | FAIBLE>",
             "suggestion": "<exemple de docstring ou commentaire à ajouter>"
@@ -323,7 +336,7 @@ Structure JSON de retour :
     ]
 }
 
-Code source à auditer :
+Code source à auditer (chaque ligne est préfixée par son numéro) :
 {code_text}
 """
 
@@ -357,14 +370,17 @@ D. GESTION DES TRANSACTIONS ET COHÉRENCE
    - Rollback non implémenté en cas d'erreur partielle
    - État incohérent possible si une opération en chaîne échoue à mi-parcours
 
+Le code fourni est numéroté ligne par ligne au format "   N | code".
+Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
+
 Structure JSON de retour :
 {
     "score_bonnes_pratiques": <int entre 0 et 100>,
     "vulnerabilites": [
         {
-            "fichier": "<chemin du fichier>",
-            "ligne": <numéro de ligne>,
-            "type": "<catégorie : SOLID-S | SOLID-O | Gestion erreurs | Testabilité>",
+            "fichier": "<chemin exact du fichier tel qu'indiqué après FICHIER :>",
+            "ligne": <numéro entier lu dans le préfixe "N |" du code>,
+            "type": "<catégorie : SOLID-S | SOLID-O | SOLID-L | SOLID-I | SOLID-D | Gestion erreurs | Testabilité | Transaction>",
             "severite": "<HAUTE | MOYENNE | FAIBLE>",
             "suggestion": "<correction précise et concrète>"
         }
@@ -377,7 +393,7 @@ Structure JSON de retour :
     ]
 }
 
-Code source à auditer :
+Code source à auditer (chaque ligne est préfixée par son numéro) :
 {code_text}
 """
 
@@ -414,11 +430,28 @@ def _decouper_en_lots(fichiers: list, budget: int) -> list:
 # UTILITAIRE — Préparer le texte de code d'un lot
 # ══════════════════════════════════════════════════════════════════════
 def _preparer_code(lot: list) -> str:
+    """
+    Prépare le texte de code avec numéros de ligne explicites.
+    Chaque ligne est préfixée par son numéro pour que le LLM
+    puisse retourner des références de ligne précises et vérifiables.
+    """
     code_text = ""
     for f in lot:
         path = f.get("file_path") or f.get("path", "inconnu")
         contenu = f.get("content", "")
-        code_text += f"\n\n{'═'*60}\nFICHIER : {path}\n{'═'*60}\n{contenu}"
+        lignes = contenu.splitlines()
+        # Préfixer chaque ligne avec son numéro (aligné sur 4 chiffres)
+        contenu_numerote = "\n".join(
+            f"{i+1:4d} | {ligne}"
+            for i, ligne in enumerate(lignes)
+        )
+        code_text += (
+            f"\n\n{'═'*60}\n"
+            f"FICHIER : {path}\n"
+            f"TOTAL LIGNES : {len(lignes)}\n"
+            f"{'═'*60}\n"
+            f"{contenu_numerote}"
+        )
     return code_text
 
 

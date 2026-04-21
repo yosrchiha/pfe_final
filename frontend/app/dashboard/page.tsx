@@ -442,7 +442,16 @@ export default function Dashboard() {
                         <>
                           <div style={{ fontSize:14, fontWeight:600, color:D.text, margin:"20px 0 12px" }}>⚠️ Vulnérabilités ({analyseActif.vulnerabilites.length})</div>
                           {analyseActif.vulnerabilites.map((v: any, i: number) => (
-                            <div key={i} style={{ background:D.detailBg, border:`1px solid ${D.border}`, borderRadius:12, padding:16, marginBottom:12, borderLeft:`4px solid ${colorSeverite(v.severite)}` }}>
+                            <div key={i} style={{ 
+  background: D.detailBg, 
+  borderTop: `1px solid ${D.border}`,
+  borderRight: `1px solid ${D.border}`,
+  borderBottom: `1px solid ${D.border}`,
+  borderLeft: `4px solid ${colorSeverite(v.severite)}`,
+  borderRadius: 12, 
+  padding: 16, 
+  marginBottom: 12 
+}}>
                               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
                                 <span style={{ fontSize:10, fontWeight:600, padding:"2px 10px", borderRadius:20, background:`${colorSeverite(v.severite)}15`, color:colorSeverite(v.severite) }}>{v.severite}</span>
                                 <span style={{ fontSize:14, fontWeight:600, color:D.text }}>{v.type}</span>

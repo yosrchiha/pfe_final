@@ -30,6 +30,8 @@ from app.models.export_rapport import ExportRapport
 from app.schemas.export_rapport import ExportRapportCreate
 from pydantic import BaseModel as PydanticBaseModel
 from typing import Optional
+from app.models.vulnerabilite import Vulnerabilite
+
 
 router = APIRouter(prefix="/analyses", tags=["Analyses"])
 
@@ -153,6 +155,42 @@ def creer_issues_gitlab(
     except Exception as e:
         print(f"Erreur création issues GitLab : {e}")
         db.rollback()
+# ════════════════════════════════════════════════════════
+# UTILITAIRE — Créer les vulnérabilités en base
+# ════════════════════════════════════════════════════════
+def creer_vulnerabilites_base(
+    vulnerabilites: list,
+    analyse_id: int,
+    db: Session
+):
+    """Sauvegarde les vulnérabilités dans la table vulnerabilites"""
+    from app.models.vulnerabilite import Vulnerabilite
+    
+    compteur = 0
+    for vuln in vulnerabilites:
+        try:
+            vuln_db = Vulnerabilite(
+                analyse_id=analyse_id,
+                type=vuln.get("type", "Inconnu"),
+                severite=vuln.get("severite", "MOYENNE"),
+                description=vuln.get("description", ""),
+                suggestion=vuln.get("suggestion", ""),
+                fichier=vuln.get("fichier", "inconnu"),
+                ligne=vuln.get("ligne", 0),
+                colonne=vuln.get("colonne"),
+                categorie_owasp=vuln.get("categorie_owasp"),
+                cwe_id=vuln.get("cwe_id"),
+                code_snippet=vuln.get("code_snippet"),
+                impact=vuln.get("impact"),
+                statut="detectee"
+            )
+            db.add(vuln_db)
+            compteur += 1
+        except Exception as e:
+            print(f"[VULN] Erreur sauvegarde vulnérabilité: {e}")
+    
+    db.commit()
+    print(f"[VULN] {compteur} vulnérabilité(s) sauvegardée(s) dans la table vulnerabilites")
 
 # ════════════════════════════════════════════════════════
 # ENDPOINT 1 — Lancer une analyse
@@ -244,6 +282,26 @@ def lancer_analyse(
         analyse.statut            = "termine"
         db.commit()
         db.refresh(analyse)
+        if rapport.get("vulnerabilites"):
+            for vuln in rapport["vulnerabilites"]:
+                vuln_db = Vulnerabilite(
+                    analyse_id=analyse.id,
+                    type=vuln.get("type", "Inconnu"),
+                    severite=vuln.get("severite", "MOYENNE"),
+                    description=vuln.get("description", ""),
+                    suggestion=vuln.get("suggestion", ""),
+                    fichier=vuln.get("fichier", "inconnu"),
+                    ligne=vuln.get("ligne", 0),
+                    colonne=vuln.get("colonne"),
+                    categorie_owasp=vuln.get("categorie_owasp"),
+                    cwe_id=vuln.get("cwe_id"),
+                    code_snippet=vuln.get("code_snippet"),
+                    impact=vuln.get("impact"),
+                    statut="detectee"
+                )
+                db.add(vuln_db)
+            db.commit()
+            print(f"[VULN] {len(rapport['vulnerabilites'])} vulnérabilité(s) sauvegardée(s)")
 
       # ── 9. Créer les issues dans GitLab ──────────────
               # ── 9. Créer les issues dans GitLab ──────────────

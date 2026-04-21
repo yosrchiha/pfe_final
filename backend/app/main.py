@@ -33,6 +33,8 @@ from app.routes import merge_requests_diff
 from app.routes import feedback
 from app.routes import comparaisons, analyses_diff
 from app.routes import analyses_fichier
+from app.routes.vulnerabilites import router as vulnerabilites_router
+
 
 
 # Ajouter avec les autres routes
@@ -85,6 +87,7 @@ app.include_router(analyses_diff.router)
 
 
 app.include_router(analyses_fichier.router)
+app.include_router(vulnerabilites_router)
 
 
 # ── Création des tables ──────────────────────────────────

@@ -13,7 +13,14 @@ if not DATABASE_URL:
     raise ValueError("DATABASE_URL non défini ! Vérifie ton fichier .env")
 
 # Création de l'engine SQLAlchemy
-engine = create_engine(DATABASE_URL, echo=True)  # echo=True pour voir les logs SQL
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,           # ← était True — loggait TOUT le SQL
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,   # vérifie la connexion avant usage
+    pool_recycle=1800,
+)
 
 # Générateur de sessions
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
