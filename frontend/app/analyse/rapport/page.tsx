@@ -6,6 +6,13 @@ import axios from "axios";
 import { useTheme } from "@/app/ThemeContext";
 import ThemeToggle from "@/app/ThemeToggle";
 
+// ── Import des composants vidéo ───────────────────────────────────────────────
+// Assurez-vous que ces fichiers existent dans votre projet :
+// - src/app/components/VideoGeneratorModal.tsx
+// - src/app/components/VideoPlayer.tsx
+// - src/hooks/useVideoGenerator.ts
+import VideoGeneratorModal from "@/app/components/VideoGeneratorModal";
+
 const API = "http://127.0.0.1:8000";
 
 export default function RapportPage() {
@@ -43,8 +50,154 @@ export default function RapportPage() {
   const [loadingTests, setLoadingTests] = useState(false);
   const [resultatMr, setResultatMr] = useState<any>(null);
   const [erreur, setErreur] = useState("");
-  const [activeTab, setActiveTab] = useState<"vulns" | "recos">("vulns");
+  const [activeTab, setActiveTab] = useState<"vulns" | "recos" | "issues">("vulns");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [issuesGitlab, setIssuesGitlab] = useState<any[]>([]);
+
+  // ── TTS State ────────────────────────────────────────────────────────────────
+  const [ttsLoading, setTtsLoading] = useState<string | null>(null);
+  const [ttsPlaying, setTtsPlaying] = useState<string | null>(null);
+  const [ttsLabel, setTtsLabel] = useState("");
+  const [ttsLangue, setTtsLangue] = useState<"fr" | "en">("fr");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioBlobUrlRef = useRef<string | null>(null);
+
+  // ── Vidéo State ──────────────────────────────────────────────────────────────
+  const [showVideoModal, setShowVideoModal] = useState(false);
+  // Bouton "Lire la vidéo" directement sur une vulnérabilité (inline)
+  const [inlineVideoVulnIndex, setInlineVideoVulnIndex] = useState<number | null>(null);
+
+  // Nettoyage de l'URL blob à la destruction du composant
+  useEffect(() => {
+    return () => {
+      if (audioBlobUrlRef.current) URL.revokeObjectURL(audioBlobUrlRef.current);
+    };
+  }, []);
+
+  const lireVulnerabilite = async (vuln: any, id: string) => {
+    if (ttsPlaying === id) {
+      audioRef.current?.pause();
+      setTtsPlaying(null);
+      return;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+    }
+    if (audioBlobUrlRef.current) {
+      URL.revokeObjectURL(audioBlobUrlRef.current);
+      audioBlobUrlRef.current = null;
+    }
+    setTtsLoading(id);
+    setTtsPlaying(null);
+    try {
+      const jwt = localStorage.getItem("token");
+      const response = await fetch(`${API}/tts/vulnerabilite`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: jwt ? `Bearer ${jwt}` : "",
+        },
+        body: JSON.stringify({
+          type_vuln: vuln.type,
+          severite: vuln.severite,
+          fichier: vuln.fichier,
+          ligne: vuln.ligne,
+          suggestion: vuln.suggestion,
+          langue: ttsLangue,
+        }),
+      });
+      if (!response.ok) throw new Error("Erreur TTS backend");
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      audioBlobUrlRef.current = blobUrl;
+      const audio = new Audio(blobUrl);
+      audioRef.current = audio;
+      setTtsLabel(`${vuln.type} — ligne ${vuln.ligne}`);
+      setTtsPlaying(id);
+      setTtsLoading(null);
+      audio.play();
+      audio.onended = () => setTtsPlaying(null);
+      audio.onerror = () => {
+        setTtsPlaying(null);
+        setErreur("Erreur lecture audio");
+      };
+    } catch (e) {
+      setTtsLoading(null);
+      setErreur("Impossible de générer l'audio TTS");
+    }
+  };
+
+  const lireResume = async () => {
+    if (!rapport) return;
+    const vulns = rapport.vulnerabilites || [];
+    const critiques = vulns.filter((v: any) => v.severite === "CRITIQUE").length;
+    const texte =
+      ttsLangue === "fr"
+        ? `Résumé de l'analyse du projet ${nomProjet}. ` +
+          `Score qualité : ${rapport.score_qualite ?? "non disponible"} sur 100. ` +
+          `Score sécurité : ${rapport.score_securite ?? "non disponible"} sur 100. ` +
+          `Score performance : ${rapport.score_performance ?? "non disponible"} sur 100. ` +
+          `${vulns.length} vulnérabilité${vulns.length !== 1 ? "s" : ""} détectée${vulns.length !== 1 ? "s" : ""}, ` +
+          `dont ${critiques} critique${critiques !== 1 ? "s" : ""}. ` +
+          (critiques > 0
+            ? "Attention, des corrections urgentes sont nécessaires."
+            : "Le code ne présente pas de vulnérabilités critiques.")
+        : `Analysis summary for project ${nomProjet}. ` +
+          `Quality score: ${rapport.score_qualite ?? "N/A"} out of 100. ` +
+          `Security score: ${rapport.score_securite ?? "N/A"} out of 100. ` +
+          `Performance score: ${rapport.score_performance ?? "N/A"} out of 100. ` +
+          `${vulns.length} vulnerabilit${vulns.length !== 1 ? "ies" : "y"} detected, ` +
+          `including ${critiques} critical. ` +
+          (critiques > 0
+            ? "Urgent fixes are required."
+            : "No critical vulnerabilities found.");
+    await lireTexteLibre(texte, "resume");
+  };
+
+  const lireTexteLibre = async (texte: string, id: string) => {
+    if (ttsPlaying === id) {
+      audioRef.current?.pause();
+      setTtsPlaying(null);
+      return;
+    }
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ""; }
+    if (audioBlobUrlRef.current) { URL.revokeObjectURL(audioBlobUrlRef.current); audioBlobUrlRef.current = null; }
+    setTtsLoading(id);
+    setTtsPlaying(null);
+    try {
+      const jwt = localStorage.getItem("token");
+      const response = await fetch(`${API}/tts/texte`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: jwt ? `Bearer ${jwt}` : "",
+        },
+        body: JSON.stringify({ texte, langue: ttsLangue }),
+      });
+      if (!response.ok) throw new Error("Erreur TTS backend");
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      audioBlobUrlRef.current = blobUrl;
+      const audio = new Audio(blobUrl);
+      audioRef.current = audio;
+      setTtsLabel(ttsLangue === "fr" ? "Résumé du rapport" : "Report summary");
+      setTtsPlaying(id);
+      setTtsLoading(null);
+      audio.play();
+      audio.onended = () => setTtsPlaying(null);
+      audio.onerror = () => { setTtsPlaying(null); setErreur("Erreur lecture audio"); };
+    } catch {
+      setTtsLoading(null);
+      setErreur("Impossible de générer l'audio TTS");
+    }
+  };
+
+  const stopAudio = () => {
+    audioRef.current?.pause();
+    setTtsPlaying(null);
+  };
+  // ── Fin TTS ──────────────────────────────────────────────────────────────────
 
   // Chatbot
   const [chatMessages, setChatMessages] = useState<Array<{ role: "user" | "assistant", content: string }>>([
@@ -65,12 +218,7 @@ export default function RapportPage() {
     const pu = sessionStorage.getItem("projectUrl") || "";
     const br = sessionStorage.getItem("branche") || "main";
     const at = sessionStorage.getItem("autoTests") === "true";
-
-    if (!r) {
-      router.push("/analyse");
-      return;
-    }
-
+    if (!r) { router.push("/analyse"); return; }
     const data = JSON.parse(r);
     setRapport(data);
     setNomProjet(np);
@@ -78,13 +226,19 @@ export default function RapportPage() {
     setProjectUrl(pu);
     setBranche(br);
     setAutoTests(at);
-
+    if (data.issues_gitlab && data.issues_gitlab.length > 0) {
+      setIssuesGitlab(data.issues_gitlab);
+    } else if (data.analyse_id) {
+      const jwt = localStorage.getItem("token");
+      axios.get(`${API}/issues/analyse/${data.analyse_id}`, {
+        headers: { Authorization: jwt ? `Bearer ${jwt}` : "" }
+      }).then(res => setIssuesGitlab(res.data)).catch(() => {});
+    }
     if (data.depot_analyse_id) {
       axios.get(`${API}/analyses/depot/${data.depot_analyse_id}`)
         .then(res => setHistorique(res.data))
         .catch(() => setHistorique([]));
     }
-
     if (at) setTimeout(() => setShowPopup(true), 600);
   }, []);
 
@@ -95,25 +249,18 @@ export default function RapportPage() {
 
   const exporterPDF = async () => {
     const analyseId = rapport?.analyse_id;
-    if (!analyseId) {
-      setErreur("ID d'analyse manquant");
-      return;
-    }
-
+    if (!analyseId) { setErreur("ID d'analyse manquant"); return; }
     const token = localStorage.getItem("token");
-
     try {
       const response = await fetch(`${API}/analyses/${analyseId}/pdf`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-
       if (!response.ok) {
         if (response.status === 403) setErreur("Vous n'avez pas accès à ce rapport");
         else if (response.status === 404) setErreur("Rapport introuvable");
         else setErreur("Erreur lors de l'export PDF");
         return;
       }
-
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -123,9 +270,7 @@ export default function RapportPage() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-
     } catch (e) {
-      console.error("Erreur export PDF", e);
       setErreur("Erreur de connexion");
     }
   };
@@ -134,12 +279,7 @@ export default function RapportPage() {
     setShowPopup(false);
     setLoadingTests(true);
     const analyseId = rapport?.analyse_id;
-    if (!analyseId) {
-      setErreur("ID analyse manquant");
-      setLoadingTests(false);
-      return;
-    }
-
+    if (!analyseId) { setErreur("ID analyse manquant"); setLoadingTests(false); return; }
     try {
       const res = await axios.post(
         `${API}/analyses/generer-tests`,
@@ -157,46 +297,82 @@ export default function RapportPage() {
 
   const envoyerMessage = async () => {
     if (!chatInput.trim() || chatLoading) return;
-
     const userMessage = chatInput.trim();
     setChatMessages(prev => [...prev, { role: "user", content: userMessage }]);
     setChatInput("");
     setChatLoading(true);
-
     try {
       const context = {
         projet: nomProjet,
-        scores: {
-          qualite: rapport?.score_qualite,
-          securite: rapport?.score_securite,
-          performance: rapport?.score_performance
-        },
+        scores: { qualite: rapport?.score_qualite, securite: rapport?.score_securite, performance: rapport?.score_performance },
         vulnerabilites: rapport?.vulnerabilites?.slice(0, 5) || [],
         recommandations: rapport?.recommandations?.slice(0, 3) || []
       };
-
-      const res = await axios.post(
-        `${API}/chat/ask`,
-        { question: userMessage, contexte: context },
-        { headers: getHeaders() }
-      );
-
+      const res = await axios.post(`${API}/chat/ask`, { question: userMessage, contexte: context }, { headers: getHeaders() });
       setChatMessages(prev => [...prev, { role: "assistant", content: res.data.reponse }]);
-    } catch (e: any) {
-      setChatMessages(prev => [...prev, {
-        role: "assistant",
-        content: "❌ Désolé, une erreur est survenue. Veuillez réessayer."
-      }]);
+    } catch {
+      setChatMessages(prev => [...prev, { role: "assistant", content: "❌ Désolé, une erreur est survenue. Veuillez réessayer." }]);
     } finally {
       setChatLoading(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      envoyerMessage();
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); envoyerMessage(); }
+  };
+
+  const [issueLoading, setIssueLoading] = useState<Record<number, boolean>>({});
+
+  const updateIssueStatut = (issueId: number, newStatut: string) => {
+    setIssuesGitlab(prev => prev.map(i => i.id === issueId ? { ...i, statut: newStatut } : i));
+    const r = sessionStorage.getItem("rapport");
+    if (r) {
+      const data = JSON.parse(r);
+      if (data.issues_gitlab) {
+        data.issues_gitlab = data.issues_gitlab.map((i: any) => i.id === issueId ? { ...i, statut: newStatut } : i);
+        sessionStorage.setItem("rapport", JSON.stringify(data));
+      }
     }
+  };
+
+  const closeIssue = async (issueId: number) => {
+    setIssueLoading(prev => ({ ...prev, [issueId]: true }));
+    try {
+      await axios.put(`${API}/issues/${issueId}/close`, {}, { headers: getHeaders() });
+      updateIssueStatut(issueId, "closed");
+    } catch (e: any) {
+      setErreur(e.response?.data?.detail || "Erreur fermeture issue");
+    } finally {
+      setIssueLoading(prev => ({ ...prev, [issueId]: false }));
+    }
+  };
+
+  const reopenIssue = async (issueId: number) => {
+    setIssueLoading(prev => ({ ...prev, [issueId]: true }));
+    try {
+      await axios.put(`${API}/issues/${issueId}/reopen`, {}, { headers: getHeaders() });
+      updateIssueStatut(issueId, "opened");
+    } catch (e: any) {
+      setErreur(e.response?.data?.detail || "Erreur réouverture issue");
+    } finally {
+      setIssueLoading(prev => ({ ...prev, [issueId]: false }));
+    }
+  };
+
+  const syncIssue = async (issueId: number) => {
+    setIssueLoading(prev => ({ ...prev, [issueId]: true }));
+    try {
+      const res = await axios.patch(`${API}/issues/${issueId}/sync`, {}, { headers: getHeaders() });
+      updateIssueStatut(issueId, res.data.statut);
+    } catch (e: any) {
+      setErreur(e.response?.data?.detail || "Erreur synchronisation issue");
+    } finally {
+      setIssueLoading(prev => ({ ...prev, [issueId]: false }));
+    }
+  };
+
+  const syncAllIssues = async () => {
+    for (const issue of issuesGitlab) await syncIssue(issue.id);
   };
 
   const colorScore = (s: number) => {
@@ -228,15 +404,109 @@ export default function RapportPage() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         @keyframes typing { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-5px); opacity: 1; } }
+        @keyframes tts-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(99,102,241,0.4); } 50% { box-shadow: 0 0 0 6px rgba(99,102,241,0); } }
+        @keyframes video-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); } 50% { box-shadow: 0 0 0 6px rgba(16,185,129,0); } }
+        @keyframes slide-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: ${D.bg}; }
         ::-webkit-scrollbar-thumb { background: ${D.border}; border-radius: 3px; }
+
+        .tts-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 4px 12px;
+          border-radius: 20px;
+          font-size: 11px;
+          font-weight: 500;
+          cursor: pointer;
+          border: 1px solid rgba(99,102,241,0.3);
+          background: rgba(99,102,241,0.08);
+          color: #6366f1;
+          transition: all 0.2s;
+          flex-shrink: 0;
+        }
+        .tts-btn:hover { background: rgba(99,102,241,0.15); }
+        .tts-btn.playing { background: rgba(99,102,241,0.2); animation: tts-pulse 1.5s infinite; }
+        .tts-btn:disabled { opacity: 0.5; cursor: wait; }
+
+        /* Bouton vidéo inline sur une vulnérabilité */
+        .video-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 4px 12px;
+          border-radius: 20px;
+          font-size: 11px;
+          font-weight: 500;
+          cursor: pointer;
+          border: 1px solid rgba(16,185,129,0.3);
+          background: rgba(16,185,129,0.08);
+          color: #10b981;
+          transition: all 0.2s;
+          flex-shrink: 0;
+        }
+        .video-btn:hover { background: rgba(16,185,129,0.15); }
+
+        /* Mini lecteur TTS flottant */
+        .tts-player {
+          position: fixed;
+          bottom: 80px;
+          left: 24px;
+          background: ${D.card};
+          border: 1px solid rgba(99,102,241,0.35);
+          border-radius: 16px;
+          padding: 10px 16px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+          z-index: 25;
+          animation: slide-up 0.25s ease;
+          max-width: 340px;
+        }
+        .tts-wave span {
+          display: inline-block;
+          width: 3px;
+          height: 14px;
+          border-radius: 2px;
+          background: #6366f1;
+          animation: wave 0.8s ease-in-out infinite;
+        }
+        .tts-wave span:nth-child(2) { animation-delay: 0.1s; }
+        .tts-wave span:nth-child(3) { animation-delay: 0.2s; }
+        .tts-wave span:nth-child(4) { animation-delay: 0.1s; }
+        @keyframes wave {
+          0%, 100% { transform: scaleY(0.4); }
+          50% { transform: scaleY(1); }
+        }
+
+        /* Bouton "Lire la vidéo" dans la topbar */
+        .video-topbar-btn {
+          padding: 8px 16px;
+          background: rgba(16,185,129,0.08);
+          border: 1px solid rgba(16,185,129,0.35);
+          border-radius: 10px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          color: #10b981;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.2s;
+          font-family: 'Inter', sans-serif;
+        }
+        .video-topbar-btn:hover {
+          background: rgba(16,185,129,0.15);
+          border-color: rgba(16,185,129,0.5);
+        }
       `}</style>
 
       <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text, display: "flex", flexDirection: "column" }}>
 
-        {/* Topbar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 28px", background: D.card, borderBottom: `1px solid ${D.border}`, position: "sticky", top: 0, zIndex: 10 }}>
+        {/* ── Topbar ─────────────────────────────────────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 28px", background: D.card, borderBottom: `1px solid ${D.border}`, position: "sticky", top: 0, zIndex: 10, flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <button onClick={() => router.push("/analyse")} style={{ background: "transparent", border: `1px solid ${D.border}`, borderRadius: 10, padding: "8px 14px", fontSize: 13, cursor: "pointer", color: D.muted }}>
               ← Nouvelle analyse
@@ -246,18 +516,71 @@ export default function RapportPage() {
               <div style={{ fontSize: 12, color: D.faint, fontFamily: "monospace", marginTop: 2 }}>branche : {branche}</div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <ThemeToggle />
-            <button onClick={exporterPDF} style={{ padding: "8px 18px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
+
+            {/* Sélecteur de langue TTS/Vidéo */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: D.tag, border: `1px solid ${D.border}`, borderRadius: 10, padding: "6px 10px" }}>
+              <span style={{ fontSize: 11, color: D.faint }}>🔊</span>
+              <select
+                value={ttsLangue}
+                onChange={e => setTtsLangue(e.target.value as "fr" | "en")}
+                style={{ background: "transparent", border: "none", fontSize: 12, color: D.text, cursor: "pointer", outline: "none" }}
+              >
+                <option value="fr">Français</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+
+            {/* Bouton "Lire le résumé" (TTS) */}
+            <button
+              onClick={lireResume}
+              disabled={ttsLoading === "resume"}
+              style={{
+                padding: "8px 16px",
+                background: ttsPlaying === "resume" ? "rgba(99,102,241,0.2)" : "rgba(99,102,241,0.08)",
+                border: "1px solid rgba(99,102,241,0.35)",
+                borderRadius: 10,
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: ttsLoading === "resume" ? "wait" : "pointer",
+                color: "#6366f1",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                opacity: ttsLoading === "resume" ? 0.6 : 1,
+                fontFamily: "'Inter', sans-serif",
+              }}
+            >
+              {ttsLoading === "resume" ? (
+                <><span style={{ width: 14, height: 14, border: "2px solid #6366f1", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />Génération…</>
+              ) : ttsPlaying === "resume" ? (
+                <>⏹ Arrêter</>
+              ) : (
+                <>🔊 Lire le résumé</>
+              )}
+            </button>
+
+            {/* ── NOUVEAU : Bouton "Lire la vidéo" ── */}
+            <button
+              className="video-topbar-btn"
+              onClick={() => setShowVideoModal(true)}
+            >
+              🎬 {ttsLangue === "fr" ? "Voir la vidéo" : "Watch Video"}
+            </button>
+
+            <button onClick={exporterPDF} style={{ padding: "8px 18px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted, fontFamily: "'Inter', sans-serif" }}>
               📄 Exporter PDF
             </button>
-            <button onClick={() => setShowPopup(true)} style={{ padding: "8px 18px", background: D.btnPrimary, border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", color: "white" }}>
+            <button onClick={() => setShowPopup(true)} style={{ padding: "8px 18px", background: D.btnPrimary, border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", color: "white", fontFamily: "'Inter', sans-serif" }}>
               🧪 Générer les tests
             </button>
-            <button onClick={() => router.push(`/feedback?analyse_id=${rapport?.analyse_id}&projet=${nomProjet}`)} style={{ padding: "8px 18px", background: "linear-gradient(135deg, #f59e0b, #d97706)", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", color: "white", display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => router.push(`/feedback?analyse_id=${rapport?.analyse_id}&projet=${nomProjet}`)} style={{ padding: "8px 18px", background: "linear-gradient(135deg, #f59e0b, #d97706)", border: "none", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", color: "white", display: "flex", alignItems: "center", gap: 6, fontFamily: "'Inter', sans-serif" }}>
               ⭐ Donner un avis
             </button>
           </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 8, background: D.tag, border: `1px solid ${D.border}`, borderRadius: 30, padding: "5px 14px", fontSize: 12, color: "#10b981" }}>
             <div style={{ width: 8, height: 8, background: "#10b981", borderRadius: "50%", animation: "pulse 2s infinite" }} />
             Analyse terminée
@@ -277,11 +600,52 @@ export default function RapportPage() {
           </div>
         </div>
 
+        {/* ── Bannière vidéo rapport (si des vulnérabilités critiques existent) ── */}
+        {critiques > 0 && (
+          <div style={{
+            margin: "0",
+            padding: "12px 28px",
+            background: isDark
+              ? "linear-gradient(90deg, rgba(16,185,129,0.07) 0%, rgba(99,102,241,0.07) 100%)"
+              : "linear-gradient(90deg, rgba(16,185,129,0.05) 0%, rgba(99,102,241,0.05) 100%)",
+            borderBottom: `1px solid ${D.border}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 20 }}>🎬</span>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: D.text }}>
+                  {ttsLangue === "fr"
+                    ? `${critiques} vulnérabilité${critiques > 1 ? "s" : ""} critique${critiques > 1 ? "s" : ""} détectée${critiques > 1 ? "s" : ""}`
+                    : `${critiques} critical vulnerabilit${critiques > 1 ? "ies" : "y"} detected`}
+                </span>
+                <span style={{ fontSize: 12, color: D.faint, marginLeft: 8 }}>
+                  {ttsLangue === "fr"
+                    ? "— Regardez la vidéo explicative pour comprendre et corriger"
+                    : "— Watch the explanatory video to understand and fix them"}
+                </span>
+              </div>
+            </div>
+            <button
+              className="video-topbar-btn"
+              onClick={() => setShowVideoModal(true)}
+              style={{ flexShrink: 0 }}
+            >
+              🎬 {ttsLangue === "fr" ? "Voir la vidéo du rapport" : "Watch report video"}
+            </button>
+          </div>
+        )}
+
         {/* Layout 2 colonnes */}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-          {/* Colonne gauche - Rapport */}
+          {/* ── Colonne gauche ─────────────────────────────────────────────── */}
           <div style={{ flex: 2, overflowY: "auto", padding: 28 }}>
+
             {/* Scores */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20, marginBottom: 32 }}>
               {[
@@ -299,7 +663,93 @@ export default function RapportPage() {
               ))}
             </div>
 
-            {/* Summary */}
+            {/* ── Bloc vidéo résumé (card dédiée) ── */}
+            <div style={{
+              background: D.card,
+              border: `1px solid rgba(16,185,129,0.25)`,
+              borderRadius: 20,
+              padding: "20px 24px",
+              marginBottom: 24,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 16,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                {/* Icône animée */}
+                <div style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: 14,
+                  background: "rgba(16,185,129,0.12)",
+                  border: "1px solid rgba(16,185,129,0.3)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 24,
+                  flexShrink: 0,
+                }}>
+                  🎬
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: D.text, marginBottom: 4 }}>
+                    {ttsLangue === "fr" ? "Vidéos explicatives" : "Explanatory Videos"}
+                  </div>
+                  <div style={{ fontSize: 12, color: D.faint, lineHeight: 1.5 }}>
+                    {ttsLangue === "fr"
+                      ? "Générez une vidéo HD de présentation, de rapport ou d'explication de vulnérabilité — avec narration IA automatique."
+                      : "Generate an HD presentation, report, or vulnerability explanation video — with automatic AI narration."}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", flexShrink: 0 }}>
+                {/* Bouton rapport vidéo */}
+                <button
+                  onClick={() => setShowVideoModal(true)}
+                  style={{
+                    padding: "10px 20px",
+                    background: "rgba(16,185,129,0.1)",
+                    border: "1px solid rgba(16,185,129,0.35)",
+                    borderRadius: 12,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    color: "#10b981",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontFamily: "'Inter', sans-serif",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  📊 {ttsLangue === "fr" ? "Vidéo du rapport" : "Report video"}
+                </button>
+                {/* Bouton présentation app */}
+                <button
+                  onClick={() => setShowVideoModal(true)}
+                  style={{
+                    padding: "10px 20px",
+                    background: "rgba(99,102,241,0.1)",
+                    border: "1px solid rgba(99,102,241,0.3)",
+                    borderRadius: 12,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    color: "#6366f1",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontFamily: "'Inter', sans-serif",
+                    transition: "all 0.2s",
+                  }}
+                >
+                  🎬 {ttsLangue === "fr" ? "Présentation app" : "App presentation"}
+                </button>
+              </div>
+            </div>
+
+            {/* Summary badges */}
             <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
               {critiques > 0 && <span style={{ padding: "6px 14px", borderRadius: 30, fontSize: 12, fontWeight: 500, background: "rgba(239,68,68,0.15)", color: "#ef4444", border: `1px solid rgba(239,68,68,0.3)` }}>⚠ {critiques} critique{critiques > 1 ? "s" : ""}</span>}
               {hautes > 0 && <span style={{ padding: "6px 14px", borderRadius: 30, fontSize: 12, fontWeight: 500, background: "rgba(249,115,22,0.15)", color: "#f97316", border: `1px solid rgba(249,115,22,0.3)` }}>↑ {hautes} haute{hautes > 1 ? "s" : ""}</span>}
@@ -310,6 +760,7 @@ export default function RapportPage() {
             {erreur && (
               <div style={{ background: "rgba(239,68,68,0.1)", border: `1px solid rgba(239,68,68,0.3)`, borderRadius: 12, padding: 12, marginBottom: 20, color: "#ef4444", fontSize: 13 }}>
                 ⚠ {erreur}
+                <button onClick={() => setErreur("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#ef4444", marginLeft: 8, fontSize: 14 }}>✖</button>
               </div>
             )}
 
@@ -321,9 +772,17 @@ export default function RapportPage() {
               <button onClick={() => setActiveTab("recos")} style={{ padding: "10px 20px", background: "transparent", border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer", color: activeTab === "recos" ? "#6366f1" : D.muted, borderBottom: activeTab === "recos" ? `2px solid #6366f1` : "none" }}>
                 Recommandations ({recos.length})
               </button>
+              <button onClick={() => setActiveTab("issues")} style={{ padding: "10px 20px", background: "transparent", border: "none", fontSize: 14, fontWeight: 500, cursor: "pointer", color: activeTab === "issues" ? "#6366f1" : D.muted, borderBottom: activeTab === "issues" ? `2px solid #6366f1` : "none", display: "flex", alignItems: "center", gap: 6 }}>
+                🐛 Issues GitLab
+                {issuesGitlab.length > 0 && (
+                  <span style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444", fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 20 }}>
+                    {issuesGitlab.length}
+                  </span>
+                )}
+              </button>
             </div>
 
-            {/* Vulnérabilités */}
+            {/* ── Vulnérabilités ── */}
             {activeTab === "vulns" && (
               vulns.length === 0 ? (
                 <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 20, textAlign: "center", color: "#10b981", fontWeight: 500 }}>
@@ -331,16 +790,68 @@ export default function RapportPage() {
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {vulns.map((v: any, i: number) => (
-                    <div key={i} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 16, borderLeft: `4px solid ${colorSeverite(v.severite)}` }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 10px", borderRadius: 20, background: `${colorSeverite(v.severite)}15`, color: colorSeverite(v.severite) }}>{v.severite}</span>
-                        <span style={{ fontSize: 14, fontWeight: 600, color: D.text }}>{v.type}</span>
+                  {vulns.map((v: any, i: number) => {
+                    const vid = `vuln-${i}`;
+                    const isLoadingThis = ttsLoading === vid;
+                    const isPlayingThis = ttsPlaying === vid;
+                    const isVideoOpen = inlineVideoVulnIndex === i;
+
+                    return (
+                      <div key={i} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 16, borderLeft: `4px solid ${colorSeverite(v.severite)}` }}>
+                        {/* En-tête de la carte vulnérabilité */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 10px", borderRadius: 20, background: `${colorSeverite(v.severite)}15`, color: colorSeverite(v.severite) }}>{v.severite}</span>
+                          <span style={{ fontSize: 14, fontWeight: 600, color: D.text, flex: 1 }}>{v.type}</span>
+
+                          {/* Bouton TTS */}
+                          <button
+                            className={`tts-btn${isPlayingThis ? " playing" : ""}`}
+                            onClick={() => lireVulnerabilite(v, vid)}
+                            disabled={!!ttsLoading && !isLoadingThis}
+                            title={isPlayingThis ? "Stopper l'audio" : "Lire l'explication audio"}
+                          >
+                            {isLoadingThis ? (
+                              <span style={{ width: 11, height: 11, border: "2px solid #6366f1", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} />
+                            ) : isPlayingThis ? "⏹" : "🔊"}
+                            {isLoadingThis ? " Chargement…" : isPlayingThis ? " Arrêter" : " Écouter"}
+                          </button>
+
+                          {/* ── NOUVEAU : Bouton vidéo inline ── */}
+                          <button
+                            className="video-btn"
+                            onClick={() => setInlineVideoVulnIndex(isVideoOpen ? null : i)}
+                            title={isVideoOpen ? "Masquer la vidéo" : "Générer la vidéo explicative"}
+                          >
+                            {isVideoOpen ? "⏹ Fermer vidéo" : "🎬 Voir vidéo"}
+                          </button>
+                        </div>
+
+                        <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace", marginBottom: 8 }}>📄 {v.fichier} — ligne {v.ligne}</div>
+                        <div style={{ fontSize: 12, color: D.muted, background: D.bg, padding: "8px 12px", borderRadius: 10 }}>💡 {v.suggestion}</div>
+
+                        {/* ── NOUVEAU : Modal vidéo inline (s'affiche sous la carte) ── */}
+                        {isVideoOpen && (
+                          <div style={{
+                            marginTop: 16,
+                            borderTop: `1px solid ${D.border}`,
+                            paddingTop: 16,
+                            animation: "slide-up 0.25s ease",
+                          }}>
+                            <VideoGeneratorModal
+                              rapport={rapport}
+                              nomProjet={nomProjet}
+                              isDark={isDark}
+                              ttsLangue={ttsLangue}
+                              // On pré-sélectionne la vulnérabilité correspondante
+                              // VideoGeneratorModal doit être en mode "inline" pour ça,
+                              // sinon utilisez le modal principal (setShowVideoModal(true))
+                              onClose={() => setInlineVideoVulnIndex(null)}
+                            />
+                          </div>
+                        )}
                       </div>
-                      <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace", marginBottom: 8 }}>📄 {v.fichier} — ligne {v.ligne}</div>
-                      <div style={{ fontSize: 12, color: D.muted, background: D.bg, padding: "8px 12px", borderRadius: 10 }}>💡 {v.suggestion}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )
             )}
@@ -362,9 +873,65 @@ export default function RapportPage() {
                 </div>
               )
             )}
+
+            {/* Issues GitLab */}
+            {activeTab === "issues" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {issuesGitlab.length === 0 ? (
+                  <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, padding: 24, textAlign: "center", color: "#10b981", fontWeight: 500 }}>
+                    ✅ Aucune issue GitLab créée pour cette analyse
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 13, color: D.muted, fontWeight: 500 }}>{issuesGitlab.length} issue{issuesGitlab.length !== 1 ? "s" : ""}</span>
+                        <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: "rgba(16,185,129,0.12)", color: "#10b981" }}>🟢 {issuesGitlab.filter((i: any) => i.statut === "opened").length} ouverte{issuesGitlab.filter((i: any) => i.statut === "opened").length !== 1 ? "s" : ""}</span>
+                        <span style={{ padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: "rgba(148,163,184,0.15)", color: D.muted }}>✖ {issuesGitlab.filter((i: any) => i.statut === "closed").length} fermée{issuesGitlab.filter((i: any) => i.statut === "closed").length !== 1 ? "s" : ""}</span>
+                      </div>
+                      <button onClick={syncAllIssues} style={{ padding: "6px 14px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, fontSize: 12, fontWeight: 500, cursor: "pointer", color: D.muted, display: "flex", alignItems: "center", gap: 6 }}>
+                        🔄 Sync depuis GitLab
+                      </button>
+                    </div>
+
+                    <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 16, overflow: "hidden" }}>
+                      {issuesGitlab.map((issue: any, i: number) => {
+                        const sc = colorSeverite(issue.severite);
+                        const isClosed = issue.statut === "closed";
+                        const isLoading = issueLoading[issue.id];
+                        return (
+                          <div key={issue.id ?? i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", borderBottom: i < issuesGitlab.length - 1 ? `1px solid ${D.border}` : "none", borderLeft: `4px solid ${isClosed ? D.border : sc}`, opacity: isClosed ? 0.72 : 1, transition: "opacity 0.2s" }}>
+                            <span style={{ fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 20, flexShrink: 0, letterSpacing: "0.04em", background: `${sc}18`, color: isClosed ? D.muted : sc, border: `1px solid ${sc}40`, textDecoration: isClosed ? "line-through" : "none" }}>{issue.severite}</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: D.text, marginBottom: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", textDecoration: isClosed ? "line-through" : "none", opacity: isClosed ? 0.7 : 1 }}>{issue.titre}</div>
+                              <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace" }}>📄 {issue.fichier}{issue.ligne ? ` — ligne ${issue.ligne}` : ""}</div>
+                            </div>
+                            <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 20, flexShrink: 0, background: isClosed ? "rgba(148,163,184,0.15)" : "rgba(16,185,129,0.12)", color: isClosed ? D.muted : "#10b981", border: `1px solid ${isClosed ? D.border : "rgba(16,185,129,0.3)"}` }}>{isClosed ? "✖ fermée" : "🟢 ouverte"}</span>
+                            {issue.issue_url && (
+                              <a href={issue.issue_url} target="_blank" rel="noreferrer" style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4, padding: "5px 12px", borderRadius: 8, fontSize: 12, fontWeight: 500, color: "#6366f1", textDecoration: "none", background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.2)" }}>🔗 GitLab</a>
+                            )}
+                            <button onClick={() => syncIssue(issue.id)} disabled={!!isLoading} style={{ flexShrink: 0, padding: "5px 10px", borderRadius: 8, background: D.tag, border: `1px solid ${D.border}`, fontSize: 13, cursor: isLoading ? "wait" : "pointer", color: D.muted, opacity: isLoading ? 0.5 : 1 }}>{isLoading ? "⏳" : "🔄"}</button>
+                            {isClosed ? (
+                              <button onClick={() => reopenIssue(issue.id)} disabled={!!isLoading} style={{ flexShrink: 0, padding: "6px 14px", borderRadius: 8, background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", fontSize: 12, fontWeight: 600, cursor: isLoading ? "wait" : "pointer", color: "#10b981", opacity: isLoading ? 0.5 : 1 }}>↩ Rouvrir</button>
+                            ) : (
+                              <button onClick={() => closeIssue(issue.id)} disabled={!!isLoading} style={{ flexShrink: 0, padding: "6px 14px", borderRadius: 8, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)", fontSize: 12, fontWeight: 600, cursor: isLoading ? "wait" : "pointer", color: "#ef4444", opacity: isLoading ? 0.5 : 1 }}>✖ Fermer</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div style={{ marginTop: 14, padding: "12px 16px", background: isDark ? "rgba(99,102,241,0.07)" : "#f0f4ff", border: `1px solid rgba(99,102,241,0.2)`, borderRadius: 12, fontSize: 11, color: D.muted, lineHeight: 1.6 }}>
+                      ℹ️ <strong>Synchronisation automatique :</strong> Pour que GitLab notifie l'app automatiquement (sans cliquer 🔄), configurez un webhook dans votre projet GitLab :<br />
+                      <code style={{ background: D.tag, padding: "1px 6px", borderRadius: 4, fontSize: 10 }}>Settings → Webhooks → URL: /issues/webhook → cocher "Issues events"</code>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Colonne droite - Chatbot */}
+          {/* ── Colonne droite - Chatbot ─────────────────────────────────────── */}
           <div style={{ width: 380, background: D.card, borderLeft: `1px solid ${D.border}`, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 }}>
             <div style={{ padding: "18px 20px", borderBottom: `1px solid ${D.border}` }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: D.text, display: "flex", alignItems: "center", gap: 8 }}>
@@ -417,7 +984,7 @@ export default function RapportPage() {
           </div>
         </div>
 
-        {/* Sidebar Historique */}
+        {/* ── Sidebar Historique ─────────────────────────────────────────────── */}
         <div onClick={() => setSidebarOpen(!sidebarOpen)} style={{ position: "fixed", right: 20, bottom: 20, width: 48, height: 48, background: D.btnPrimary, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "white", fontSize: 20, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 15 }}>
           📋
         </div>
@@ -437,7 +1004,37 @@ export default function RapportPage() {
         </div>
       </div>
 
-      {/* Popup de confirmation */}
+      {/* ── Mini lecteur TTS flottant ─────────────────────────────────────────── */}
+      {ttsPlaying && (
+        <div className="tts-player">
+          <div className="tts-wave">
+            <span /><span /><span /><span />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 11, color: D.faint, marginBottom: 2 }}>Lecture en cours</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: D.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ttsLabel}</div>
+          </div>
+          <button
+            onClick={stopAudio}
+            style={{ padding: "5px 12px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#ef4444", flexShrink: 0 }}
+          >
+            ⏹ Stop
+          </button>
+        </div>
+      )}
+
+      {/* ── NOUVEAU : Modal Vidéo principal ─────────────────────────────────── */}
+      {showVideoModal && (
+        <VideoGeneratorModal
+          rapport={rapport}
+          nomProjet={nomProjet}
+          isDark={isDark}
+          ttsLangue={ttsLangue}
+          onClose={() => setShowVideoModal(false)}
+        />
+      )}
+
+      {/* Popup confirmation tests */}
       {showPopup && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setShowPopup(false)}>
           <div style={{ background: D.card, borderRadius: 24, padding: 28, maxWidth: 480, width: "90%" }} onClick={e => e.stopPropagation()}>

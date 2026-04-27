@@ -6,7 +6,18 @@ from sqlalchemy import func
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
+# backend/app/routes/Admin.py
+from sqlalchemy.sql import text  # Ajoutez cet import en haut du fichier
 
+# backend/app/routes/Admin.py
+
+# Ajoutez ces imports (avec les bons noms de fichiers)
+from app.models.recommandation import Recommandation  # ← fichier: recommandation.py
+from app.models.export_rapport import ExportRapport   # ← fichier: export_rapport.py
+
+# Le reste de vos imports...
+
+# Le reste de vos imports existants...
 from app.config.database import get_db
 
 from app.models.user          import User
@@ -216,15 +227,47 @@ def get_depots_by_user(user_id: int, db: Session = Depends(get_db)):
     ) for d in depots]
 
 
+# backend/app/routes/Admin.py
+
+# Ajoutez cet import en haut du fichier (avec les autres imports)
+from sqlalchemy.sql import text
+
+# Ensuite, remplacez votre route DELETE par celle-ci :
 @router.delete("/depots/{depot_id}", status_code=204)
 def delete_depot_admin(depot_id: int, db: Session = Depends(get_db)):
-    d = db.query(Depot).filter(Depot.id == depot_id).first()
-    if not d:
+    depot = db.query(DepotAnalyse).filter(DepotAnalyse.id == depot_id).first()
+    
+    if not depot:
         raise HTTPException(status_code=404, detail="Dépôt introuvable")
-    db.delete(d)
-    db.commit()
-
-
+    
+    try:
+        # Récupérer les IDs des analyses
+        analyse_ids = db.query(Analyse.id).filter(Analyse.depot_analyse_id == depot_id).all()
+        analyse_ids = [str(a[0]) for a in analyse_ids]
+        
+        if analyse_ids:
+            ids_str = ','.join(analyse_ids)
+            
+            # 🔑 La correction est ici : utiliser text() autour de chaque requête
+            db.execute(text(f"DELETE FROM recommandations WHERE analyse_id IN ({ids_str})"))
+            db.execute(text(f"DELETE FROM exports_rapport WHERE analyse_id IN ({ids_str})"))
+            db.execute(text(f"DELETE FROM tests_generes WHERE analyse_id IN ({ids_str})"))
+        
+        # Supprimer les analyses
+        db.execute(text(f"DELETE FROM analyses WHERE depot_analyse_id = {depot_id}"))
+        
+        # Supprimer les MergeRequests
+        db.execute(text(f"DELETE FROM merge_requests WHERE depot_analyse_id = {depot_id}"))
+        
+        # Supprimer le dépôt
+        db.delete(depot)
+        
+        db.commit()
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Erreur: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
 # ══════════════════════════════════════════════════════════════════
 # MERGE REQUESTS — TOUTES (admin)
 # ══════════════════════════════════════════════════════════════════

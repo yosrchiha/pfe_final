@@ -3,6 +3,7 @@ import json
 import time
 import base64
 from typing import List, Dict, Any
+import re
 from openai import OpenAI
 
 # ── Clients ─────────────────────────────────────────────────
@@ -24,7 +25,104 @@ openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instru
 
 # ── Constantes ─────────────────────────────────────────────
 CHARS_PAR_LOT = 60_000
-MAX_TOKENS_REP = 2500
+MAX_TOKENS_REP = 6000
+
+
+def _nettoyer_et_parser_json(contenu: str, dimension: str) -> dict:
+    """
+    Nettoie et parse le JSON retourné par le LLM.
+    Gère : backticks markdown, JSON tronqué, texte parasite avant/après.
+    """
+    if not contenu or not contenu.strip():
+        return {}
+
+    # 1. Supprimer les blocs ```json ... ``` ou ``` ... ```
+    contenu = re.sub(r"^```(?:json)?\s*", "", contenu.strip(), flags=re.IGNORECASE)
+    contenu = re.sub(r"\s*```$", "", contenu.strip())
+    contenu = contenu.strip()
+
+    # 2. Tenter le parse direct
+    try:
+        return json.loads(contenu)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Extraire le premier objet JSON { ... } ou tableau [ ... ]
+    for start_char, end_char in [('{', '}'), ('[', ']')]:
+        start = contenu.find(start_char)
+        if start == -1:
+            continue
+        # Chercher la fin balancée
+        depth = 0
+        in_string = False
+        escape = False
+        end = -1
+        for idx in range(start, len(contenu)):
+            ch = contenu[idx]
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_string:
+                escape = True
+                continue
+            if ch == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == start_char:
+                depth += 1
+            elif ch == end_char:
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        if end != -1:
+            fragment = contenu[start:end+1]
+            try:
+                result = json.loads(fragment)
+                print(f"[LLM][{dimension}] ⚠️ JSON extrait partiellement (fragment valide récupéré)")
+                return result
+            except json.JSONDecodeError:
+                pass
+
+    # 4. JSON tronqué : tenter de fermer automatiquement
+    for start_char, close_char in [('{', '}'), ('[', ']')]:
+        start = contenu.find(start_char)
+        if start == -1:
+            continue
+        fragment = contenu[start:]
+        # Compter les ouvertures/fermetures pour savoir combien fermer
+        depth = 0
+        in_string = False
+        escape = False
+        for ch in fragment:
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_string:
+                escape = True
+                continue
+            if ch == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == start_char:
+                depth += 1
+            elif ch == close_char:
+                depth -= 1
+        # Essayer de fermer les accolades manquantes
+        for closing in [close_char * depth, ']}' * depth, '}]' * depth]:
+            try:
+                result = json.loads(fragment + closing)
+                print(f"[LLM][{dimension}] ⚠️ JSON tronqué réparé automatiquement")
+                return result
+            except json.JSONDecodeError:
+                continue
+
+    print(f"[LLM][{dimension}] ❌ JSON non récupérable après toutes les tentatives")
+    return {}
 
 
 def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
@@ -46,7 +144,6 @@ def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
 
     except Exception as e:
         error_msg = str(e)
-        # Vérifier si c'est une erreur de rate limit (429)
         if "429" in error_msg or "rate_limit" in error_msg.lower():
             print(f"[LLM][{dimension}] ⚠️ Rate limit Groq, bascule sur OpenRouter...")
             try:
@@ -65,17 +162,7 @@ def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
             print(f"[LLM][{dimension}] ❌ Erreur Groq: {e}")
             return {}
 
-    # Nettoyer les backticks markdown
-    if contenu.startswith("```"):
-        contenu = contenu.split("```")[1]
-        if contenu.startswith("json"):
-            contenu = contenu[4:]
-
-    try:
-        return json.loads(contenu.strip())
-    except json.JSONDecodeError as e:
-        print(f"[LLM][{dimension}] JSON invalide: {e}")
-        return {}
+    return _nettoyer_et_parser_json(contenu, dimension)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -458,6 +545,103 @@ def _preparer_code(lot: list) -> str:
 # ══════════════════════════════════════════════════════════════════════
 # UTILITAIRE — Appel LLM avec un prompt spécialisé (avec fallback)
 # ══════════════════════════════════════════════════════════════════════
+def _nettoyer_et_parser_json(contenu: str, dimension: str) -> dict:
+    """
+    Nettoie et parse le JSON retourné par le LLM.
+    Gère : backticks markdown, JSON tronqué, texte parasite avant/après.
+    """
+    if not contenu or not contenu.strip():
+        return {}
+
+    # 1. Supprimer les blocs ```json ... ``` ou ``` ... ```
+    contenu = re.sub(r"^```(?:json)?\s*", "", contenu.strip(), flags=re.IGNORECASE)
+    contenu = re.sub(r"\s*```$", "", contenu.strip())
+    contenu = contenu.strip()
+
+    # 2. Tenter le parse direct
+    try:
+        return json.loads(contenu)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Extraire le premier objet JSON { ... } ou tableau [ ... ]
+    for start_char, end_char in [('{', '}'), ('[', ']')]:
+        start = contenu.find(start_char)
+        if start == -1:
+            continue
+        # Chercher la fin balancée
+        depth = 0
+        in_string = False
+        escape = False
+        end = -1
+        for idx in range(start, len(contenu)):
+            ch = contenu[idx]
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_string:
+                escape = True
+                continue
+            if ch == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == start_char:
+                depth += 1
+            elif ch == end_char:
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        if end != -1:
+            fragment = contenu[start:end+1]
+            try:
+                result = json.loads(fragment)
+                print(f"[LLM][{dimension}] ⚠️ JSON extrait partiellement (fragment valide récupéré)")
+                return result
+            except json.JSONDecodeError:
+                pass
+
+    # 4. JSON tronqué : tenter de fermer automatiquement
+    for start_char, close_char in [('{', '}'), ('[', ']')]:
+        start = contenu.find(start_char)
+        if start == -1:
+            continue
+        fragment = contenu[start:]
+        # Compter les ouvertures/fermetures pour savoir combien fermer
+        depth = 0
+        in_string = False
+        escape = False
+        for ch in fragment:
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_string:
+                escape = True
+                continue
+            if ch == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == start_char:
+                depth += 1
+            elif ch == close_char:
+                depth -= 1
+        # Essayer de fermer les accolades manquantes
+        for closing in [close_char * depth, ']}' * depth, '}]' * depth]:
+            try:
+                result = json.loads(fragment + closing)
+                print(f"[LLM][{dimension}] ⚠️ JSON tronqué réparé automatiquement")
+                return result
+            except json.JSONDecodeError:
+                continue
+
+    print(f"[LLM][{dimension}] ❌ JSON non récupérable après toutes les tentatives")
+    return {}
+
+
 def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
     """
     Appelle le LLM avec priorité Groq, fallback sur OpenRouter si rate limit.
@@ -477,7 +661,6 @@ def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
 
     except Exception as e:
         error_msg = str(e)
-        # Vérifier si c'est une erreur de rate limit (429)
         if "429" in error_msg or "rate_limit" in error_msg.lower():
             print(f"[LLM][{dimension}] ⚠️ Rate limit Groq, bascule sur OpenRouter...")
             try:
@@ -496,17 +679,7 @@ def _appeler_llm(prompt_template: str, code_text: str, dimension: str) -> dict:
             print(f"[LLM][{dimension}] ❌ Erreur Groq: {e}")
             return {}
 
-    # Nettoyer les backticks markdown
-    if contenu.startswith("```"):
-        contenu = contenu.split("```")[1]
-        if contenu.startswith("json"):
-            contenu = contenu[4:]
-
-    try:
-        return json.loads(contenu.strip())
-    except json.JSONDecodeError as e:
-        print(f"[LLM][{dimension}] JSON invalide: {e}")
-        return {}
+    return _nettoyer_et_parser_json(contenu, dimension)
 
 
 # ══════════════════════════════════════════════════════════════════════

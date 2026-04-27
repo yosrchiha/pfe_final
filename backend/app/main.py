@@ -34,7 +34,9 @@ from app.routes import feedback
 from app.routes import comparaisons, analyses_diff
 from app.routes import analyses_fichier
 from app.routes.vulnerabilites import router as vulnerabilites_router
-
+from app.routes.Admin import router as admin_router
+from app.routes.tts import router as tts_router
+from app.routes.video import router as video_router  # Ajoutez cet import
 
 
 # Ajouter avec les autres routes
@@ -74,7 +76,7 @@ app.include_router(chat_router.router)
 
 app.include_router(exports_router.router)
 
-
+app.include_router(admin_router) 
 # ... après les autres routers ...
 app.include_router(tickets.router)
 app.include_router(merge_requests_diff.router)
@@ -88,7 +90,13 @@ app.include_router(analyses_diff.router)
 
 app.include_router(analyses_fichier.router)
 app.include_router(vulnerabilites_router)
+app.include_router(tts_router)
 
+# backend/app/main.py
+
+# ... (votre code existant)
+
+app.include_router(video_router)  # Ajoutez cette ligne pour activer les endpoints vidéo
 
 # ── Création des tables ──────────────────────────────────
 @app.on_event("startup")

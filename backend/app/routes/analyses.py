@@ -225,6 +225,12 @@ def lancer_analyse(
         db.commit()
         db.refresh(depot)
         print(f"[ANALYSE] Nouveau dépôt créé id={depot.id}")
+    else:
+        # Mettre à jour le token à chaque analyse (peut avoir changé ou expiré)
+        depot.gitlab_token = data.gitlab_token
+        depot.branche      = data.branche
+        db.commit()
+        print(f"[ANALYSE] Dépôt existant id={depot.id} — token mis à jour")
 
     # ── 4. Créer l'analyse avec statut en_cours ──────────
     analyse = Analyse(
@@ -340,6 +346,26 @@ def lancer_analyse(
             detail      = str(e)
         )
 
+    # ── Récupérer les issues créées dans GitLab pour les inclure dans la réponse ──
+    issues_creees = db.query(IssueGitLab).filter(
+        IssueGitLab.analyse_id == analyse.id
+    ).all()
+
+    issues_data = [
+        {
+            "id"              : i.id,
+            "issue_id_gitlab" : i.issue_id_gitlab,
+            "issue_url"       : i.issue_url,
+            "titre"           : i.titre,
+            "severite"        : i.severite,
+            "type_vuln"       : i.type_vuln,
+            "fichier"         : i.fichier,
+            "ligne"           : i.ligne,
+            "statut"          : i.statut,
+        }
+        for i in issues_creees
+    ]
+
     return {
         "depot_analyse_id"  : depot.id,
         "analyse_id"        : analyse.id,
@@ -349,7 +375,9 @@ def lancer_analyse(
         "vulnerabilites"    : analyse.vulnerabilites,
         "recommandations"   : analyse.recommandations,
         "statut"            : analyse.statut,
-        "branche"           : analyse.branche
+        "branche"           : analyse.branche,
+        "issues_gitlab"     : issues_data,
+        "nb_issues"         : len(issues_data),
     }
 
 
