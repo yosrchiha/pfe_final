@@ -1,46 +1,105 @@
 # backend/app/routes/video.py
 # ─────────────────────────────────────────────────────────────────────────────
 #  Route VIDEO – Génère des vidéos explicatives via MoviePy + FFmpeg
-#  Slides visuellement riches : dégradés, badges, barres, icônes PIL
-#
-#  pip install moviepy==1.0.3 pillow numpy edge-tts
-#  sudo apt install ffmpeg
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os
+import json
 import math
 import asyncio
 import tempfile
 import textwrap
-from typing import Optional, List
-from pathlib import Path
+from typing   import Optional, List
+from pathlib  import Path
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi             import APIRouter, HTTPException, Depends, Header
+from fastapi.responses   import FileResponse
+from pydantic            import BaseModel
+from sqlalchemy.orm      import Session
+
+from app.config.database import get_db
+from app.routes.auth     import get_current_user, get_user_id_from_token
+from app.models.user     import User
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
+# ✅ Import depuis le fichier modèle dédié — PAS de redéfinition inline
+from app.models.video_generee import VideoGeneree, TypeVideo
 
 router = APIRouter(prefix="/video", tags=["Video"])
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STOCKAGE PERMANENT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BASE_DIR           = Path(__file__).resolve().parent.parent.parent
+VIDEO_STORAGE_ROOT = BASE_DIR / "data" / "videos"
+VIDEO_STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
 
 VIDEO_OUTPUT_DIR = Path(tempfile.gettempdir()) / "audit_videos"
 VIDEO_OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-# ── Modèles ───────────────────────────────────────────────────────────────────
+def _user_video_dir(user_id: int) -> Path:
+    d = VIDEO_STORAGE_ROOT / str(user_id)
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _unique_path(user_id: int, prefix: str) -> str:
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    return str(_user_video_dir(user_id) / f"{prefix}_{ts}.mp4")
+
+
+def _save_record(
+    db:         Session,
+    user_id:    int,
+    type_video: TypeVideo,
+    chemin:     str,
+    titre:      str,
+    langue:     str       = "fr",
+    nom_projet: str | None = None,
+    contexte:   dict | None = None,
+    score_q:    int | None = None,
+    score_s:    int | None = None,
+    score_p:    int | None = None,
+) -> VideoGeneree:
+    rec = VideoGeneree(
+        user_id        = user_id,
+        type_video     = type_video,
+        chemin_fichier = chemin,
+        titre          = titre,
+        nom_projet     = nom_projet,
+        langue         = langue,
+        contexte_json  = json.dumps(contexte, ensure_ascii=False) if contexte else None,
+        score_qualite      = score_q,
+        score_securite     = score_s,
+        score_performance  = score_p,
+    )
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODÈLES PYDANTIC
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class VideoApplicationRequest(BaseModel):
     langue: Optional[str] = "fr"
     style:  Optional[str] = "modern"
 
 class VideoVulnerabiliteRequest(BaseModel):
-    type_vuln: str
-    severite:  str
-    fichier:   str
-    ligne:     int
+    type_vuln:  str
+    severite:   str
+    fichier:    str
+    ligne:      int
     suggestion: str
     langue: Optional[str] = "fr"
 
 class VideoRapportRequest(BaseModel):
-    nom_projet: str
+    nom_projet:        str
     score_qualite:     Optional[int] = None
     score_securite:    Optional[int] = None
     score_performance: Optional[int] = None
@@ -49,10 +108,11 @@ class VideoRapportRequest(BaseModel):
     langue: Optional[str] = "fr"
 
 
-# ── Helpers de dessin PIL ─────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  HELPERS PIL
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def _load_fonts():
-    """Charge les polices DejaVu disponibles sous Linux/Mac/Windows."""
     from PIL import ImageFont
     paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -85,18 +145,15 @@ def _load_fonts():
 
 
 def _hex(h: str):
-    """#RRGGBB → (R,G,B)"""
     h = h.lstrip("#")
     return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
 
 
 def _blend(c1, c2, t):
-    """Interpolation linéaire entre deux couleurs RGB."""
     return tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3))
 
 
 def _draw_gradient_bg(draw, w, h, c_top, c_bot):
-    """Fond dégradé vertical."""
     for y in range(h):
         t   = y / h
         col = _blend(c_top, c_bot, t)
@@ -104,7 +161,6 @@ def _draw_gradient_bg(draw, w, h, c_top, c_bot):
 
 
 def _draw_rounded_rect(draw, x0, y0, x1, y1, r, fill, border=None, border_w=2):
-    """Rectangle arrondi (PIL ne le supporte qu'avec rounded_rectangle)."""
     draw.rounded_rectangle([x0, y0, x1, y1], radius=r, fill=fill,
                            outline=border, width=border_w if border else 0)
 
@@ -114,7 +170,6 @@ def _draw_circle(draw, cx, cy, r, fill):
 
 
 def _draw_progress_bar(draw, x, y, w, h, pct, color_fg, color_bg=(40, 50, 70), radius=8):
-    """Barre de progression arrondie."""
     _draw_rounded_rect(draw, x, y, x + w, y + h, radius, color_bg)
     if pct > 0:
         fw = max(int(w * pct / 100), radius * 2)
@@ -122,7 +177,6 @@ def _draw_progress_bar(draw, x, y, w, h, pct, color_fg, color_bg=(40, 50, 70), r
 
 
 def _draw_shield(draw, cx, cy, size, color):
-    """Icône bouclier dessinée en polygone."""
     s = size
     pts = [
         (cx,       cy - s),
@@ -133,7 +187,6 @@ def _draw_shield(draw, cx, cy, size, color):
         (cx - s,   cy - s // 2),
     ]
     draw.polygon(pts, fill=color)
-    # Coche intérieure
     check = [
         (cx - s // 3, cy + s // 8),
         (cx - s // 8, cy + s // 3),
@@ -143,7 +196,6 @@ def _draw_shield(draw, cx, cy, size, color):
 
 
 def _draw_warning_triangle(draw, cx, cy, size, color):
-    """Triangle ⚠ rempli."""
     s = size
     pts = [(cx, cy - s), (cx + s, cy + s * 0.7), (cx - s, cy + s * 0.7)]
     draw.polygon(pts, fill=color)
@@ -152,7 +204,6 @@ def _draw_warning_triangle(draw, cx, cy, size, color):
 
 
 def _draw_checkmark_circle(draw, cx, cy, r, color):
-    """Cercle vert avec coche."""
     _draw_circle(draw, cx, cy, r, color)
     check = [
         (cx - r // 2, cy),
@@ -163,24 +214,19 @@ def _draw_checkmark_circle(draw, cx, cy, r, color):
 
 
 def _draw_code_icon(draw, cx, cy, size, color):
-    """Icône </> code."""
     s = size
-    # <
     draw.line([(cx - s // 2, cy - s // 3), (cx - s, cy),
                (cx - s // 2, cy + s // 3)], fill=color, width=max(3, s // 8))
-    # >
     draw.line([(cx + s // 2, cy - s // 3), (cx + s, cy),
                (cx + s // 2, cy + s // 3)], fill=color, width=max(3, s // 8))
-    # /
     draw.line([(cx + s // 4, cy - s // 2), (cx - s // 4, cy + s // 2)],
               fill=color, width=max(2, s // 10))
 
 
 def _draw_star(draw, cx, cy, r, color):
-    """Étoile 5 branches."""
     pts = []
     for i in range(10):
-        angle = math.pi * i / 5 - math.pi / 2
+        angle  = math.pi * i / 5 - math.pi / 2
         radius = r if i % 2 == 0 else r // 2
         pts.append((cx + radius * math.cos(angle),
                     cy + radius * math.sin(angle)))
@@ -188,29 +234,26 @@ def _draw_star(draw, cx, cy, r, color):
 
 
 def _draw_badge(draw, x, y, text, bg_color, text_color, fonts, min_w=120):
-    """Badge pill coloré."""
-    f = fonts["badge"]
+    f    = fonts["badge"]
     bbox = draw.textbbox((0, 0), text, font=f)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
+    tw   = bbox[2] - bbox[0]
+    th   = bbox[3] - bbox[1]
     pw, ph = 20, 10
-    bw = max(tw + pw * 2, min_w)
-    bh = th + ph * 2
+    bw   = max(tw + pw * 2, min_w)
+    bh   = th + ph * 2
     _draw_rounded_rect(draw, x, y, x + bw, y + bh, bh // 2, bg_color)
     draw.text((x + (bw - tw) // 2, y + ph - 2), text, font=f, fill=text_color)
     return bw, bh
 
 
 def _score_color(s):
-    """Couleur RGB selon le score."""
-    if s is None:          return (148, 163, 184)
-    if s >= 75:            return (16, 185, 129)
-    if s >= 50:            return (245, 158, 11)
+    if s is None:  return (148, 163, 184)
+    if s >= 75:    return (16, 185, 129)
+    if s >= 50:    return (245, 158, 11)
     return (239, 68, 68)
 
 
 def _severity_colors(sev: str):
-    """(bg_rgba, text_rgb, accent_rgb) selon la sévérité."""
     m = {
         "CRITIQUE": ((239, 68,  68),  (255, 220, 220), (239, 68, 68)),
         "HAUTE":    ((249, 115, 22),  (255, 235, 210), (249, 115, 22)),
@@ -220,17 +263,19 @@ def _severity_colors(sev: str):
     return m.get(sev.upper(), ((99, 102, 241), (220, 220, 255), (99, 102, 241)))
 
 
-# ── Créateurs de slides spécialisés ──────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  CONSTANTES VISUELLES
+# ═══════════════════════════════════════════════════════════════════════════════
 
-W, H = 1920, 1080
-FONTS = None  # chargé à la première utilisation
+W, H     = 1920, 1080
+FONTS    = None
 
-BG_TOP    = (10, 12, 24)
-BG_BOT    = (18, 24, 42)
-CARD_COL  = (24, 32, 52)
-ACCENT    = (99, 102, 241)
-TEXT_W    = (248, 250, 252)
-TEXT_M    = (148, 163, 184)
+BG_TOP   = (10, 12, 24)
+BG_BOT   = (18, 24, 42)
+CARD_COL = (24, 32, 52)
+ACCENT   = (99, 102, 241)
+TEXT_W   = (248, 250, 252)
+TEXT_M   = (148, 163, 184)
 
 
 def _get_fonts():
@@ -241,7 +286,6 @@ def _get_fonts():
 
 
 def _base_frame():
-    """Crée un canvas vierge avec fond dégradé."""
     from PIL import Image, ImageDraw
     img  = Image.new("RGB", (W, H), BG_TOP)
     draw = ImageDraw.Draw(img)
@@ -250,7 +294,6 @@ def _base_frame():
 
 
 def _top_bar(draw, accent, label=""):
-    """Bande colorée en haut + label de section."""
     f = _get_fonts()
     draw.rectangle([0, 0, W, 8], fill=accent)
     if label:
@@ -261,13 +304,11 @@ def _watermark(draw):
     f = _get_fonts()
     draw.text((W - 260, H - 36), "Audit IA Platform", font=f["watermark"],
               fill=(*ACCENT, 120))
-    # Petite barre en bas
     draw.rectangle([0, H - 4, W, H], fill=(*ACCENT, 60))
 
 
 def _section_title(draw, text, y=80, accent=ACCENT):
     f = _get_fonts()
-    # Trait coloré à gauche
     draw.rectangle([40, y - 4, 52, y + 60], fill=accent)
     draw.text((72, y), text, font=f["title"], fill=TEXT_W)
     return y + 80
@@ -298,142 +339,109 @@ def _bullet(draw, text, y, color=ACCENT, indent=72):
 
 
 def _score_card(draw, img, x, y, label, value, w=340, h=220):
-    """Card de score avec cercle coloré et barre."""
     from PIL import ImageDraw
     color = _score_color(value)
-    # Fond card
     _draw_rounded_rect(draw, x, y, x + w, y + h, 20,
                        fill=CARD_COL, border=(*color, 80), border_w=2)
-    # Valeur
-    f = _get_fonts()
+    f       = _get_fonts()
     val_str = str(value) if value is not None else "—"
-    draw.text((x + w // 2 - 50, y + 18), val_str,
-              font=f["score"], fill=color)
-    draw.text((x + w // 2 - 18, y + 105), "/100",
-              font=f["small"], fill=TEXT_M)
-    # Label
-    lbbox = draw.textbbox((0,0), label, font=f["subtitle"])
-    lw = lbbox[2] - lbbox[0]
-    draw.text((x + (w - lw) // 2, y + 138), label,
-              font=f["subtitle"], fill=TEXT_W)
-    # Barre de progression
-    _draw_progress_bar(draw, x + 24, y + 186, w - 48, 14,
-                       value or 0, color)
+    draw.text((x + w // 2 - 50, y + 18), val_str, font=f["score"], fill=color)
+    draw.text((x + w // 2 - 18, y + 105), "/100", font=f["small"], fill=TEXT_M)
+    lbbox = draw.textbbox((0, 0), label, font=f["subtitle"])
+    lw    = lbbox[2] - lbbox[0]
+    draw.text((x + (w - lw) // 2, y + 138), label, font=f["subtitle"], fill=TEXT_W)
+    _draw_progress_bar(draw, x + 24, y + 186, w - 48, 14, value or 0, color)
     return w, h
 
 
-# ── Slides de contenu ─────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SLIDES
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def slide_title_platform(langue="fr"):
-    """Slide d'ouverture spectaculaire."""
     img, draw = _base_frame()
     f = _get_fonts()
 
-    # Cercles décoratifs de fond
     _draw_circle(draw, W - 180, 180, 280, (30, 40, 80))
     _draw_circle(draw, W - 180, 180, 200, (40, 50, 100))
     _draw_circle(draw, 100,     H - 100, 180, (25, 35, 70))
-
-    # Icône bouclier centrale-droite
     _draw_shield(draw, W - 260, 260, 120, (*ACCENT, 200))
 
-    # Dégradé accent en haut
     draw.rectangle([0, 0, W, 10], fill=ACCENT)
-    # Ligne décorative latérale
     draw.rectangle([0, 10, 6, H], fill=(*ACCENT, 60))
 
-    # Titre principal
     if langue == "fr":
-        draw.text((90, 160), "Plateforme d'Audit IA",
-                  font=f["title"], fill=TEXT_W)
-        draw.text((90, 240), "Sécurisez votre code GitLab en quelques clics",
-                  font=f["subtitle"], fill=TEXT_M)
+        draw.text((90, 160), "Plateforme d'Audit IA",          font=f["title"],    fill=TEXT_W)
+        draw.text((90, 240), "Sécurisez votre code GitLab en quelques clics", font=f["subtitle"], fill=TEXT_M)
     else:
-        draw.text((90, 160), "AI Audit Platform",
-                  font=f["title"], fill=TEXT_W)
-        draw.text((90, 240), "Secure your GitLab code in a few clicks",
-                  font=f["subtitle"], fill=TEXT_M)
+        draw.text((90, 160), "AI Audit Platform",              font=f["title"],    fill=TEXT_W)
+        draw.text((90, 240), "Secure your GitLab code in a few clicks",        font=f["subtitle"], fill=TEXT_M)
 
-    # 4 features dans des cards
     features_fr = [
-        ("🔍", "Analyse OWASP", "Détection automatique\ndes vulnérabilités"),
-        ("📊", "Scores détaillés", "Qualité · Sécurité\nPerformance"),
+        ("🔍", "Analyse OWASP",      "Détection automatique\ndes vulnérabilités"),
+        ("📊", "Scores détaillés",   "Qualité · Sécurité\nPerformance"),
         ("🔗", "Intégration GitLab", "Issues & MR\nautomatiques"),
-        ("🤖", "IA Générative", "Tests unitaires\net corrections"),
+        ("🤖", "IA Générative",      "Tests unitaires\net corrections"),
     ]
     features_en = [
-        ("🔍", "OWASP Analysis", "Automatic vulnerability\ndetection"),
-        ("📊", "Detailed Scores", "Quality · Security\nPerformance"),
-        ("🔗", "GitLab Integration", "Automatic Issues\n& Merge Requests"),
-        ("🤖", "Generative AI", "Unit tests\nand fixes"),
+        ("🔍", "OWASP Analysis",    "Automatic vulnerability\ndetection"),
+        ("📊", "Detailed Scores",   "Quality · Security\nPerformance"),
+        ("🔗", "GitLab Integration","Automatic Issues\n& Merge Requests"),
+        ("🤖", "Generative AI",     "Unit tests\nand fixes"),
     ]
     features = features_fr if langue == "fr" else features_en
 
     card_w, card_h = 380, 180
-    gap = 30
+    gap     = 30
     total_w = 4 * card_w + 3 * gap
     start_x = (W - total_w) // 2
 
     for i, (icon, title, desc) in enumerate(features):
         cx = start_x + i * (card_w + gap)
         cy = 400
-        _draw_rounded_rect(draw, cx, cy, cx + card_w, cy + card_h,
-                           16, CARD_COL,
+        _draw_rounded_rect(draw, cx, cy, cx + card_w, cy + card_h, 16, CARD_COL,
                            border=(*ACCENT, 100), border_w=1)
-        # Bande colorée en haut de la card
-        draw.rounded_rectangle([cx, cy, cx + card_w, cy + 6], radius=3,
-                               fill=ACCENT)
-        draw.text((cx + 16, cy + 18), icon,
-                  font=f["subtitle"], fill=TEXT_W)
-        draw.text((cx + 16, cy + 62), title,
-                  font=f["badge"], fill=TEXT_W)
+        draw.rounded_rectangle([cx, cy, cx + card_w, cy + 6], radius=3, fill=ACCENT)
+        draw.text((cx + 16, cy + 18), icon,  font=f["subtitle"], fill=TEXT_W)
+        draw.text((cx + 16, cy + 62), title, font=f["badge"],    fill=TEXT_W)
         for j, line in enumerate(desc.split("\n")):
-            draw.text((cx + 16, cy + 96 + j * 28), line,
-                      font=f["small"], fill=TEXT_M)
+            draw.text((cx + 16, cy + 96 + j * 28), line, font=f["small"], fill=TEXT_M)
 
-    # Badge "v2.0"
-    _draw_badge(draw, 90, 310, "  v2.0  ",
-                (*ACCENT, 200), (255, 255, 255), f, min_w=80)
+    _draw_badge(draw, 90, 310, "  v2.0  ", (*ACCENT, 200), (255, 255, 255), f, min_w=80)
 
-    # Stats bar en bas
     draw.rectangle([0, H - 80, W, H - 4], fill=(16, 22, 40))
     stats = ["3 Types de scores", "OWASP Top 10", "TTS · Vidéo · PDF", "Multi-langue FR/EN"]
-    sw = W // len(stats)
+    sw    = W // len(stats)
     for i, stat in enumerate(stats):
-        sx = i * sw + sw // 2
+        sx   = i * sw + sw // 2
         bbox = draw.textbbox((0, 0), stat, font=f["small"])
         tw   = bbox[2] - bbox[0]
         draw.text((sx - tw // 2, H - 62), stat, font=f["small"], fill=TEXT_M)
         if i > 0:
-            draw.rectangle([i * sw, H - 72, i * sw + 1, H - 12],
-                           fill=(50, 60, 90))
+            draw.rectangle([i * sw, H - 72, i * sw + 1, H - 12], fill=(50, 60, 90))
 
     _watermark(draw)
     return img
 
 
 def slide_step(langue, step_num, icon_type, title_fr, title_en, bullets_fr, bullets_en, accent=ACCENT):
-    """Slide d'une étape du workflow."""
     img, draw = _base_frame()
     f = _get_fonts()
 
     _top_bar(draw, accent,
              f"ÉTAPE {step_num}" if langue == "fr" else f"STEP {step_num}")
 
-    # Numéro d'étape géant en fond (décoratif)
     big_num = str(step_num)
-    draw.text((W - 200, 40), big_num, font=f["score"],
-              fill=(*accent, 25))
+    draw.text((W - 200, 40), big_num, font=f["score"], fill=(*accent, 25))
 
-    title = title_fr if langue == "fr" else title_en
-    y = _section_title(draw, title, y=80, accent=accent)
+    title   = title_fr if langue == "fr" else title_en
+    y       = _section_title(draw, title, y=80, accent=accent)
 
     bullets = bullets_fr if langue == "fr" else bullets_en
     y += 10
     for b in bullets:
         y = _bullet(draw, b, y, color=accent)
 
-    # Icône à droite
     if icon_type == "shield":
         _draw_shield(draw, W - 320, H // 2, 100, (*accent, 160))
     elif icon_type == "warning":
@@ -448,7 +456,6 @@ def slide_step(langue, step_num, icon_type, title_fr, title_en, bullets_fr, bull
 
 
 def slide_scores(score_q, score_s, score_p, nom_projet, langue="fr"):
-    """Slide avec les 3 scores côte-à-côte."""
     img, draw = _base_frame()
     f = _get_fonts()
 
@@ -459,47 +466,34 @@ def slide_scores(score_q, score_s, score_p, nom_projet, langue="fr"):
              else f"Results — {nom_projet}")
     _section_title(draw, title, y=60, accent=ACCENT)
 
-    labels = (["Qualité", "Sécurité", "Performance"] if langue == "fr"
-              else ["Quality", "Security", "Performance"])
-
-    cw, ch = 420, 260
-    gap    = 60
+    labels  = (["Qualité", "Sécurité", "Performance"] if langue == "fr"
+               else ["Quality", "Security", "Performance"])
+    cw, ch  = 420, 260
+    gap     = 60
     total_w = 3 * cw + 2 * gap
-    sx     = (W - total_w) // 2
-    sy     = 220
+    sx      = (W - total_w) // 2
+    sy      = 220
 
     for i, (label, value) in enumerate(zip(labels, [score_q, score_s, score_p])):
         _score_card(draw, img, sx + i * (cw + gap), sy, label, value, cw, ch)
 
-    # Analyse globale
-    avg = None
     vals = [v for v in [score_q, score_s, score_p] if v is not None]
     if vals:
-        avg = int(sum(vals) / len(vals))
-
-    if avg is not None:
+        avg        = int(sum(vals) / len(vals))
         y_analysis = sy + ch + 60
-        label_text = ("Score moyen global" if langue == "fr"
-                      else "Overall average score")
-        draw.text((sx, y_analysis), label_text,
-                  font=f["subtitle"], fill=TEXT_M)
-        _draw_progress_bar(draw, sx, y_analysis + 50, total_w, 22,
-                           avg, _score_color(avg))
-        avg_str = f"{avg}/100"
-        draw.text((sx + total_w + 20, y_analysis + 44), avg_str,
+        label_text = "Score moyen global" if langue == "fr" else "Overall average score"
+        draw.text((sx, y_analysis), label_text, font=f["subtitle"], fill=TEXT_M)
+        _draw_progress_bar(draw, sx, y_analysis + 50, total_w, 22, avg, _score_color(avg))
+        draw.text((sx + total_w + 20, y_analysis + 44), f"{avg}/100",
                   font=f["badge"], fill=_score_color(avg))
 
         if avg >= 75:
-            msg_fr = "✓ Code de bonne qualité"
-            msg_en = "✓ Good quality code"
+            msg_fr, msg_en = "✓ Code de bonne qualité",             "✓ Good quality code"
         elif avg >= 50:
-            msg_fr = "⚠ Des améliorations sont nécessaires"
-            msg_en = "⚠ Improvements are needed"
+            msg_fr, msg_en = "⚠ Des améliorations sont nécessaires","⚠ Improvements are needed"
         else:
-            msg_fr = "⛔ Corrections urgentes requises"
-            msg_en = "⛔ Urgent corrections required"
-        msg = msg_fr if langue == "fr" else msg_en
-        draw.text((sx, y_analysis + 90), msg,
+            msg_fr, msg_en = "⛔ Corrections urgentes requises",     "⛔ Urgent corrections required"
+        draw.text((sx, y_analysis + 90), msg_fr if langue == "fr" else msg_en,
                   font=f["subtitle"], fill=_score_color(avg))
 
     _watermark(draw)
@@ -507,7 +501,6 @@ def slide_scores(score_q, score_s, score_p, nom_projet, langue="fr"):
 
 
 def slide_vuln_overview(vulns, langue="fr"):
-    """Slide récapitulatif des vulnérabilités avec compteurs visuels."""
     img, draw = _base_frame()
     f = _get_fonts()
 
@@ -525,16 +518,14 @@ def slide_vuln_overview(vulns, langue="fr"):
              else f"{len(vulns)} vulnerability(ies) detected")
     _section_title(draw, title, y=60, accent=accent_c)
 
-    # 4 compteurs en cards
-    sev_data = [
+    sev_data  = [
         ("CRITIQUE", len(critiques), (239, 68,  68)),
         ("HAUTE",    len(hautes),    (249, 115, 22)),
         ("MOYENNE",  len(moyennes),  (234, 179,  8)),
         ("FAIBLE",   len(faibles),   (16,  185, 129)),
     ]
-    labels_fr = ["CRITIQUE", "HAUTE", "MOYENNE", "FAIBLE"]
-    labels_en = ["CRITICAL", "HIGH",  "MEDIUM",  "LOW"]
-    labels    = labels_fr if langue == "fr" else labels_en
+    labels = (["CRITIQUE","HAUTE","MOYENNE","FAIBLE"] if langue == "fr"
+              else ["CRITICAL","HIGH","MEDIUM","LOW"])
 
     cw, ch = 340, 180
     gap    = 28
@@ -547,24 +538,20 @@ def slide_vuln_overview(vulns, langue="fr"):
         _draw_rounded_rect(draw, cx, cy, cx + cw, cy + ch, 16,
                            CARD_COL, border=(*color, 120), border_w=2)
         draw.rectangle([cx, cy, cx + cw, cy + 6], fill=color)
-        # Nombre
         n_str = str(count)
         nbbox = draw.textbbox((0, 0), n_str, font=f["score"])
         nw    = nbbox[2] - nbbox[0]
         draw.text((cx + (cw - nw) // 2, cy + 20), n_str,
                   font=f["score"], fill=color if count > 0 else TEXT_M)
-        # Label
         lbbox = draw.textbbox((0, 0), label, font=f["badge"])
         lw    = lbbox[2] - lbbox[0]
         draw.text((cx + (cw - lw) // 2, cy + 110), label,
                   font=f["badge"], fill=TEXT_W)
 
-    # Liste des 5 premières vulnérabilités
-    y = 450
-    sub = ("Top vulnérabilités :" if langue == "fr"
-           else "Top vulnerabilities:")
+    y   = 450
+    sub = "Top vulnérabilités :" if langue == "fr" else "Top vulnerabilities:"
     draw.text((sx, y), sub, font=f["subtitle"], fill=TEXT_M)
-    y += 44
+    y  += 44
 
     for v in vulns[:6]:
         sev   = v.get("severite", "?")
@@ -572,15 +559,12 @@ def slide_vuln_overview(vulns, langue="fr"):
         fich  = v.get("fichier",  "?").split("/")[-1]
         ligne = v.get("ligne",    "?")
         _, text_c, accent_c2 = _severity_colors(sev)
-        # Badge sévérité
-        bw, bh = _draw_badge(draw, sx, y,
-                              f"  {sev}  ", accent_c2, (255, 255, 255), f)
-        draw.text((sx + bw + 16, y + 4), f"{ttype}",
-                  font=f["badge"], fill=TEXT_W)
+        bw, bh = _draw_badge(draw, sx, y, f"  {sev}  ", accent_c2,
+                             (255, 255, 255), f)
+        draw.text((sx + bw + 16, y + 4),  f"{ttype}", font=f["badge"], fill=TEXT_W)
         info = (f"📄 {fich} — ligne {ligne}" if langue == "fr"
                 else f"📄 {fich} — line {ligne}")
-        draw.text((sx + bw + 16, y + 34), info,
-                  font=f["small"], fill=TEXT_M)
+        draw.text((sx + bw + 16, y + 34), info, font=f["small"], fill=TEXT_M)
         y += 70
 
     _watermark(draw)
@@ -588,7 +572,6 @@ def slide_vuln_overview(vulns, langue="fr"):
 
 
 def slide_vuln_detail(type_vuln, severite, fichier, ligne, suggestion, langue="fr"):
-    """Slide détaillé d'une seule vulnérabilité."""
     img, draw = _base_frame()
     f = _get_fonts()
 
@@ -596,48 +579,37 @@ def slide_vuln_detail(type_vuln, severite, fichier, ligne, suggestion, langue="f
     _top_bar(draw, sev_accent,
              "VULNÉRABILITÉ" if langue == "fr" else "VULNERABILITY")
 
-    # Badge sévérité large
-    bw, bh = _draw_badge(draw, 72, 70,
-                         f"  ⚠  {severite}  ", sev_accent,
-                         (255, 255, 255), f, min_w=200)
-
-    # Titre type
+    _draw_badge(draw, 72, 70, f"  ⚠  {severite}  ",
+                sev_accent, (255, 255, 255), f, min_w=200)
     draw.text((72, 120), type_vuln, font=f["title"], fill=TEXT_W)
 
-    # Fichier + ligne
     info = (f"Fichier : {fichier}   •   Ligne : {ligne}" if langue == "fr"
             else f"File: {fichier}   •   Line: {ligne}")
     draw.text((72, 200), info, font=f["body"], fill=TEXT_M)
-
-    # Séparateur
     draw.rectangle([72, 248, W - 72, 252], fill=(*sev_accent, 80))
 
-    # Explication gauche
     left_title = "Risques associés" if langue == "fr" else "Associated Risks"
     draw.text((72, 270), left_title, font=f["subtitle"], fill=sev_accent)
 
     exp = _owasp_explanation(type_vuln, langue)
-    y = 320
+    y   = 320
     for line in exp:
         y = _bullet(draw, line, y, color=sev_accent)
 
-    # Card correction droite
-    mid = W // 2 + 40
+    mid   = W // 2 + 40
     crd_w = W - mid - 60
     _draw_rounded_rect(draw, mid, 260, mid + crd_w, H - 80, 20,
                        CARD_COL, border=(*sev_accent, 80), border_w=2)
     draw.rectangle([mid, 260, mid + crd_w, 268], fill=sev_accent)
 
     fix_title = "💡 Correction suggérée" if langue == "fr" else "💡 Suggested Fix"
-    draw.text((mid + 24, 278), fix_title,
-              font=f["subtitle"], fill=sev_accent)
+    draw.text((mid + 24, 278), fix_title, font=f["subtitle"], fill=sev_accent)
 
     fy = 330
     for line in textwrap.wrap(suggestion, width=42):
         draw.text((mid + 24, fy), line, font=f["body"], fill=TEXT_W)
         fy += 36
 
-    # Bonnes pratiques
     fy += 20
     bp_title = "✓ Bonnes pratiques" if langue == "fr" else "✓ Best Practices"
     draw.text((mid + 24, fy), bp_title, font=f["badge"], fill=(16, 185, 129))
@@ -646,15 +618,12 @@ def slide_vuln_detail(type_vuln, severite, fichier, ligne, suggestion, langue="f
         draw.text((mid + 24, fy), f"  • {bp}", font=f["small"], fill=TEXT_M)
         fy += 30
 
-    # Icône avertissement
     _draw_warning_triangle(draw, mid - 80, H - 100, 40, sev_accent)
-
     _watermark(draw)
     return img
 
 
 def slide_recommendations(recos, langue="fr"):
-    """Slide des recommandations avec check-marks verts."""
     img, draw = _base_frame()
     f = _get_fonts()
 
@@ -668,15 +637,14 @@ def slide_recommendations(recos, langue="fr"):
 
     if not recos:
         _draw_checkmark_circle(draw, W // 2, H // 2 - 40, 80, green)
-        msg = "✅ Code optimal — Aucune recommandation" if langue == "fr" else "✅ Optimal code — No recommendations"
+        msg   = ("✅ Code optimal — Aucune recommandation" if langue == "fr"
+                 else "✅ Optimal code — No recommendations")
         mbbox = draw.textbbox((0, 0), msg, font=f["subtitle"])
         mw    = mbbox[2] - mbbox[0]
         draw.text((W // 2 - mw // 2, H // 2 + 60), msg,
                   font=f["subtitle"], fill=green)
     else:
-        # 2 colonnes
-        mid  = W // 2
-        left = recos[0::2][:5]
+        left  = recos[0::2][:5]
         right = recos[1::2][:5]
 
         def draw_recos(lst, x_start, y_start):
@@ -685,12 +653,10 @@ def slide_recommendations(recos, langue="fr"):
                 titre = r.get("titre", "?")
                 desc  = r.get("description", "")
                 _draw_checkmark_circle(draw, x_start + 20, y + 14, 16, green)
-                draw.text((x_start + 50, y), titre,
-                          font=f["badge"], fill=TEXT_W)
+                draw.text((x_start + 50, y), titre, font=f["badge"], fill=TEXT_W)
                 y += 32
                 for line in textwrap.wrap(desc, width=55)[:2]:
-                    draw.text((x_start + 50, y), line,
-                              font=f["small"], fill=TEXT_M)
+                    draw.text((x_start + 50, y), line, font=f["small"], fill=TEXT_M)
                     y += 26
                 y += 14
 
@@ -702,7 +668,6 @@ def slide_recommendations(recos, langue="fr"):
 
 
 def slide_action_plan(vulns, recos, langue="fr"):
-    """Slide plan d'action final avec étapes numérotées."""
     img, draw = _base_frame()
     f = _get_fonts()
 
@@ -748,40 +713,30 @@ def slide_action_plan(vulns, recos, langue="fr"):
 
     y = 200
     for num, color, title_s, desc in steps:
-        # Cercle numéro
         _draw_circle(draw, 100, y + 24, 28, color)
         num_bbox = draw.textbbox((0, 0), num, font=f["badge"])
-        nw = num_bbox[2] - num_bbox[0]
-        draw.text((100 - nw // 2, y + 12), num, font=f["badge"],
-                  fill=(255, 255, 255))
-        # Ligne de connexion
+        nw       = num_bbox[2] - num_bbox[0]
+        draw.text((100 - nw // 2, y + 12), num, font=f["badge"], fill=(255, 255, 255))
         if num != "5":
             draw.rectangle([98, y + 52, 102, y + 110], fill=(*color, 80))
-
         draw.text((150, y + 6),  title_s, font=f["badge"], fill=TEXT_W)
         draw.text((150, y + 36), desc,    font=f["small"], fill=TEXT_M)
         y += 110
 
-    # Icône étoile résultat
     _draw_star(draw, W - 260, H // 2, 90, (*purple, 60))
     _draw_star(draw, W - 260, H // 2, 70, (*purple, 100))
-
     _watermark(draw)
     return img
 
 
 def slide_closing(langue="fr"):
-    """Slide de fin avec appel à l'action."""
     img, draw = _base_frame()
     f = _get_fonts()
 
-    # Cercles décoratifs
     _draw_circle(draw, W // 2, H // 2, 420, (20, 28, 54))
     _draw_circle(draw, W // 2, H // 2, 340, (26, 36, 64))
     _draw_circle(draw, W // 2, H // 2, 260, (32, 44, 76))
-
     _draw_shield(draw, W // 2, H // 2 - 60, 90, (*ACCENT, 220))
-
     draw.rectangle([0, 0, W, 8], fill=ACCENT)
 
     if langue == "fr":
@@ -794,29 +749,26 @@ def slide_closing(langue="fr"):
         cta  = "🔄 Run a new analysis on your next commit"
 
     mbbox = draw.textbbox((0, 0), main, font=f["title"])
-    mw = mbbox[2] - mbbox[0]
-    draw.text(((W - mw) // 2, H // 2 + 80), main,
-              font=f["title"], fill=TEXT_W)
+    mw    = mbbox[2] - mbbox[0]
+    draw.text(((W - mw) // 2, H // 2 + 80), main, font=f["title"], fill=TEXT_W)
 
     sbbox = draw.textbbox((0, 0), sub, font=f["body"])
-    sw = sbbox[2] - sbbox[0]
-    draw.text(((W - sw) // 2, H // 2 + 150), sub,
-              font=f["body"], fill=TEXT_M)
+    sw    = sbbox[2] - sbbox[0]
+    draw.text(((W - sw) // 2, H // 2 + 150), sub, font=f["body"], fill=TEXT_M)
 
-    # Badge CTA
     cbbox = draw.textbbox((0, 0), cta, font=f["badge"])
-    cw2 = cbbox[2] - cbbox[0]
-    cx  = (W - cw2 - 60) // 2
-    _draw_rounded_rect(draw, cx, H // 2 + 210, cx + cw2 + 60,
-                       H // 2 + 264, 16, ACCENT)
-    draw.text((cx + 30, H // 2 + 222), cta,
-              font=f["badge"], fill=(255, 255, 255))
+    cw2   = cbbox[2] - cbbox[0]
+    cx    = (W - cw2 - 60) // 2
+    _draw_rounded_rect(draw, cx, H // 2 + 210, cx + cw2 + 60, H // 2 + 264, 16, ACCENT)
+    draw.text((cx + 30, H // 2 + 222), cta, font=f["badge"], fill=(255, 255, 255))
 
     _watermark(draw)
     return img
 
 
-# ── Données OWASP ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DONNÉES OWASP
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def _owasp_explanation(type_vuln: str, lang: str) -> list:
     data = {
@@ -920,14 +872,15 @@ def _best_practices(type_vuln: str, lang: str) -> list:
     return vuln_data.get(lang, default.get(lang, default["fr"]))
 
 
-# ── TTS helper ───────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  TTS + COMPOSE
+# ═══════════════════════════════════════════════════════════════════════════════
 
 async def _tts(text: str, langue: str) -> str:
     import edge_tts
-    voices = {"fr": "fr-FR-DeniseNeural", "en": "en-US-AriaNeural"}
-    voice  = voices.get(langue, voices["fr"])
-    tmp    = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3",
-                                         prefix="vid_tts_")
+    voices    = {"fr": "fr-FR-DeniseNeural", "en": "en-US-AriaNeural"}
+    voice     = voices.get(langue, voices["fr"])
+    tmp       = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3", prefix="vid_tts_")
     tmp.close()
     communicate = edge_tts.Communicate(text=text, voice=voice)
     await communicate.save(tmp.name)
@@ -948,10 +901,10 @@ def _compose(frames_dur: list, audio_path: str, output_path: str):
     audio = AudioFileClip(audio_path)
 
     if audio.duration > video.duration:
-        extra = audio.duration - video.duration
-        last  = clips[-1].set_duration(clips[-1].duration + extra)
+        extra     = audio.duration - video.duration
+        last      = clips[-1].set_duration(clips[-1].duration + extra)
         clips[-1] = last
-        video = concatenate_videoclips(clips, method="compose")
+        video     = concatenate_videoclips(clips, method="compose")
 
     video = video.set_audio(audio)
     video.write_videofile(output_path, codec="libx264", audio_codec="aac",
@@ -963,12 +916,15 @@ def _compose(frames_dur: list, audio_path: str, output_path: str):
         c.close()
 
 
-# ── Service principal ─────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SERVICE
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class VideoGeneratorService:
 
-    async def generate_application_video(self, langue: str = "fr") -> str:
-        output = str(VIDEO_OUTPUT_DIR / f"presentation_{langue}.mp4")
+    async def generate_application_video(self, langue: str = "fr",
+                                          output_path: str | None = None) -> str:
+        output = output_path or str(VIDEO_OUTPUT_DIR / f"presentation_{langue}.mp4")
 
         if langue == "fr":
             narrations = [
@@ -992,30 +948,22 @@ class VideoGeneratorService:
                 ("Votre code est maintenant plus sûr. "
                  "Continuez à analyser régulièrement pour maintenir un haut niveau de sécurité."),
             ]
-            bullets_step1_fr = [
-                "Entrez l'URL de votre dépôt GitLab",
-                "Fournissez votre token d'accès personnel",
-                "Choisissez la branche à analyser",
-                "Lancez l'analyse en un seul clic",
-            ]
-            bullets_step2_fr = [
-                "Injection SQL, XSS, CSRF, Path Traversal",
-                "Secrets codés en dur (clés API, tokens)",
-                "Mauvaises configurations de sécurité",
-                "Composants avec vulnérabilités connues (CVE)",
-            ]
-            bullets_step3_fr = [
-                "Score qualité : maintenabilité du code",
-                "Score sécurité : niveau de protection OWASP",
-                "Score performance : efficacité du code",
-                "Recommandations prioritaires de correction",
-            ]
-            bullets_step4_fr = [
-                "Création automatique d'Issues par vulnérabilité",
-                "Génération de Merge Requests avec corrections",
-                "Tests unitaires générés par l'IA",
-                "Webhooks pour synchronisation temps réel",
-            ]
+            bullets1 = ["Entrez l'URL de votre dépôt GitLab",
+                        "Fournissez votre token d'accès personnel",
+                        "Choisissez la branche à analyser",
+                        "Lancez l'analyse en un seul clic"]
+            bullets2 = ["Injection SQL, XSS, CSRF, Path Traversal",
+                        "Secrets codés en dur (clés API, tokens)",
+                        "Mauvaises configurations de sécurité",
+                        "Composants avec vulnérabilités connues (CVE)"]
+            bullets3 = ["Score qualité : maintenabilité du code",
+                        "Score sécurité : niveau de protection OWASP",
+                        "Score performance : efficacité du code",
+                        "Recommandations prioritaires de correction"]
+            bullets4 = ["Création automatique d'Issues par vulnérabilité",
+                        "Génération de Merge Requests avec corrections",
+                        "Tests unitaires générés par l'IA",
+                        "Webhooks pour synchronisation temps réel"]
         else:
             narrations = [
                 ("Welcome to the AI Audit Platform. Our solution automatically analyzes "
@@ -1038,76 +986,50 @@ class VideoGeneratorService:
                 ("Your code is now more secure. "
                  "Keep analyzing regularly to maintain a high level of security."),
             ]
-            bullets_step1_fr = [
-                "Enter your GitLab repository URL",
-                "Provide your personal access token",
-                "Select the branch to analyze",
-                "Launch the analysis in one click",
-            ]
-            bullets_step2_fr = [
-                "SQL Injection, XSS, CSRF, Path Traversal",
-                "Hardcoded secrets (API keys, tokens)",
-                "Security misconfigurations",
-                "Components with known vulnerabilities (CVE)",
-            ]
-            bullets_step3_fr = [
-                "Quality score: code maintainability",
-                "Security score: OWASP protection level",
-                "Performance score: code efficiency",
-                "Priority correction recommendations",
-            ]
-            bullets_step4_fr = [
-                "Automatic issue creation per vulnerability",
-                "Merge Request generation with fixes",
-                "AI-generated unit tests",
-                "Webhooks for real-time sync",
-            ]
-
-        step_titles = {
-            "fr": [
-                ("GitLab Connection", "Connexion GitLab"),
-                ("Automated Analysis", "Analyse Automatique"),
-                ("Audit Report", "Rapport d'Audit"),
-                ("GitLab Integration", "Intégration GitLab"),
-            ],
-            "en": [
-                ("GitLab Connection", "GitLab Connection"),
-                ("Automated Analysis", "Automated Analysis"),
-                ("Audit Report", "Audit Report"),
-                ("GitLab Integration", "GitLab Integration"),
-            ],
-        }
+            bullets1 = ["Enter your GitLab repository URL",
+                        "Provide your personal access token",
+                        "Select the branch to analyze",
+                        "Launch the analysis in one click"]
+            bullets2 = ["SQL Injection, XSS, CSRF, Path Traversal",
+                        "Hardcoded secrets (API keys, tokens)",
+                        "Security misconfigurations",
+                        "Components with known vulnerabilities (CVE)"]
+            bullets3 = ["Quality score: code maintainability",
+                        "Security score: OWASP protection level",
+                        "Performance score: code efficiency",
+                        "Priority correction recommendations"]
+            bullets4 = ["Automatic issue creation per vulnerability",
+                        "Merge Request generation with fixes",
+                        "AI-generated unit tests",
+                        "Webhooks for real-time sync"]
 
         frames = [
             (slide_title_platform(langue), 9),
             (slide_step(langue, 1, "code",
-                        "Connexion GitLab", "GitLab Connection",
-                        bullets_step1_fr, bullets_step1_fr,
-                        accent=ACCENT), 8),
+                        "Connexion GitLab",    "GitLab Connection",
+                        bullets1, bullets1, accent=ACCENT), 8),
             (slide_step(langue, 2, "warning",
                         "Analyse Automatique", "Automated Analysis",
-                        bullets_step2_fr, bullets_step2_fr,
-                        accent=(249, 115, 22)), 8),
+                        bullets2, bullets2, accent=(249, 115, 22)), 8),
             (slide_step(langue, 3, "shield",
-                        "Rapport d'Audit", "Audit Report",
-                        bullets_step3_fr, bullets_step3_fr,
-                        accent=(16, 185, 129)), 8),
+                        "Rapport d'Audit",    "Audit Report",
+                        bullets3, bullets3, accent=(16, 185, 129)), 8),
             (slide_step(langue, 4, "check",
                         "Intégration GitLab", "GitLab Integration",
-                        bullets_step4_fr, bullets_step4_fr,
-                        accent=(59, 130, 246)), 8),
+                        bullets4, bullets4, accent=(59, 130, 246)), 8),
             (slide_closing(langue), 7),
         ]
 
         full_narration = " ".join(narrations)
-        audio_path = await _tts(full_narration, langue)
+        audio_path     = await _tts(full_narration, langue)
         _compose(frames, audio_path, output)
         os.unlink(audio_path)
         return output
 
-    async def generate_vulnerability_video(self, req: VideoVulnerabiliteRequest) -> str:
+    async def generate_vulnerability_video(self, req: VideoVulnerabiliteRequest,
+                                            output_path: str | None = None) -> str:
         lang   = req.langue if req.langue in ("fr", "en") else "fr"
-        output = str(VIDEO_OUTPUT_DIR / f"vuln_{req.type_vuln.lower()}_{req.ligne}.mp4")
+        output = output_path or str(VIDEO_OUTPUT_DIR / f"vuln_{req.type_vuln.lower()}_{req.ligne}.mp4")
         fname  = req.fichier.split("/")[-1]
 
         if lang == "fr":
@@ -1131,17 +1053,15 @@ class VideoGeneratorService:
                  "Apply these rules systematically in your code."),
             ]
 
-        # Slide bonnes pratiques
-        bp_lines = _best_practices(req.type_vuln, lang)
-        bp_title = "Bonnes pratiques" if lang == "fr" else "Best Practices"
-        bp_frame_img, bp_draw = _base_frame()
+        bp_img, bp_draw = _base_frame()
         f = _get_fonts()
         sev_bg, sev_text, sev_accent = _severity_colors(req.severite)
         _top_bar(bp_draw, (16, 185, 129),
                  "BONNES PRATIQUES" if lang == "fr" else "BEST PRACTICES")
-        _section_title(bp_draw, bp_title, y=60, accent=(16, 185, 129))
+        _section_title(bp_draw, "Bonnes pratiques" if lang == "fr" else "Best Practices",
+                       y=60, accent=(16, 185, 129))
         y = 200
-        for bp in bp_lines:
+        for bp in _best_practices(req.type_vuln, lang):
             _draw_checkmark_circle(bp_draw, 90, y + 14, 18, (16, 185, 129))
             bp_draw.text((130, y + 2), bp, font=f["body"], fill=TEXT_W)
             y += 50
@@ -1154,26 +1074,27 @@ class VideoGeneratorService:
                                req.fichier, req.ligne, req.suggestion, lang), 9),
             (slide_vuln_detail(req.type_vuln, req.severite,
                                req.fichier, req.ligne, req.suggestion, lang), 8),
-            (bp_frame_img, 7),
+            (bp_img, 7),
         ]
 
         full_narration = " ".join(narrations)
-        audio_path = await _tts(full_narration, lang)
+        audio_path     = await _tts(full_narration, lang)
         _compose(frames, audio_path, output)
         os.unlink(audio_path)
         return output
 
-    async def generate_rapport_video(self, req: VideoRapportRequest) -> str:
+    async def generate_rapport_video(self, req: VideoRapportRequest,
+                                      output_path: str | None = None) -> str:
         lang   = req.langue if req.langue in ("fr", "en") else "fr"
-        output = str(VIDEO_OUTPUT_DIR /
-                     f"rapport_{req.nom_projet.lower().replace(' ', '_')}.mp4")
+        output = output_path or str(VIDEO_OUTPUT_DIR /
+                                    f"rapport_{req.nom_projet.lower().replace(' ', '_')}.mp4")
 
-        vulns    = req.vulnerabilites or []
-        recos    = req.recommandations or []
+        vulns     = req.vulnerabilites or []
+        recos     = req.recommandations or []
         critiques = [v for v in vulns if v.get("severite") == "CRITIQUE"]
         hautes    = [v for v in vulns if v.get("severite") == "HAUTE"]
 
-        def v(n): return n if n is not None else "N/A"
+        def v(n):   return n if n is not None else "N/A"
         def vfr(n): return n if n is not None else "non disponible"
 
         if lang == "fr":
@@ -1220,7 +1141,7 @@ class VideoGeneratorService:
         ]
 
         full_narration = " ".join(narrations)
-        audio_path = await _tts(full_narration, lang)
+        audio_path     = await _tts(full_narration, lang)
         _compose(frames, audio_path, output)
         os.unlink(audio_path)
         return output
@@ -1229,40 +1150,313 @@ class VideoGeneratorService:
 video_service = VideoGeneratorService()
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ENDPOINTS DE GÉNÉRATION
+# ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/application",
-             summary="Génère une vidéo de présentation de la plateforme")
-async def video_application(req: VideoApplicationRequest):
+@router.post("/application")
+async def video_application(
+    req:           VideoApplicationRequest,
+    authorization: str | None = Header(default=None),
+    db:            Session    = Depends(get_db),   # ← manquant dans le zip
+):
+    user_id = None
     try:
-        path = await video_service.generate_application_video(req.langue)
-        return FileResponse(path, media_type="video/mp4",
-                            filename=f"presentation_audit_ia_{req.langue}.mp4")
+        user_id = get_user_id_from_token(authorization, db)
+    except Exception:
+        pass   # ← non bloquant : fonctionne même sans token
+
+    output = (
+        _unique_path(user_id, f"presentation_{req.langue}")
+        if user_id
+        else str(VIDEO_OUTPUT_DIR / f"presentation_{req.langue}.mp4")
+    )
+
+    try:
+        path = await video_service.generate_application_video(req.langue, output_path=output)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur vidéo : {str(e)}")
+
+    if user_id:
+        _save_record(          # ← manquant dans le zip
+            db, user_id,
+            TypeVideo.application,
+            chemin   = path,
+            titre    = f"Présentation plateforme ({req.langue.upper()})",
+            langue   = req.langue,
+            contexte = {"style": req.style},
+        )
+
+    return FileResponse(path, media_type="video/mp4",
+                        filename=f"presentation_audit_ia_{req.langue}.mp4")
 
 
 @router.post("/vulnerabilite",
              summary="Génère une vidéo explicative d'une vulnérabilité")
-async def video_vulnerabilite(req: VideoVulnerabiliteRequest):
+async def video_vulnerabilite(
+    req:           VideoVulnerabiliteRequest,
+    authorization: str | None = Header(default=None),
+    db:            Session    = Depends(get_db),
+):
+    user_id = None
     try:
-        path = await video_service.generate_vulnerability_video(req)
-        return FileResponse(path, media_type="video/mp4",
-                            filename=f"vuln_{req.type_vuln.lower()}_{req.ligne}.mp4")
+        user_id = get_user_id_from_token(authorization, db)
+    except Exception:
+        pass
+
+    output = (_unique_path(user_id, f"vuln_{req.type_vuln.lower()}")
+              if user_id else str(VIDEO_OUTPUT_DIR / f"vuln_{req.type_vuln.lower()}_{req.ligne}.mp4"))
+
+    try:
+        path = await video_service.generate_vulnerability_video(req, output_path=output)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur vidéo : {str(e)}")
+
+    if user_id:
+        _save_record(
+            db, user_id,
+            TypeVideo.vulnerabilite,
+            chemin     = path,
+            titre      = f"Vulnérabilité {req.type_vuln} — {req.severite}",
+            langue     = req.langue,
+            contexte   = {"type_vuln": req.type_vuln, "severite": req.severite,
+                          "fichier": req.fichier, "ligne": req.ligne},
+        )
+
+    return FileResponse(path, media_type="video/mp4",
+                        filename=f"vuln_{req.type_vuln.lower()}_{req.ligne}.mp4")
 
 
 @router.post("/rapport",
              summary="Génère une vidéo de résumé d'un rapport d'audit")
-async def video_rapport(req: VideoRapportRequest):
+async def video_rapport(
+    req:           VideoRapportRequest,
+    authorization: str | None = Header(default=None),
+    db:            Session    = Depends(get_db),
+):
+    user_id = None
     try:
-        path = await video_service.generate_rapport_video(req)
-        return FileResponse(path, media_type="video/mp4",
-                            filename=f"rapport_{req.nom_projet.lower().replace(' ', '_')}.mp4")
+        user_id = get_user_id_from_token(authorization, db)
+    except Exception:
+        pass
+
+    safe   = req.nom_projet.lower().replace(" ", "_")
+    output = (_unique_path(user_id, f"rapport_{safe}")
+              if user_id else str(VIDEO_OUTPUT_DIR / f"rapport_{safe}.mp4"))
+
+    try:
+        path = await video_service.generate_rapport_video(req, output_path=output)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur vidéo : {str(e)}")
 
+    if user_id:
+        _save_record(
+            db, user_id,
+            TypeVideo.rapport,
+            chemin     = path,
+            titre      = f"Rapport — {req.nom_projet}",
+            nom_projet = req.nom_projet,
+            langue     = req.langue,
+            contexte   = {"vulnerabilites": req.vulnerabilites,
+                          "recommandations": req.recommandations},
+            score_q    = req.score_qualite,
+            score_s    = req.score_securite,
+            score_p    = req.score_performance,
+        )
+
+    return FileResponse(path, media_type="video/mp4",
+                        filename=f"rapport_{safe}.mp4")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ENDPOINTS BIBLIOTHÈQUE PERSONNELLE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/mes-videos",
+            summary="Liste toutes les vidéos générées par l'utilisateur connecté")
+def mes_videos(
+    authorization: str | None = Header(default=None),
+    db:            Session    = Depends(get_db),
+):
+    try:
+        user_id = get_user_id_from_token(authorization, db)
+    except Exception:
+        from fastapi import status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Token manquant ou invalide")
+    videos = (
+        db.query(VideoGeneree)
+        .filter(VideoGeneree.user_id == user_id)
+        .order_by(VideoGeneree.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id":                v.id,
+            "type_video":        v.type_video,
+            "titre":             v.titre,
+            "nom_projet":        v.nom_projet,
+            "langue":            v.langue,
+            "score_qualite":     v.score_qualite,
+            "score_securite":    v.score_securite,
+            "score_performance": v.score_performance,
+            "created_at":        v.created_at.isoformat(),
+            "stream_url":        f"/video/stream/{v.id}",
+            "existe":            os.path.isfile(v.chemin_fichier),
+        }
+        for v in videos
+    ]
+
+
+@router.get("/mes-videos/{video_id}",
+            summary="Détail d'une vidéo")
+def detail_video(
+    video_id:      int,
+    authorization: str | None = Header(default=None),
+    db:            Session    = Depends(get_db),
+):
+    try:
+        user_id = get_user_id_from_token(authorization, db)
+    except Exception:
+        from fastapi import status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Token manquant ou invalide")
+    v = db.query(VideoGeneree).filter(
+        VideoGeneree.id == video_id,
+        VideoGeneree.user_id == user_id,
+    ).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Vidéo introuvable")
+    return {
+        "id":                v.id,
+        "type_video":        v.type_video,
+        "titre":             v.titre,
+        "nom_projet":        v.nom_projet,
+        "langue":            v.langue,
+        "score_qualite":     v.score_qualite,
+        "score_securite":    v.score_securite,
+        "score_performance": v.score_performance,
+        "contexte_json":     v.contexte_json,
+        "created_at":        v.created_at.isoformat(),
+        "stream_url":        f"/video/stream/{v.id}",
+        "existe":            os.path.isfile(v.chemin_fichier),
+    }
+
+
+# ── Remplacer l'import existant ──────────────────────────────────────────────
+from fastapi.responses import FileResponse, StreamingResponse, Response
+
+@router.get("/stream/{video_id}", summary="Stream direct d'une vidéo MP4")
+def stream_video(
+    video_id:      int,
+    request:       Request,
+    authorization: str | None = Header(default=None),
+    db:            Session    = Depends(get_db),
+):
+    try:
+        user_id = get_user_id_from_token(authorization, db)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token manquant ou invalide")
+
+    v = db.query(VideoGeneree).filter(
+        VideoGeneree.id == video_id,
+        VideoGeneree.user_id == user_id,
+    ).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Vidéo introuvable")
+    if not os.path.isfile(v.chemin_fichier):
+        raise HTTPException(status_code=410, detail="Fichier vidéo supprimé du serveur")
+
+    file_size = os.path.getsize(v.chemin_fichier)
+
+    # ✅ Fix UnicodeEncodeError : nettoyer le titre pour latin-1
+    safe_title = (
+        v.titre
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("\u2014", "-")
+        .replace("\u2013", "-")
+        .encode("latin-1", errors="replace")
+        .decode("latin-1")
+    )
+    disposition = f'inline; filename="{safe_title}.mp4"'
+
+    def iterfile(path: str, start: int, end: int, chunk: int = 1024 * 256):
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                data = f.read(min(chunk, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    range_header = request.headers.get("range")
+
+    if range_header:
+        range_val = range_header.strip().replace("bytes=", "")
+        start_str, _, end_str = range_val.partition("-")
+        start = int(start_str) if start_str else 0
+        end   = int(end_str)   if end_str   else file_size - 1
+        end   = min(end, file_size - 1)
+        length = end - start + 1
+
+        return StreamingResponse(
+            iterfile(v.chemin_fichier, start, end),
+            status_code=206,
+            media_type="video/mp4",
+            headers={
+                "Content-Range":       f"bytes {start}-{end}/{file_size}",
+                "Accept-Ranges":       "bytes",
+                "Content-Length":      str(length),
+                "Content-Disposition": disposition,
+            },
+        )
+
+    return StreamingResponse(
+        iterfile(v.chemin_fichier, 0, file_size - 1),
+        status_code=200,
+        media_type="video/mp4",
+        headers={
+            "Accept-Ranges":       "bytes",
+            "Content-Length":      str(file_size),
+            "Content-Disposition": disposition,
+        },
+    )
+
+@router.delete("/mes-videos/{video_id}",
+               summary="Supprimer une vidéo")
+def supprimer_video(
+    video_id:      int,
+    authorization: str | None = Header(default=None),
+    db:            Session    = Depends(get_db),
+):
+    try:
+        user_id = get_user_id_from_token(authorization, db)
+    except Exception:
+        from fastapi import status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Token manquant ou invalide")
+    v = db.query(VideoGeneree).filter(
+        VideoGeneree.id == video_id,
+        VideoGeneree.user_id == user_id,
+    ).first()
+    if not v:
+        raise HTTPException(status_code=404, detail="Vidéo introuvable")
+    try:
+        if os.path.isfile(v.chemin_fichier):
+            os.remove(v.chemin_fichier)
+    except OSError:
+        pass
+    db.delete(v)
+    db.commit()
+    return {"message": "Vidéo supprimée avec succès"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  STATUS
+# ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/status", summary="Vérifie les dépendances vidéo")
 async def video_status():

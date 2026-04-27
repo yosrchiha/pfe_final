@@ -37,7 +37,7 @@ from app.routes.vulnerabilites import router as vulnerabilites_router
 from app.routes.Admin import router as admin_router
 from app.routes.tts import router as tts_router
 from app.routes.video import router as video_router  # Ajoutez cet import
-
+from app.models.video_generee import VideoGeneree
 
 # Ajouter avec les autres routes
 # ── Application ──────────────────────────────────────────
@@ -49,6 +49,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://192.168.11.198:3000"
     ],
     allow_credentials = True,
     allow_methods     = ["*"],
@@ -91,7 +92,7 @@ app.include_router(analyses_diff.router)
 app.include_router(analyses_fichier.router)
 app.include_router(vulnerabilites_router)
 app.include_router(tts_router)
-
+app.include_router(video_router)
 # backend/app/main.py
 
 # ... (votre code existant)

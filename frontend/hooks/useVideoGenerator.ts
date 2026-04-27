@@ -1,11 +1,4 @@
 // frontend/hooks/useVideoGenerator.ts
-// ─────────────────────────────────────────────────────────────────────────────
-//  Hook React pour la génération de vidéos via le backend MoviePy/FFmpeg
-//
-//  Usage :
-//    const { genererVideo, loading, progression } = useVideoGenerator();
-//    await genererVideo("vulnerabilite", { type_vuln: "SQL_INJECTION", ... });
-// ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useCallback } from "react";
 
@@ -44,20 +37,23 @@ interface UseVideoGeneratorReturn {
   loading: boolean;
   progression: string;
   erreur: string | null;
-  videoUrl: string | null;
+  videoUrl: string | null;       // blob URL pour lecture immédiate
+  savedVideoId: number | null;   // ← ID en base pour "mes-videos"
   resetVideo: () => void;
   verifierStatus: () => Promise<{ ready: boolean; dependencies: Record<string, boolean> }>;
 }
 
 export function useVideoGenerator(): UseVideoGeneratorReturn {
-  const [loading, setLoading] = useState(false);
-  const [progression, setProgression] = useState("");
-  const [erreur, setErreur] = useState<string | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [loading,      setLoading]      = useState(false);
+  const [progression,  setProgression]  = useState("");
+  const [erreur,       setErreur]       = useState<string | null>(null);
+  const [videoUrl,     setVideoUrl]     = useState<string | null>(null);
+  const [savedVideoId, setSavedVideoId] = useState<number | null>(null);
 
   const resetVideo = useCallback(() => {
     if (videoUrl) URL.revokeObjectURL(videoUrl);
     setVideoUrl(null);
+    setSavedVideoId(null);
     setErreur(null);
     setProgression("");
   }, [videoUrl]);
@@ -66,6 +62,7 @@ export function useVideoGenerator(): UseVideoGeneratorReturn {
     async (type: VideoType, payload: VideoPayload) => {
       setLoading(true);
       setErreur(null);
+      setSavedVideoId(null);
       setProgression("Préparation de la génération vidéo…");
 
       if (videoUrl) URL.revokeObjectURL(videoUrl);
@@ -74,7 +71,6 @@ export function useVideoGenerator(): UseVideoGeneratorReturn {
       try {
         const jwt = localStorage.getItem("token");
 
-        // Messages de progression simulés (la génération prend 10-60 secondes)
         const progressMessages = {
           application: [
             "Création des slides de présentation…",
@@ -101,8 +97,6 @@ export function useVideoGenerator(): UseVideoGeneratorReturn {
 
         const messages = progressMessages[type];
         let msgIndex = 0;
-
-        // Afficher les messages de progression pendant la génération
         const progressInterval = setInterval(() => {
           if (msgIndex < messages.length - 1) {
             msgIndex++;
@@ -112,8 +106,8 @@ export function useVideoGenerator(): UseVideoGeneratorReturn {
 
         setProgression(messages[0]);
 
-        const endpoint = `/video/${type}`;
-        const response = await fetch(`${API}${endpoint}`, {
+        // ── 1. Génération de la vidéo (reçoit le fichier MP4) ──────────────
+        const response = await fetch(`${API}/video/${type}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -126,17 +120,34 @@ export function useVideoGenerator(): UseVideoGeneratorReturn {
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          throw new Error(
-            errorData.detail || `Erreur serveur ${response.status}`
-          );
+          throw new Error(errorData.detail || `Erreur serveur ${response.status}`);
         }
 
         setProgression("Téléchargement de la vidéo…");
 
+        // Blob pour lecture immédiate dans le player
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
         setVideoUrl(url);
         setProgression("Vidéo prête !");
+
+        // ── 2. Récupérer l'ID de la vidéo sauvegardée en base ─────────────
+        //    On appelle mes-videos et on prend la première (la plus récente)
+        if (jwt) {
+          try {
+            const listRes = await fetch(`${API}/video/mes-videos`, {
+              headers: { Authorization: `Bearer ${jwt}` },
+            });
+            if (listRes.ok) {
+              const videos = await listRes.json();
+              if (videos.length > 0) {
+                setSavedVideoId(videos[0].id); // triées par created_at DESC
+              }
+            }
+          } catch {
+            // Non bloquant : la vidéo joue quand même
+          }
+        }
       } catch (e: any) {
         setErreur(e.message || "Erreur inconnue lors de la génération vidéo");
         setProgression("");
@@ -155,5 +166,5 @@ export function useVideoGenerator(): UseVideoGeneratorReturn {
     return await res.json();
   }, []);
 
-  return { genererVideo, loading, progression, erreur, videoUrl, resetVideo, verifierStatus };
+  return { genererVideo, loading, progression, erreur, videoUrl, savedVideoId, resetVideo, verifierStatus };
 }

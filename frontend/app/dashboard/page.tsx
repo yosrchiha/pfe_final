@@ -23,6 +23,8 @@ const menuItems = [
   { key: "repositories",   label: "Dépôts",          icon: "◈",  href: "/depots" },
   { key: "comparaisons",   label: "Comparaisons",    icon: "📊", href: "/comparaisons" },
   { key: "analyses",       label: "Analyse",         icon: "◎",  href: "/analyse" },
+  { key: "videos",         label: "Mes Vidéos",      icon: "🎬", href: "/mes-videos" },   // ← NOUVEAU
+
   { key: "exploration",    label: "Exploration",     icon: "🗂️",  href: "/exploration-history"},
   { key: "tests",          label: "Tests",           icon: "🧪", href: "/TestsPaage" },
   { key: "issues",         label: "Issues",          icon: "◇",  href: "/issues" },
