@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
 import { useTheme } from "@/app/ThemeContext";
 import ThemeToggle from "@/app/ThemeToggle";
@@ -15,7 +15,7 @@ import VideoGeneratorModal from "@/app/components/VideoGeneratorModal";
 
 const API = "http://127.0.0.1:8000";
 
-export default function RapportPage() {
+function RapportPage() {
   const router = useRouter();
   const { theme, isDark } = useTheme();
 
@@ -211,36 +211,90 @@ export default function RapportPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages]);
 
+  const searchParams = useSearchParams();
+
   useEffect(() => {
-    const r = sessionStorage.getItem("rapport");
-    const np = sessionStorage.getItem("nomProjet") || "";
-    const t = sessionStorage.getItem("token") || "";
-    const pu = sessionStorage.getItem("projectUrl") || "";
-    const br = sessionStorage.getItem("branche") || "main";
-    const at = sessionStorage.getItem("autoTests") === "true";
-    if (!r) { router.push("/analyse"); return; }
-    const data = JSON.parse(r);
-    setRapport(data);
-    setNomProjet(np);
-    setToken(t);
-    setProjectUrl(pu);
-    setBranche(br);
-    setAutoTests(at);
-    if (data.issues_gitlab && data.issues_gitlab.length > 0) {
-      setIssuesGitlab(data.issues_gitlab);
-    } else if (data.analyse_id) {
-      const jwt = localStorage.getItem("token");
-      axios.get(`${API}/issues/analyse/${data.analyse_id}`, {
-        headers: { Authorization: jwt ? `Bearer ${jwt}` : "" }
-      }).then(res => setIssuesGitlab(res.data)).catch(() => {});
+    const urlAnalyseId = searchParams.get("analyse_id");
+    const jwt = localStorage.getItem("token");
+    const headers = { Authorization: jwt ? `Bearer ${jwt}` : "" };
+
+    const applyData = (data: any, np: string, t: string, pu: string, br: string, at: boolean) => {
+      setRapport(data);
+      setNomProjet(np);
+      setToken(t);
+      setProjectUrl(pu);
+      setBranche(br);
+      setAutoTests(at);
+      if (data.issues_gitlab && data.issues_gitlab.length > 0) {
+        setIssuesGitlab(data.issues_gitlab);
+      } else if (data.analyse_id) {
+        axios.get(`${API}/issues/analyse/${data.analyse_id}`, { headers })
+          .then(res => setIssuesGitlab(res.data)).catch(() => {});
+      }
+      if (data.depot_analyse_id) {
+        axios.get(`${API}/analyses/depot/${data.depot_analyse_id}`)
+          .then(res => setHistorique(res.data))
+          .catch(() => setHistorique([]));
+      }
+      if (at) setTimeout(() => setShowPopup(true), 600);
+    };
+
+    // Cas 1 : vient de la page dépôts via sessionStorage (prioritaire si analyse_id correspond)
+    const stored = sessionStorage.getItem("rapport");
+    if (stored) {
+      const data = JSON.parse(stored);
+      // Si le sessionStorage correspond à l'analyse demandée (ou pas de paramètre URL)
+      if (!urlAnalyseId || String(data.analyse_id) === urlAnalyseId) {
+        applyData(
+          data,
+          sessionStorage.getItem("nomProjet") || "",
+          sessionStorage.getItem("token") || "",
+          sessionStorage.getItem("projectUrl") || "",
+          sessionStorage.getItem("branche") || "main",
+          sessionStorage.getItem("autoTests") === "true"
+        );
+        return;
+      }
     }
-    if (data.depot_analyse_id) {
-      axios.get(`${API}/analyses/depot/${data.depot_analyse_id}`)
-        .then(res => setHistorique(res.data))
-        .catch(() => setHistorique([]));
+
+    // Cas 2 : chargement direct depuis l'URL ?analyse_id=X (ex: lien partagé ou navigation dépôts)
+    if (urlAnalyseId) {
+      axios.get(`${API}/analyses/${urlAnalyseId}`, { headers })
+        .then(res => {
+          const data = { ...res.data, analyse_id: res.data.id };
+          // Récupérer infos du dépôt si disponible
+          const depotId = data.depot_analyse_id || data.depot_id;
+          if (depotId) {
+            axios.get(`${API}/analyses/depots/${depotId}`, { headers })
+              .then(depotRes => {
+                const depot = depotRes.data;
+                sessionStorage.setItem("rapport", JSON.stringify(data));
+                sessionStorage.setItem("nomProjet", depot.nom || "");
+                sessionStorage.setItem("projectUrl", depot.project_url || "");
+                sessionStorage.setItem("branche", data.branche || depot.branche || "main");
+                sessionStorage.setItem("autoTests", "false");
+                applyData(data, depot.nom || "", "", depot.project_url || "", data.branche || depot.branche || "main", false);
+              })
+              .catch(() => {
+                // Dépôt non trouvé, afficher quand même
+                sessionStorage.setItem("rapport", JSON.stringify(data));
+                applyData(data, `Analyse #${urlAnalyseId}`, "", "", data.branche || "main", false);
+              });
+          } else {
+            sessionStorage.setItem("rapport", JSON.stringify(data));
+            applyData(data, `Analyse #${urlAnalyseId}`, "", "", data.branche || "main", false);
+          }
+        })
+        .catch(() => {
+          // Analyse introuvable → retour
+          router.push("/depots");
+        });
+      return;
     }
-    if (at) setTimeout(() => setShowPopup(true), 600);
-  }, []);
+
+    // Cas 3 : ni sessionStorage ni URL → redirection
+    router.push("/analyse");
+  }, [searchParams]);
 
   const getHeaders = () => {
     const jwt = localStorage.getItem("token");
@@ -1089,5 +1143,21 @@ export default function RapportPage() {
         </div>
       )}
     </>
+  );
+}
+
+// Wrapper requis par Next.js App Router pour useSearchParams
+export default function RapportPageWrapper() {
+  return (
+    <Suspense fallback={
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', sans-serif" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ width: 36, height: 36, border: "3px solid #e2e8f0", borderTopColor: "#6366f1", borderRadius: "50%", animation: "spin 0.6s linear infinite", margin: "0 auto 12px" }} />
+          <div style={{ color: "#94a3b8", fontSize: 14 }}>Chargement du rapport...</div>
+        </div>
+      </div>
+    }>
+      <RapportPage />
+    </Suspense>
   );
 }

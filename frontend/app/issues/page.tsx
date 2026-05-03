@@ -70,6 +70,7 @@ export default function IssuesPage() {
   const [filterSeverite, setFilterSeverite] = useState("tous");
   const [filterStatut, setFilterStatut] = useState("tous");
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
   const [stats, setStats] = useState({
     total: 0,
     ouvertes: 0,
@@ -147,6 +148,35 @@ export default function IssuesPage() {
       fetchIssues(projetSelectionne!.id);
     } catch (e) {
       alert("Erreur synchronisation");
+    }
+  };
+
+  const toggleStatus = async (issue: Issue) => {
+    setTogglingId(issue.id);
+    const action = issue.statut === "opened" ? "close" : "reopen";
+    try {
+      const res = await axios.put(`${API}/issues/${issue.id}/${action}`, {}, { headers: getHeaders() });
+      const updatedStatut = res.data.statut;
+      setIssues(prev => {
+        const updated = prev.map(i => i.id === issue.id ? { ...i, statut: updatedStatut } : i);
+        setStats({
+          total: updated.length,
+          ouvertes: updated.filter(i => i.statut === "opened").length,
+          fermees: updated.filter(i => i.statut === "closed").length,
+          critiques: updated.filter(i => i.severite === "CRITIQUE").length,
+          hautes: updated.filter(i => i.severite === "HAUTE").length,
+          moyennes: updated.filter(i => i.severite === "MOYENNE").length,
+          faibles: updated.filter(i => i.severite === "FAIBLE").length,
+        });
+        return updated;
+      });
+      if (selectedIssue?.id === issue.id) {
+        setSelectedIssue(prev => prev ? { ...prev, statut: updatedStatut } : null);
+      }
+    } catch (e) {
+      alert("Erreur lors du changement de statut");
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -356,7 +386,29 @@ export default function IssuesPage() {
                         <div style={{ fontSize: 12, color: D.muted, background: D.bg, padding: "10px 12px", borderRadius: 12, margin: "12px 0", lineHeight: 1.5 }}>💡 {issue.description?.slice(0, 150)}...</div>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12 }}>
                           <span style={{ fontSize: 10, color: D.faint, fontFamily: "monospace" }}>{new Date(issue.created_at).toLocaleDateString()}</span>
-                          <button onClick={(e) => { e.stopPropagation(); syncStatus(issue.id); }} style={{ background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 8, padding: "5px 12px", fontSize: 11, cursor: "pointer", color: D.muted }}>↻ Sync</button>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleStatus(issue); }}
+                              disabled={togglingId === issue.id}
+                              style={{
+                                background: issue.statut === "opened"
+                                  ? (isDark ? "#ef444420" : "#fef2f2")
+                                  : (isDark ? "#10b98120" : "#dcfce7"),
+                                border: `1px solid ${issue.statut === "opened" ? "#ef4444" : "#10b981"}`,
+                                borderRadius: 8,
+                                padding: "5px 12px",
+                                fontSize: 11,
+                                cursor: togglingId === issue.id ? "not-allowed" : "pointer",
+                                color: issue.statut === "opened" ? "#ef4444" : "#10b981",
+                                fontWeight: 600,
+                                opacity: togglingId === issue.id ? 0.6 : 1,
+                                transition: "all 0.2s"
+                              }}
+                            >
+                              {togglingId === issue.id ? "..." : issue.statut === "opened" ? "✕ Fermer" : "↺ Rouvrir"}
+                            </button>
+                            <button onClick={(e) => { e.stopPropagation(); syncStatus(issue.id); }} style={{ background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 8, padding: "5px 12px", fontSize: 11, cursor: "pointer", color: D.muted }}>↻ Sync</button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -423,6 +475,37 @@ export default function IssuesPage() {
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 500, background: statutConfig(selectedIssue.statut).bg, color: statutConfig(selectedIssue.statut).text }}>
                   {statutConfig(selectedIssue.statut).icon} {statutConfig(selectedIssue.statut).label}
                 </span>
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <button
+                  onClick={() => toggleStatus(selectedIssue)}
+                  disabled={togglingId === selectedIssue.id}
+                  style={{
+                    width: "100%",
+                    padding: "12px 20px",
+                    borderRadius: 12,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: togglingId === selectedIssue.id ? "not-allowed" : "pointer",
+                    border: "none",
+                    transition: "all 0.2s",
+                    opacity: togglingId === selectedIssue.id ? 0.6 : 1,
+                    background: selectedIssue.statut === "opened"
+                      ? (isDark ? "#ef444430" : "#fef2f2")
+                      : (isDark ? "#10b98130" : "#dcfce7"),
+                    color: selectedIssue.statut === "opened" ? "#ef4444" : "#10b981",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                  }}
+                >
+                  {togglingId === selectedIssue.id
+                    ? "⏳ En cours..."
+                    : selectedIssue.statut === "opened"
+                      ? "✕ Fermer l'issue sur GitLab"
+                      : "↺ Rouvrir l'issue sur GitLab"}
+                </button>
               </div>
             </div>
           </div>

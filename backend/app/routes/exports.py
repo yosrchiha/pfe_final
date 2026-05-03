@@ -1,5 +1,7 @@
 # backend/app/routes/exports.py
+import os
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List
 from datetime import datetime
@@ -140,3 +142,98 @@ def get_export_stats(
         "docx": total - pdf_count,
         "monthly": [{"mois": str(m.mois)[:7], "count": m.count} for m in monthly]
     }
+
+
+# ════════════════════════════════════════════════════════
+# GET /exports/download/{export_id}
+# Télécharger le fichier d'un export (PDF ou DOCX)
+# ════════════════════════════════════════════════════════
+@router.get("/download/{export_id}")
+def download_export(
+    export_id: int,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    user_id = get_user_id_from_token(authorization, db)
+
+    export = db.query(ExportRapport).filter(
+        ExportRapport.id == export_id,
+        ExportRapport.user_id == user_id
+    ).first()
+
+    if not export:
+        raise HTTPException(status_code=404, detail="Export introuvable")
+
+    if not export.chemin_fichier:
+        raise HTTPException(status_code=404, detail="Fichier non disponible")
+
+    # Résoudre le chemin absolu (le fichier peut être relatif au répertoire backend)
+    file_path = export.chemin_fichier
+    if not os.path.isabs(file_path):
+        # Chemin relatif → on cherche depuis le répertoire courant du backend
+        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        file_path = os.path.join(base_dir, export.chemin_fichier)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Fichier introuvable sur le serveur : {export.chemin_fichier}"
+        )
+
+    fmt = export.format.lower()
+    if fmt == "pdf":
+        media_type = "application/pdf"
+        ext = "pdf"
+    elif fmt in ("docx", "word"):
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ext = "docx"
+    else:
+        media_type = "application/octet-stream"
+        ext = fmt
+
+    filename = f"rapport_analyse_{export.analyse_id}.{ext}"
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+# ════════════════════════════════════════════════════════
+# DELETE /exports/{export_id}
+# Supprimer un export (entrée BDD + fichier disque)
+# ════════════════════════════════════════════════════════
+@router.delete("/{export_id}")
+def delete_export(
+    export_id: int,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    user_id = get_user_id_from_token(authorization, db)
+
+    export = db.query(ExportRapport).filter(
+        ExportRapport.id == export_id,
+        ExportRapport.user_id == user_id
+    ).first()
+
+    if not export:
+        raise HTTPException(status_code=404, detail="Export introuvable")
+
+    # Supprimer le fichier physique si disponible
+    if export.chemin_fichier:
+        file_path = export.chemin_fichier
+        if not os.path.isabs(file_path):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            file_path = os.path.join(base_dir, export.chemin_fichier)
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except OSError:
+            pass  # Ne pas bloquer si suppression fichier échoue
+
+    db.delete(export)
+    db.commit()
+
+    return {"message": "Export supprimé avec succès", "id": export_id}

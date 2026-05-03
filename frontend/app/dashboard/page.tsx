@@ -24,6 +24,7 @@ const menuItems = [
   { key: "comparaisons",   label: "Comparaisons",    icon: "📊", href: "/comparaisons" },
   { key: "analyses",       label: "Analyse",         icon: "◎",  href: "/analyse" },
   { key: "videos",         label: "Mes Vidéos",      icon: "🎬", href: "/mes-videos" },   // ← NOUVEAU
+  { key: "rapports",       label: "Mes Rapports",    icon: "📄", href: "/mes-rapports" },
 
   { key: "exploration",    label: "Exploration",     icon: "🗂️",  href: "/exploration-history"},
   { key: "tests",          label: "Tests",           icon: "🧪", href: "/TestsPaage" },

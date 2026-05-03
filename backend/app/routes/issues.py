@@ -143,8 +143,13 @@ def close_issue(
     ).first()
     if not depot:
         raise HTTPException(status_code=403, detail="Accès non autorisé")
-    if not depot.gitlab_token:
-        raise HTTPException(status_code=400, detail="Token GitLab manquant pour ce dépôt")
+
+    # Si token ou issue_id_gitlab manquant → fermeture en base uniquement (pas d'erreur 500)
+    if not depot.gitlab_token or not issue.issue_id_gitlab:
+        issue.statut = "closed"
+        db.commit()
+        db.refresh(issue)
+        return {**_format_issue(issue), "message": "Issue fermée en base (token ou issue_id_gitlab manquant)"}
 
     try:
         project      = get_gitlab_project(depot.gitlab_token, depot.project_url)
@@ -163,7 +168,12 @@ def close_issue(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur fermeture GitLab : {str(e)}")
+        print(f"[ISSUES] ❌ Erreur GitLab close #{issue_id}: {e}")
+        # Ferme quand même en base même si GitLab échoue
+        issue.statut = "closed"
+        db.commit()
+        db.refresh(issue)
+        return {**_format_issue(issue), "message": f"Issue fermée en base (erreur GitLab: {str(e)})"}
 
 
 # ════════════════════════════════════════════════════════
@@ -189,8 +199,13 @@ def reopen_issue(
     ).first()
     if not depot:
         raise HTTPException(status_code=403, detail="Accès non autorisé")
-    if not depot.gitlab_token:
-        raise HTTPException(status_code=400, detail="Token GitLab manquant pour ce dépôt")
+
+    # Si token ou issue_id_gitlab manquant → réouverture en base uniquement (pas d'erreur 500)
+    if not depot.gitlab_token or not issue.issue_id_gitlab:
+        issue.statut = "opened"
+        db.commit()
+        db.refresh(issue)
+        return {**_format_issue(issue), "message": "Issue rouverte en base (token ou issue_id_gitlab manquant)"}
 
     try:
         project      = get_gitlab_project(depot.gitlab_token, depot.project_url)
@@ -209,7 +224,12 @@ def reopen_issue(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur réouverture GitLab : {str(e)}")
+        print(f"[ISSUES] ❌ Erreur GitLab reopen #{issue_id}: {e}")
+        # Rouvre quand même en base même si GitLab échoue
+        issue.statut = "opened"
+        db.commit()
+        db.refresh(issue)
+        return {**_format_issue(issue), "message": f"Issue rouverte en base (erreur GitLab: {str(e)})"}
 
 
 # ════════════════════════════════════════════════════════

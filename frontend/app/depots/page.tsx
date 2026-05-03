@@ -79,7 +79,7 @@ export default function DepotsPage() {
   const [vueAnalyse,    setVueAnalyse]    = useState(false);
   const [analyses,      setAnalyses]      = useState<Analyse[]>([]);
   const [depotVu,       setDepotVu]       = useState<DepotAnalyse | null>(null);
-  const [analyseDetail, setAnalyseDetail] = useState<Analyse | null>(null);
+  // analyseDetail supprimé — on navigue vers /analyse/rapport?analyse_id=X
   const [loadingA,      setLoadingA]      = useState(false);
 
   // Toast
@@ -237,7 +237,7 @@ export default function DepotsPage() {
       setDepotVu(modalDepot);
       setModalDepot(null);
       setVueAnalyse(true);
-      setAnalyseDetail(null);
+      // analyseDetail supprimé
 
     } catch (e: any) {
       const detail = e.response?.data?.detail;
@@ -297,23 +297,19 @@ export default function DepotsPage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, flexWrap: "wrap", gap: 16 }}>
             <div>
               <h1 style={{ fontSize: 28, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", margin: 0 }}>
-                {analyseDetail
-                  ? "Détail de l'analyse"
-                  : vueAnalyse
+                {vueAnalyse
                   ? `Analyses • ${depotVu?.nom}`
                   : "Mes projets"}
               </h1>
               <p style={{ fontSize: 14, color: D.faint, margin: 0 }}>
-                {analyseDetail
-                  ? `Analyse du ${analyseDetail.created_at ? new Date(analyseDetail.created_at).toLocaleDateString("fr-FR") : ""}`
-                  : vueAnalyse
+                {vueAnalyse
                   ? `${analyses.length} analyse(s) réalisée(s)`
                   : "Projets analysés par l'intelligence artificielle"}
               </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <ThemeToggle />
-              {!vueAnalyse && !analyseDetail && (
+              {!vueAnalyse && (
                 <button
                   onClick={() => router.push("/analyse")}
                   style={{ background: D.btnPrimary, color: "white", border: "none", padding: "10px 24px", borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
@@ -325,7 +321,7 @@ export default function DepotsPage() {
           </div>
 
           {/* STATS (uniquement en vue liste) */}
-          {!vueAnalyse && !analyseDetail && (
+          {!vueAnalyse && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20, marginBottom: 32 }}>
               <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: "20px 24px" }}>
                 <div style={{ fontSize: 32, fontWeight: 700, color: "#6366f1", marginBottom: 4 }}>{depots.length}</div>
@@ -343,7 +339,7 @@ export default function DepotsPage() {
           )}
 
           {/* SEARCH (uniquement en vue liste) */}
-          {!vueAnalyse && !analyseDetail && (
+          {!vueAnalyse && (
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
               <div style={{ position: "relative", flex: 1, maxWidth: 360 }}>
                 <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: D.faint, fontSize: 16 }}>🔍</span>
@@ -359,7 +355,7 @@ export default function DepotsPage() {
           )}
 
           {/* VUE 1 — LISTE DES PROJETS */}
-          {!vueAnalyse && !analyseDetail && (
+          {!vueAnalyse && (
             <>
               {loading ? (
                 <div style={{ textAlign: "center", padding: "60px 20px" }}>
@@ -442,7 +438,7 @@ export default function DepotsPage() {
           )}
 
           {/* VUE 2 — ANALYSES D'UN PROJET */}
-          {vueAnalyse && !analyseDetail && (
+          {vueAnalyse && (
             <>
               <div style={{ marginBottom: 20 }}>
                 <button onClick={() => setVueAnalyse(false)} style={{ background: D.btnSec, border: `1px solid ${D.border}`, padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
@@ -467,7 +463,19 @@ export default function DepotsPage() {
                   {analyses.map(a => {
                     const vulnCount = a.vulnerabilites?.length || 0;
                     return (
-                      <div key={a.id} onClick={() => setAnalyseDetail(a)} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 20, cursor: "pointer", transition: "all 0.2s" }}>
+                      <div key={a.id} onClick={() => {
+                        // Préparer sessionStorage pour la page rapport
+                        sessionStorage.setItem("rapport", JSON.stringify({
+                          ...a,
+                          analyse_id: a.id,
+                          depot_analyse_id: depotVu?.id,
+                        }));
+                        sessionStorage.setItem("nomProjet", depotVu?.nom || "");
+                        sessionStorage.setItem("projectUrl", depotVu?.project_url || "");
+                        sessionStorage.setItem("branche", a.branche || depotVu?.branche || "main");
+                        sessionStorage.setItem("autoTests", "false");
+                        router.push(`/analyse/rapport?analyse_id=${a.id}`);
+                      }} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 20, cursor: "pointer", transition: "all 0.2s" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
                           <span style={{ fontSize: 12, color: D.faint }}>{new Date(a.created_at).toLocaleDateString("fr-FR")}</span>
                           <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, background: "rgba(16,185,129,0.12)", color: "#10b981" }}>{a.statut === "termine" ? "Terminé" : "En cours"}</span>
@@ -495,64 +503,6 @@ export default function DepotsPage() {
             </>
           )}
 
-          {/* VUE 3 — DÉTAIL D'UNE ANALYSE */}
-          {analyseDetail && (
-            <>
-              <div style={{ marginBottom: 20 }}>
-                <button onClick={() => setAnalyseDetail(null)} style={{ background: D.btnSec, border: `1px solid ${D.border}`, padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
-                  ← Retour aux analyses
-                </button>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20, marginBottom: 32 }}>
-                {[
-                  { label: "Qualité", val: analyseDetail.score_qualite },
-                  { label: "Sécurité", val: analyseDetail.score_securite },
-                  { label: "Performance", val: analyseDetail.score_performance },
-                ].map(s => (
-                  <div key={s.label} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 24, textAlign: "center" }}>
-                    <div style={{ fontSize: 48, fontWeight: 700, color: colorScore(s.val) }}>{s.val ?? "—"}</div>
-                    <div style={{ fontSize: 12, color: D.faint, marginTop: 8 }}>{s.label}</div>
-                  </div>
-                ))}
-              </div>
-
-              {analyseDetail.vulnerabilites?.length > 0 && (
-                <>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: D.text, margin: "24px 0 16px" }}>⚠️ Vulnérabilités ({analyseDetail.vulnerabilites.length})</div>
-                  {analyseDetail.vulnerabilites.map((v: any, i: number) => (
-                    <div key={i} style={{ background: D.bg, borderLeft: `3px solid ${colorSeverite(v.severite)}`, borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: `${colorSeverite(v.severite)}15`, color: colorSeverite(v.severite), display: "inline-block", marginBottom: 8 }}>
-                        {v.severite}
-                      </span>
-                      <div style={{ fontWeight: 600, marginBottom: 6, color: D.text }}>{v.type}</div>
-                      <div style={{ fontSize: 12, color: D.faint, fontFamily: "monospace", marginBottom: 8 }}>📄 {v.fichier} — ligne {v.ligne}</div>
-                      <div style={{ fontSize: 13, background: D.card, padding: 10, borderRadius: 10, color: D.text }}>💡 {v.suggestion}</div>
-                    </div>
-                  ))}
-                </>
-              )}
-
-              {analyseDetail.recommandations?.length > 0 && (
-                <>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: D.text, margin: "24px 0 16px" }}>💡 Recommandations ({analyseDetail.recommandations.length})</div>
-                  {analyseDetail.recommandations.map((r: any, i: number) => (
-                    <div key={i} style={{ background: D.bg, borderRadius: 12, padding: 16, marginBottom: 12 }}>
-                      <div style={{ fontWeight: 600, color: "#10b981", marginBottom: 6 }}>{r.titre}</div>
-                      <div style={{ color: D.muted }}>{r.description}</div>
-                    </div>
-                  ))}
-                </>
-              )}
-
-              {(!analyseDetail.vulnerabilites || analyseDetail.vulnerabilites.length === 0) && (
-                <div style={{ textAlign: "center", padding: "40px 20px", background: "rgba(16,185,129,0.08)", borderRadius: 20 }}>
-                  <div style={{ fontSize: 48, marginBottom: 8 }}>✅</div>
-                  <div style={{ color: "#10b981" }}>Aucune vulnérabilité détectée — Code propre !</div>
-                </div>
-              )}
-            </>
-          )}
         </div>
       </div>
 
