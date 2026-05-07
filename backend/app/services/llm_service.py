@@ -202,7 +202,7 @@ RÈGLE SUR LES NUMÉROS DE LIGNE :
 Le code fourni est numéroté ligne par ligne au format "   N | code".
 Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
 Ne jamais inventer un numéro de ligne — lis le préfixe numérique dans le code fourni.
-Si un problème est global (pas lié à une ligne précise), utilise ligne = 0.
+Si un problème concerne une ligne précise, indique son numéro réel. Si le problème est vraiment global (tout le fichier), utilise ligne = 1 (JAMAIS 0).
 
 Structure JSON de retour :
 {
@@ -210,7 +210,7 @@ Structure JSON de retour :
     "vulnerabilites": [
         {
             "fichier": "<chemin exact du fichier tel qu'indiqué après FICHIER :>",
-            "ligne": <numéro entier lu dans le préfixe "N |" du code, ou 0 si global>,
+            "ligne": <numéro entier lu dans le préfixe "N |" du code — minimum 1, jamais 0>,
             "type": "<catégorie exacte : Complexité | Duplication | Lisibilité | Maintenabilité | Docstring manquant | Commentaire absent | Nommage ambigu | Gestion erreurs | SOLID-S | SOLID-O>",
             "severite": "<HAUTE | MOYENNE | FAIBLE>",
             "suggestion": "<correction précise et concrète, en une phrase>"
@@ -409,7 +409,7 @@ Structure JSON de retour :
     "vulnerabilites": [
         {
             "fichier": "<chemin exact du fichier tel qu'indiqué après FICHIER :>",
-            "ligne": <numéro entier lu dans le préfixe "N |" du code, ou 0 si global>,
+            "ligne": <numéro entier lu dans le préfixe "N |" du code — minimum 1, jamais 0>,
             "type": "<catégorie : Docstring manquant | Commentaire absent | Nommage ambigu>",
             "severite": "<MOYENNE | FAIBLE>",
             "suggestion": "<exemple de docstring ou commentaire à ajouter>"
@@ -764,7 +764,12 @@ def _fusionner_tous(resultats_par_dimension: dict) -> dict:
     for dim_key in ["qualite", "securite", "performance", "documentation", "bonnes_pratiques"]:
         res = resultats_par_dimension.get(dim_key, {})
         for v in res.get("vulnerabilites", []):
-            cle = (v.get("fichier", ""), v.get("type", ""), v.get("ligne", 0))
+            # ✅ Corriger les numéros de ligne invalides (0 ou négatifs) → 1
+            # Le LLM utilise parfois 0 pour les problèmes "globaux", mais
+            # l'interface ne sait pas afficher correctement "ligne 0".
+            if not isinstance(v.get("ligne"), int) or v.get("ligne", 0) <= 0:
+                v["ligne"] = 1
+            cle = (v.get("fichier", ""), v.get("type", ""), v.get("ligne", 1))
             if cle not in vulns_vues:
                 vulns_vues.add(cle)
                 v["dimension"] = dim_key

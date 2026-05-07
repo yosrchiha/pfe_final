@@ -16,6 +16,7 @@ from app.routes.explorer     import router as explorer_router
 from app.routes.Admin        import router as admin_router
 from app.routes.analyses     import router as analyses_router
 from app.routes import exports as exports_router
+from app.routes.platform_status    import router as platform_status_router
 
 from app.routes import tests
 from app.models.merge_request import MergeRequest
@@ -93,6 +94,7 @@ app.include_router(analyses_fichier.router)
 app.include_router(vulnerabilites_router)
 app.include_router(tts_router)
 app.include_router(video_router)
+app.include_router(platform_status_router)
 # backend/app/main.py
 
 # ... (votre code existant)

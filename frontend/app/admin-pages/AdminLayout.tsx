@@ -4,20 +4,26 @@ import { useState } from "react";
 import { ThemeProvider, useTheme } from "./ThemeContext";
 
 const NAV = [
-  { href: "/admin-pages",             icon: "⬡",  label: "Dashboard",       sub: "Vue d'ensemble" },
-  { href: "/admin-pages/users",       icon: "◈",  label: "Utilisateurs",    sub: "Gestion des comptes" },
-  { href: "/admin-pages/depots",      icon: "▣",  label: "Dépôts",          sub: "Tous les projets" },
-  { href: "/admin-pages/analyses",    icon: "◉",  label: "Analyses IA",     sub: "Branche complète" },
-  { href: "/admin-pages/diffs",       icon: "⇄",  label: "Analyse Diff",    sub: "Comparaison branches" },
-  { href: "/admin-pages/tests",       icon: "◎",  label: "Tests Générés",   sub: "Tests unitaires LLM" },
-  { href: "/admin-pages/mrs",         icon: "⊕",  label: "Merge Requests",  sub: "Créées par l'IA" },
-  { href: "/admin-pages/stats",       icon: "◈",  label: "Statistiques",    sub: "Métriques globales" },
+  { href: "/admin-pages",                      icon: "⬡",  label: "Dashboard",        sub: "Vue d'ensemble" },
+  { href: "/admin-pages/users",                icon: "◈",  label: "Utilisateurs",     sub: "Gestion des comptes" },
+  { href: "/admin-pages/depots",               icon: "▣",  label: "Dépôts",           sub: "Tous les projets" },
+  { href: "/admin-pages/analyses",             icon: "◉",  label: "Analyses IA",      sub: "Branche complète" },
+  { href: "/admin-pages/diffs",                icon: "⇄",  label: "Analyse Diff",     sub: "Comparaison branches" },
+  { href: "/admin-pages/tests",                icon: "◎",  label: "Tests Générés",    sub: "Tests unitaires LLM" },
+  { href: "/admin-pages/mrs",                  icon: "⊕",  label: "Merge Requests",   sub: "Créées par l'IA" },
+  { href: "/admin-pages/stats",                icon: "◈",  label: "Statistiques",     sub: "Métriques globales" },
+  { href: "/admin-pages/platform-status", label: "État Plateforme IA" },
   { label: "──────", divider: true },
-  { href: "/admin-pages/new-analyse", icon: "▶",  label: "Lancer Analyse",  sub: "Analyse simple", action: true },
-  { href: "/admin-pages/new-diff",    icon: "⇌",  label: "Lancer Diff",     sub: "Analyse diff",   action: true },
-  { href: "/admin-pages/explorer",    icon: "⊞",  label: "Explorer",        sub: "Parcourir le code", action: true },
+  // ── Section Exploration ────────────────────────────────────────
+  { href: "/admin-pages/explorations",         icon: "🔭", label: "Explorations",     sub: "Historique explorer" },
+  { href: "/admin-pages/corrections",          icon: "🩹", label: "Corrections IA",   sub: "Vulns corrigées" },
+  { href: "/admin-pages/mr-explorations",      icon: "⊛",  label: "MR Explorer",      sub: "MR via explorateur" },
   { label: "──────", divider: true },
-  { href: "/dashboard",         icon: "←",  label: "Espace client",   sub: "Retour au dashboard" },
+  { href: "/admin-pages/new-analyse",          icon: "▶",  label: "Lancer Analyse",   sub: "Analyse simple",  action: true },
+  { href: "/admin-pages/new-diff",             icon: "⇌",  label: "Lancer Diff",      sub: "Analyse diff",    action: true },
+  { href: "/admin-pages/explorer",             icon: "⊞",  label: "Explorer",         sub: "Parcourir le code", action: true },
+  { label: "──────", divider: true },
+  { href: "/dashboard",                        icon: "←",  label: "Espace client",    sub: "Retour au dashboard" },
 ];
 
 function LayoutInner({ children }: { children: React.ReactNode }) {
@@ -117,7 +123,6 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
         {/* Footer avec toggle */}
         <div style={{ padding: collapsed ? "12px 8px" : "14px 16px", borderTop: `1px solid ${theme.cardBorder}` }}>
 
-          {/* ── TOGGLE MODE SOMBRE / CLAIR ── */}
           {!collapsed ? (
             <button className="theme-toggle-btn" onClick={toggle} style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -126,7 +131,6 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
               border: `1px solid ${isDark ? "rgba(91,99,245,0.3)" : "#e0e5f0"}`,
               borderRadius: 10, cursor: "pointer",
             }}>
-              {/* Track */}
               <div style={{ width: 38, height: 21, borderRadius: 11, position: "relative", flexShrink: 0,
                 background: isDark ? "rgba(91,99,245,0.3)" : "#e2e8f0",
                 border: `1px solid ${isDark ? "rgba(91,99,245,0.5)" : "#cbd5e1"}`,
@@ -147,7 +151,6 @@ function LayoutInner({ children }: { children: React.ReactNode }) {
               </div>
             </button>
           ) : (
-            /* Toggle compact quand sidebar collapsed */
             <button onClick={toggle} title={isDark ? "Mode clair" : "Mode sombre"} style={{
               width: "100%", background: "none", border: `1px solid ${theme.cardBorder}`,
               borderRadius: 8, cursor: "pointer", fontSize: 16, padding: "7px 0", marginBottom: 10,

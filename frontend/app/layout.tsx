@@ -1,7 +1,8 @@
+import "./globals.css";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "./ThemeContext";
-import "./globals.css";
+import AxiosSetup from "./AxiosSetup";   // ← ligne 1 : import
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,6 +30,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider>
+          <AxiosSetup />   {/* ← ligne 2 : composant */}
           {children}
         </ThemeProvider>
       </body>

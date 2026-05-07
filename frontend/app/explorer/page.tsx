@@ -206,6 +206,15 @@ export default function ExplorerPage() {
     
     const corrige = res.data.contenu_corrige as string;
     setEditContent(corrige);
+    // Dans corrigerParIA, après setEditContent(corrige) :
+    setAnalyses(prev => {
+     const next = { ...prev };
+     delete next[selFile.path];   // ← invalide l'ancienne analyse
+     return next;
+    });
+    // Après setEditContent(corrige) et l'invalidation ci-dessus :
+   // Re-lancer l'analyse sur le contenu corrigé
+    await analyserFichier({ ...selFile, content: corrige });
     saveEditLocal(selFile.path, corrige);
     
     // Sauvegarde en base

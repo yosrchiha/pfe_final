@@ -6,6 +6,7 @@ from sqlalchemy import func
 from typing import List, Optional
 from pydantic import BaseModel
 from datetime import datetime
+from app.models.login_event import LoginEvent
 # backend/app/routes/Admin.py
 from sqlalchemy.sql import text  # Ajoutez cet import en haut du fichier
 
@@ -649,5 +650,605 @@ def update_user_info(
         "role":     u.role,
         "message":  "Utilisateur modifié avec succès",
     }
+# ══════════════════════════════════════════════════════════════════
+# À AJOUTER dans backend/app/routes/Admin.py
+# — Collez ce bloc à la fin du fichier existant —
+# ══════════════════════════════════════════════════════════════════
+
+# ── Imports supplémentaires (ajoutez en haut du fichier Admin.py) ──
+# from app.models.exploration   import Exploration
+# from app.models.correction    import Correction
+# from app.models.mr_exploration import MrExploration
+
+# ══════════════════════════════════════════════════════════════════
+# EXPLORATIONS — ADMIN CRUD
+# ══════════════════════════════════════════════════════════════════
+
+@router.get("/explorations")
+def admin_get_all_explorations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retourne toutes les explorations (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.exploration import Exploration
+
+    rows = (
+        db.query(Exploration, User)
+        .join(User, Exploration.user_id == User.id)
+        .order_by(Exploration.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id":               e.id,
+            "user_id":          e.user_id,
+            "user_email":       u.email,
+            "projet_nom":       e.projet_nom,
+            "projet_chemin":    e.projet_chemin,
+            "branche":          e.branche,
+            "total_fichiers":   e.total_fichiers or 0,
+            "statut":           e.statut or "active",
+            "created_at":       str(e.created_at) if e.created_at else None,
+            "updated_at":       str(e.updated_at) if e.updated_at else None,
+        }
+        for e, u in rows
+    ]
+
+
+@router.delete("/explorations/{exploration_id}", status_code=204)
+def admin_delete_exploration(
+    exploration_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Supprime une exploration (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.exploration import Exploration
+
+    e = db.query(Exploration).filter(Exploration.id == exploration_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Exploration introuvable")
+    db.delete(e)
+    db.commit()
+
+
+@router.patch("/explorations/{exploration_id}/statut")
+def admin_update_exploration_statut(
+    exploration_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Met à jour le statut d'une exploration (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.exploration import Exploration
+
+    e = db.query(Exploration).filter(Exploration.id == exploration_id).first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Exploration introuvable")
+
+    statut = body.get("statut")
+    if statut not in ("active", "archived"):
+        raise HTTPException(status_code=400, detail="Statut invalide : 'active' ou 'archived'")
+
+    e.statut = statut
+    db.commit()
+    return {"id": e.id, "statut": e.statut, "message": "Statut mis à jour"}
+
+
+# ══════════════════════════════════════════════════════════════════
+# CORRECTIONS — ADMIN CRUD
+# ══════════════════════════════════════════════════════════════════
+
+@router.get("/corrections")
+def admin_get_all_corrections(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retourne toutes les corrections appliquées (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.correction import Correction
+
+    rows = (
+        db.query(Correction, User)
+        .join(User, Correction.user_id == User.id)
+        .order_by(Correction.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id":                c.id,
+            "user_id":           c.user_id,
+            "user_email":        u.email,
+            "projet_nom":        c.projet_nom,
+            "fichier_path":      c.fichier_path,
+            "branche":           c.branche,
+            "vuln_type":         c.vuln_type,
+            "vuln_severite":     c.vuln_severite,
+            "vuln_ligne":        c.vuln_ligne,
+            "vuln_suggestion":   c.vuln_suggestion,
+            "statut":            c.statut or "appliquee",
+            "created_at":        str(c.created_at) if c.created_at else None,
+            "pushed_at":         str(c.pushed_at) if c.pushed_at else None,
+        }
+        for c, u in rows
+    ]
+
+
+@router.delete("/corrections/{correction_id}", status_code=204)
+def admin_delete_correction(
+    correction_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Supprime une correction (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.correction import Correction
+
+    c = db.query(Correction).filter(Correction.id == correction_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Correction introuvable")
+    db.delete(c)
+    db.commit()
+
+
+@router.patch("/corrections/{correction_id}/statut")
+def admin_update_correction_statut(
+    correction_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Met à jour le statut d'une correction (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.correction import Correction
+
+    c = db.query(Correction).filter(Correction.id == correction_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Correction introuvable")
+
+    statut = body.get("statut")
+    if statut not in ("appliquee", "poussee", "annulee"):
+        raise HTTPException(
+            status_code=400,
+            detail="Statut invalide : 'appliquee', 'poussee' ou 'annulee'"
+        )
+
+    c.statut = statut
+    db.commit()
+    return {"id": c.id, "statut": c.statut, "message": "Statut mis à jour"}
+
+
+# ══════════════════════════════════════════════════════════════════
+# MR EXPLORATIONS — ADMIN CRUD
+# ══════════════════════════════════════════════════════════════════
+
+@router.get("/mr-explorations")
+def admin_get_all_mr_explorations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Retourne toutes les MR créées via explorer (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.mr_exploration import MrExploration
+
+    rows = (
+        db.query(MrExploration, User)
+        .join(User, MrExploration.user_id == User.id)
+        .order_by(MrExploration.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id":               m.id,
+            "user_id":          m.user_id,
+            "user_email":       u.email,
+            "projet_nom":       m.projet_nom,
+            "projet_chemin":    m.projet_chemin,
+            "branche_source":   m.branche_source,
+            "branche_cible":    m.branche_cible,
+            "titre":            m.titre,
+            "description":      m.description,
+            "mr_id_gitlab":     m.mr_id_gitlab,
+            "mr_iid_gitlab":    m.mr_iid_gitlab,
+            "mr_url":           m.mr_url,
+            "statut":           m.statut or "opened",
+            "created_at":       str(m.created_at) if m.created_at else None,
+            "merged_at":        str(m.merged_at) if m.merged_at else None,
+            "closed_at":        str(m.closed_at) if m.closed_at else None,
+        }
+        for m, u in rows
+    ]
+
+
+@router.delete("/mr-explorations/{mr_id}", status_code=204)
+def admin_delete_mr_exploration(
+    mr_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Supprime un enregistrement MR exploration (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.mr_exploration import MrExploration
+
+    m = db.query(MrExploration).filter(MrExploration.id == mr_id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="MR Exploration introuvable")
+    db.delete(m)
+    db.commit()
+
+
+@router.patch("/mr-explorations/{mr_id}/statut")
+def admin_update_mr_exploration_statut(
+    mr_id: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Met à jour le statut d'une MR exploration (admin)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin requis")
+
+    from app.models.mr_exploration import MrExploration
+
+    m = db.query(MrExploration).filter(MrExploration.id == mr_id).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="MR Exploration introuvable")
+
+    statut = body.get("statut")
+    if statut not in ("opened", "merged", "closed"):
+        raise HTTPException(
+            status_code=400,
+            detail="Statut invalide : 'opened', 'merged' ou 'closed'"
+        )
+
+    m.statut = statut
+    db.commit()
+    return {"id": m.id, "statut": m.statut, "message": "Statut mis à jour"}
+# ══════════════════════════════════════════════════════════════════
+# TRACABILITÉ UTILISATEUR — Ajouter à la fin de Admin.py
+# ══════════════════════════════════════════════════════════════════
+#
+# IMPORTS à ajouter en haut de Admin.py (s'ils ne sont pas déjà là) :
+#
+#   from app.models.video_generee import VideoGeneree
+#   from app.models.export_rapport import ExportRapport
+#   from app.models.depot_analyse import DepotAnalyse
+#
+# ══════════════════════════════════════════════════════════════════
+
+from app.models.video_generee import VideoGeneree
+from app.models.export_rapport import ExportRapport
+
+
+# ── Schémas de sortie ─────────────────────────────────────────────
+
+class LoginEventOut(BaseModel):
+    id: int
+    user_id: int
+    date: datetime
+    ip: Optional[str] = None
+    user_agent: Optional[str] = None
+    statut: str  # "succes" | "echec" | "deconnexion"
+    duree_minutes: Optional[int] = None
+    model_config = {"from_attributes": True}
+
+
+class AnalyseEventOut(BaseModel):
+    id: int
+    depot_nom: str
+    branche: Optional[str] = None
+    score_qualite: int = 0
+    score_securite: int = 0
+    score_performance: int = 0
+    statut: str = "inconnu"
+    created_at: Optional[datetime] = None
+    nb_vulns: int = 0
+    model_config = {"from_attributes": True}
+
+
+class VideoEventOut(BaseModel):
+    id: int
+    type_video: str
+    titre: str
+    langue: str = "fr"
+    nom_projet: Optional[str] = None
+    created_at: Optional[datetime] = None
+    model_config = {"from_attributes": True}
+
+
+class RapportEventOut(BaseModel):
+    id: int
+    nom_projet: str
+    created_at: Optional[datetime] = None
+    nb_pages: Optional[int] = None
+    model_config = {"from_attributes": True}
+
+
+class ActivityStatsOut(BaseModel):
+    total_analyses: int = 0
+    total_videos: int = 0
+    total_rapports: int = 0
+    sessions_actives: int = 0
+    derniere_activite: Optional[datetime] = None
+
+
+# ── GET /admin/users/{user_id}/stats ─────────────────────────────
+
+@router.get("/users/{user_id}/stats", response_model=ActivityStatsOut)
+def get_user_activity_stats(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Statistiques globales d'activité d'un utilisateur (admin requis)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    # Analyses : cherche via DepotAnalyse (user_id) + Depot (proprietaire_id)
+    analyses_via_da = (
+        db.query(func.count(Analyse.id))
+        .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
+        .filter(DepotAnalyse.user_id == user_id)
+        .scalar() or 0
+    )
+    analyses_via_depot = (
+        db.query(func.count(Analyse.id))
+        .join(Depot, Analyse.depot_id == Depot.id)
+        .filter(Depot.proprietaire_id == user_id)
+        .scalar() or 0
+    )
+    total_analyses = analyses_via_da + analyses_via_depot
+
+    # Vidéos
+    total_videos = (
+        db.query(func.count(VideoGeneree.id))
+        .filter(VideoGeneree.user_id == user_id)
+        .scalar() or 0
+    )
+
+    # Rapports PDF
+    total_rapports = (
+        db.query(func.count(ExportRapport.id))
+        .filter(ExportRapport.user_id == user_id)
+        .scalar() or 0
+    )
+
+    # Dernière activité : max(dernière analyse, dernière vidéo, dernière connexion)
+    derniere_analyse = (
+        db.query(func.max(Analyse.created_at))
+        .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
+        .filter(DepotAnalyse.user_id == user_id)
+        .scalar()
+    )
+    derniere_video = (
+        db.query(func.max(VideoGeneree.created_at))
+        .filter(VideoGeneree.user_id == user_id)
+        .scalar()
+    )
+    derniere_export = (
+        db.query(func.max(ExportRapport.created_at))
+        .filter(ExportRapport.user_id == user_id)
+        .scalar()
+    )
+
+    candidates = [d for d in [derniere_analyse, derniere_video, derniere_export] if d]
+    derniere_activite = max(candidates) if candidates else None
+
+    return ActivityStatsOut(
+        total_analyses=total_analyses,
+        total_videos=total_videos,
+        total_rapports=total_rapports,
+        sessions_actives=0,          # à connecter à un système de session si tu en as un
+        derniere_activite=derniere_activite,
+    )
+
+
+# ── GET /admin/users/{user_id}/analyses ──────────────────────────
+
+@router.get("/users/{user_id}/analyses")
+def get_user_analyses(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Toutes les analyses lancées par un utilisateur."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    result = []
+
+    # Via DepotAnalyse
+    rows_da = (
+        db.query(Analyse, DepotAnalyse.nom)
+        .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
+        .filter(DepotAnalyse.user_id == user_id)
+        .order_by(Analyse.created_at.desc())
+        .all()
+    )
+    for analyse, depot_nom in rows_da:
+        vulns = analyse.vulnerabilites or []
+        result.append({
+            "id":               analyse.id,
+            "depot_nom":        depot_nom or "Inconnu",
+            "branche":          analyse.branche or "—",
+            "score_qualite":    analyse.score_qualite or 0,
+            "score_securite":   analyse.score_securite or 0,
+            "score_performance": analyse.score_performance or 0,
+            "statut":           analyse.statut or "inconnu",
+            "created_at":       str(analyse.created_at) if analyse.created_at else None,
+            "nb_vulns":         len(vulns) if isinstance(vulns, list) else 0,
+        })
+
+    # Via Depot (ancienne structure)
+    rows_d = (
+        db.query(Analyse, Depot.nom)
+        .join(Depot, Analyse.depot_id == Depot.id)
+        .filter(Depot.proprietaire_id == user_id)
+        .order_by(Analyse.created_at.desc())
+        .all()
+    )
+    for analyse, depot_nom in rows_d:
+        vulns = analyse.vulnerabilites or []
+        result.append({
+            "id":               analyse.id,
+            "depot_nom":        depot_nom or "Inconnu",
+            "branche":          analyse.branche or "—",
+            "score_qualite":    analyse.score_qualite or 0,
+            "score_securite":   analyse.score_securite or 0,
+            "score_performance": analyse.score_performance or 0,
+            "statut":           analyse.statut or "inconnu",
+            "created_at":       str(analyse.created_at) if analyse.created_at else None,
+            "nb_vulns":         len(vulns) if isinstance(vulns, list) else 0,
+        })
+
+    # Trier par date décroissante
+    result.sort(key=lambda x: x["created_at"] or "", reverse=True)
+    return result
+
+
+# ── GET /admin/users/{user_id}/videos ────────────────────────────
+
+@router.get("/users/{user_id}/videos")
+def get_user_videos(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Toutes les vidéos générées par un utilisateur."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    videos = (
+        db.query(VideoGeneree)
+        .filter(VideoGeneree.user_id == user_id)
+        .order_by(VideoGeneree.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id":         v.id,
+            "type_video": v.type_video,
+            "titre":      v.titre,
+            "langue":     v.langue or "fr",
+            "nom_projet": v.nom_projet,
+            "created_at": str(v.created_at) if v.created_at else None,
+        }
+        for v in videos
+    ]
+
+
+# ── GET /admin/users/{user_id}/rapports ──────────────────────────
+
+@router.get("/users/{user_id}/rapports")
+def get_user_rapports(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Tous les rapports PDF téléchargés par un utilisateur."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+    exports = (
+        db.query(ExportRapport, Analyse)
+        .join(Analyse, ExportRapport.analyse_id == Analyse.id)
+        .filter(ExportRapport.user_id == user_id)
+        .order_by(ExportRapport.created_at.desc())
+        .all()
+    )
+
+    result = []
+    for export, analyse in exports:
+        # Récupérer le nom du projet
+        nom_projet = "Inconnu"
+        if analyse.depot_analyse_id:
+            da = db.query(DepotAnalyse).filter(DepotAnalyse.id == analyse.depot_analyse_id).first()
+            if da:
+                nom_projet = da.nom
+        elif analyse.depot_id:
+            d = db.query(Depot).filter(Depot.id == analyse.depot_id).first()
+            if d:
+                nom_projet = d.nom
+
+        # Estimation pages depuis la taille fichier (≈ 50KB/page)
+        nb_pages = None
+        if export.taille:
+            nb_pages = max(1, round(export.taille / 51200))
+
+        result.append({
+            "id":         export.id,
+            "nom_projet": nom_projet,
+            "created_at": str(export.created_at) if export.created_at else None,
+            "nb_pages":   nb_pages,
+        })
+
+    return result
+@router.get("/users/{user_id}/logins")
+def get_user_logins(
+    user_id: int,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None),
+):
+    """Retourne l'historique complet des connexions/déconnexions d'un utilisateur."""
+    require_admin(authorization, db)
+ 
+    u = db.query(User).filter(User.id == user_id).first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+ 
+    rows = (
+        db.query(LoginEvent)
+        .filter(LoginEvent.user_id == user_id)
+        .order_by(LoginEvent.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+ 
+    return [{
+        "id":          r.id,
+        "event_type":  r.event_type,
+        "ip_address":  r.ip_address,
+        "user_agent":  r.user_agent,
+        "success":     r.success,
+        "created_at":  r.created_at.isoformat() if r.created_at else None,
+        "logout_at":   r.logout_at.isoformat()  if r.logout_at  else None,
+    } for r in rows]
+ 
  
  

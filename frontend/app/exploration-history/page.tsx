@@ -195,10 +195,10 @@ export default function ExplorationHistoryPage() {
       .finally(() => setLoadingMrs(false));
   }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user_id");
-    router.push("/login");
+    // profile/page.tsx  (ligne 188)
+  const handleLogout = async () => {
+    try { await axios.post(`${API}/auth/logout`, {}, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); } catch {}
+    localStorage.removeItem("token"); localStorage.removeItem("user_id"); router.push("/login");
   };
 
   // ── Theme palette (same as dashboard) ─────────────────────────────────────

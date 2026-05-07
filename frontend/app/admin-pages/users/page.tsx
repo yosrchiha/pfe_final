@@ -2,11 +2,16 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import AdminLayout from "../AdminLayout";
+import { useRouter } from "next/navigation";
 import {
   API, getHeaders, DataTable, TH, TD,
   ActionBtn, SearchInput, EmptyRow, Loader, ErrorState
 } from "../adminUtils";
 import type { UserItem } from "../adminUtils";
+
+ 
+// ── 2. Dans le composant, initialiser le router ───────────────────────────
+
 
 interface NewUserForm {
   email: string; username: string; password: string; role: "user" | "admin";
@@ -31,6 +36,7 @@ const T = {
 };
 
 export default function AdminUsersPage() {
+  const router = useRouter();
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState("");
   const [users, setUsers]       = useState<UserItem[]>([]);
@@ -294,6 +300,26 @@ export default function AdminUsersPage() {
                         <ActionBtn onClick={()=>setConfirm({ userId:u.id, msg:`Supprimer ${u.email} et tous ses dépôts ?` })} color="red">
                           Supprimer
                         </ActionBtn>
+                          
+ 
+<button
+  className="eb"
+  onClick={() => router.push(`/admin-pages/users/${u.id}/activity`)}
+  style={{
+    padding: "5px 12px",
+    border: "1px solid rgba(167,139,250,0.35)",
+    borderRadius: 7,
+    cursor: "pointer",
+    fontSize: 11,
+    fontWeight: 600,
+    background: "rgba(167,139,250,0.1)",
+    color: "#a78bfa",
+    fontFamily: "'JetBrains Mono',monospace",
+  }}
+>
+  📊 Activité
+</button>
+ 
                       </div>
                     </TD>
                   </tr>

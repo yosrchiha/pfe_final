@@ -113,7 +113,7 @@ function RapportPage() {
       audioBlobUrlRef.current = blobUrl;
       const audio = new Audio(blobUrl);
       audioRef.current = audio;
-      setTtsLabel(`${vuln.type} — ligne ${vuln.ligne}`);
+      setTtsLabel(`${vuln.type} — ${vuln.ligne > 0 ? `ligne ${vuln.ligne}` : "global"}`);
       setTtsPlaying(id);
       setTtsLoading(null);
       audio.play();
@@ -880,7 +880,7 @@ function RapportPage() {
                           </button>
                         </div>
 
-                        <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace", marginBottom: 8 }}>📄 {v.fichier} — ligne {v.ligne}</div>
+                        <div style={{ fontSize: 11, color: D.faint, fontFamily: "monospace", marginBottom: 8 }}>📄 {v.fichier}{v.ligne && v.ligne > 0 ? ` — ligne ${v.ligne}` : " — (global)"}</div>
                         <div style={{ fontSize: 12, color: D.muted, background: D.bg, padding: "8px 12px", borderRadius: 10 }}>💡 {v.suggestion}</div>
 
                         {/* ── NOUVEAU : Modal vidéo inline (s'affiche sous la carte) ── */}

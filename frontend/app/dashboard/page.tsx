@@ -25,7 +25,6 @@ const menuItems = [
   { key: "analyses",       label: "Analyse",         icon: "◎",  href: "/analyse" },
   { key: "videos",         label: "Mes Vidéos",      icon: "🎬", href: "/mes-videos" },   // ← NOUVEAU
   { key: "rapports",       label: "Mes Rapports",    icon: "📄", href: "/mes-rapports" },
-
   { key: "exploration",    label: "Exploration",     icon: "🗂️",  href: "/exploration-history"},
   { key: "tests",          label: "Tests",           icon: "🧪", href: "/TestsPaage" },
   { key: "issues",         label: "Issues",          icon: "◇",  href: "/issues" },
@@ -119,9 +118,10 @@ export default function Dashboard() {
     setProjetActif(p); setAnalyseActif(null); setVue("liste"); fetchAnalyses(p.id);
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("token"); localStorage.removeItem("user_id");
-    router.push("/login");
+  // profile/page.tsx  (ligne 188)
+  const handleLogout = async () => {
+    try { await axios.post(`${API}/auth/logout`, {}, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); } catch {}
+    localStorage.removeItem("token"); localStorage.removeItem("user_id"); router.push("/login");
   };
 
   const totalVulns = analyses.reduce((a, b) => a + (b.vulnerabilites?.length || 0), 0);
