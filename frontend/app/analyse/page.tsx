@@ -85,7 +85,7 @@ export default function AnalysePage() {
 
     try {
       const res = await axios.post(
-        `${API}/explorer/gitlab/projets`,
+        `${API}/analyses/projets`,
         { token },
         { headers: getHeaders() }
       );
@@ -116,7 +116,7 @@ export default function AnalysePage() {
     setBranche("main");
     try {
       const res = await axios.post(
-        `${API}/explorer/gitlab/branches`,
+        `${API}/analyses/branches`,
         { token, project_path: projet.chemin },
         { headers: getHeaders() }
       );

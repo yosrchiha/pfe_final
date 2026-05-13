@@ -8,19 +8,14 @@ from pydantic import BaseModel
 from datetime import datetime
 from app.models.login_event import LoginEvent
 # backend/app/routes/Admin.py
-from sqlalchemy.sql import text  # Ajoutez cet import en haut du fichier
-
+from sqlalchemy.sql import text
 # backend/app/routes/Admin.py
-
 # Ajoutez ces imports (avec les bons noms de fichiers)
 from app.models.recommandation import Recommandation  # ← fichier: recommandation.py
 from app.models.export_rapport import ExportRapport   # ← fichier: export_rapport.py
-
 # Le reste de vos imports...
-
 # Le reste de vos imports existants...
 from app.config.database import get_db
-
 from app.models.user          import User
 from app.models.depot         import Depot
 from app.models.depot_analyse import DepotAnalyse

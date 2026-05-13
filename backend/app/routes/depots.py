@@ -489,3 +489,4 @@ La fusion est déconseillée sans correction préalable.
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur création MR: {str(e)}")
+    

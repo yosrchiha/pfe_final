@@ -40,7 +40,35 @@ router = APIRouter(prefix="/analyses", tags=["Analyses"])
 # UTILITAIRE — Extraire user_id depuis le JWT token
 # ════════════════════════════════════════════════════════
 
+class TokenRequest(PydanticBaseModel):
+    token: str
 
+class BranchesRequest(PydanticBaseModel):
+    token: str
+    project_path: str
+
+@router.post("/projets")
+def lister_projets(request: TokenRequest):
+    try:
+        import gitlab
+        gl = gitlab.Gitlab("https://gitlab.com", private_token=request.token)
+        gl.auth()
+        projets = gl.projects.list(owned=True, membership=True, all=True)
+        return [
+            {"id": p.id, "nom": p.name, "chemin": p.path_with_namespace, "url": p.web_url}
+            for p in projets
+        ]
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token GitLab invalide")
+
+@router.post("/branches")
+def lister_branches(data: BranchesRequest):
+    try:
+        project = get_gitlab_project(data.token, data.project_path)
+        branches = project.branches.list()
+        return [b.name for b in branches]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 # Et dans get_user_id_from_token :
 def get_user_id_from_token(
     authorization : str     = None,
@@ -234,15 +262,17 @@ def lancer_analyse(
 
     # ── 4. Créer l'analyse avec statut en_cours ──────────
     analyse = Analyse(
-        depot_analyse_id = depot.id,
-        branche          = data.branche,
-        statut           = "en_cours",
-        owasp_enabled    = data.owasp_enabled,
-        auto_tests       = data.auto_tests,
-        auto_mr          = data.auto_mr,
-        seuil_qualite    = data.seuil_qualite,
-        modele_llm       = "llama-3.3-70b-versatile"
-    )
+    depot_analyse_id = depot.id,
+    branche          = data.branche,
+    statut           = "en_attente",  # ← change en_attente au lieu de en_cours
+    owasp_enabled    = data.owasp_enabled,
+    auto_tests       = data.auto_tests,
+    auto_mr          = data.auto_mr,
+    seuil_qualite    = data.seuil_qualite,
+    modele_llm       = "llama-3.3-70b-versatile",
+    celery_task_id   = None,          # ← temporaire
+    etape_courante   = "soumise"      # ← initialise l'étape
+)
     db.add(analyse)
     db.commit()
     db.refresh(analyse)

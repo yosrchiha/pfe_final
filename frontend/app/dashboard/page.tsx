@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import axios from "axios";
 import { useTheme } from "@/app/ThemeContext";
@@ -23,19 +23,20 @@ const menuItems = [
   { key: "repositories",   label: "Dépôts",          icon: "◈",  href: "/depots" },
   { key: "comparaisons",   label: "Comparaisons",    icon: "📊", href: "/comparaisons" },
   { key: "analyses",       label: "Analyse",         icon: "◎",  href: "/analyse" },
-  { key: "videos",         label: "Mes Vidéos",      icon: "🎬", href: "/mes-videos" },   // ← NOUVEAU
+  { key: "videos",         label: "Mes Vidéos",      icon: "🎬", href: "/mes-videos" },
   { key: "rapports",       label: "Mes Rapports",    icon: "📄", href: "/mes-rapports" },
   { key: "exploration",    label: "Exploration",     icon: "🗂️",  href: "/exploration-history"},
   { key: "tests",          label: "Tests",           icon: "🧪", href: "/TestsPaage" },
   { key: "issues",         label: "Issues",          icon: "◇",  href: "/issues" },
   { key: "merge_requests", label: "Merge Requests",  icon: "⟁",  href: "/merge-requests" },
-   { key: "stats",          label: "Statistiques",    icon: "📈",  href: "/stats" },
-   { key: "calendar",       label: "Calendrier",      icon: "📅",  href: "/calendar" },
+  { key: "stats",          label: "Statistiques",    icon: "📈",  href: "/stats" },
+  { key: "calendar",       label: "Calendrier",      icon: "📅",  href: "/calendar" },
+  { key: "connexions",     label: "Mes Connexions",  icon: "🔐",  href: "/mes-connexions" },
   { key: "help",           label: "Support",         icon: "💬", href: "/help" },
-
 ];
 
-export default function Dashboard() {
+// ─── Composant interne qui utilise useSearchParams ───────────────
+function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -118,7 +119,6 @@ export default function Dashboard() {
     setProjetActif(p); setAnalyseActif(null); setVue("liste"); fetchAnalyses(p.id);
   };
 
-  // profile/page.tsx  (ligne 188)
   const handleLogout = async () => {
     try { await axios.post(`${API}/auth/logout`, {}, { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); } catch {}
     localStorage.removeItem("token"); localStorage.removeItem("user_id"); router.push("/login");
@@ -326,15 +326,15 @@ export default function Dashboard() {
                   {loading ? (
                     <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:12, padding:40, color:D.faint }}>
                       <div style={{ 
-  width: 20, 
-  height: 20, 
-  borderLeft: `2px solid ${D.border}`,
-  borderRight: `2px solid ${D.border}`,
-  borderBottom: `2px solid ${D.border}`,
-  borderTop: `2px solid #6366f1`,
-  borderRadius: "50%", 
-  animation: "spin 0.6s linear infinite" 
-}} />
+                        width: 20, 
+                        height: 20, 
+                        borderLeft: `2px solid ${D.border}`,
+                        borderRight: `2px solid ${D.border}`,
+                        borderBottom: `2px solid ${D.border}`,
+                        borderTop: `2px solid #6366f1`,
+                        borderRadius: "50%", 
+                        animation: "spin 0.6s linear infinite" 
+                      }} />
                     </div>
                   ) : projets.length === 0 ? (
                     <div style={{ display:"flex", flexDirection:"column", alignItems:"center", padding:"60px 20px", color:D.faint }}>
@@ -447,15 +447,15 @@ export default function Dashboard() {
                           <div style={{ fontSize:14, fontWeight:600, color:D.text, margin:"20px 0 12px" }}>⚠️ Vulnérabilités ({analyseActif.vulnerabilites.length})</div>
                           {analyseActif.vulnerabilites.map((v: any, i: number) => (
                             <div key={i} style={{ 
-  background: D.detailBg, 
-  borderTop: `1px solid ${D.border}`,
-  borderRight: `1px solid ${D.border}`,
-  borderBottom: `1px solid ${D.border}`,
-  borderLeft: `4px solid ${colorSeverite(v.severite)}`,
-  borderRadius: 12, 
-  padding: 16, 
-  marginBottom: 12 
-}}>
+                              background: D.detailBg, 
+                              borderTop: `1px solid ${D.border}`,
+                              borderRight: `1px solid ${D.border}`,
+                              borderBottom: `1px solid ${D.border}`,
+                              borderLeft: `4px solid ${colorSeverite(v.severite)}`,
+                              borderRadius: 12, 
+                              padding: 16, 
+                              marginBottom: 12 
+                            }}>
                               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
                                 <span style={{ fontSize:10, fontWeight:600, padding:"2px 10px", borderRadius:20, background:`${colorSeverite(v.severite)}15`, color:colorSeverite(v.severite) }}>{v.severite}</span>
                                 <span style={{ fontSize:14, fontWeight:600, color:D.text }}>{v.type}</span>
@@ -491,5 +491,14 @@ export default function Dashboard() {
         </div>
       </div>
     </>
+  );
+}
+
+// ✅ Export avec Suspense boundary
+export default function Dashboard() {
+  return (
+    <Suspense fallback={<div>Chargement...</div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }

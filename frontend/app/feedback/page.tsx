@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
 
 const API = "http://127.0.0.1:8000";
 
-export default function FeedbackPage() {
+function FeedbackContent() {
+   
   const router = useRouter();
   const searchParams = useSearchParams();
   const analyseId = searchParams.get("analyse_id");
@@ -500,5 +502,14 @@ export default function FeedbackPage() {
         </div>
       </div>
     </>
+  );
+}
+
+// ✅ Export avec Suspense boundary
+export default function FeedbackPage() {
+  return (
+    <Suspense fallback={<div>Chargement...</div>}>
+      <FeedbackContent />
+    </Suspense>
   );
 }
