@@ -1,6 +1,6 @@
 # backend/app/routes/analyses.py
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 from typing import List
 from app.models.test_genere import TestGenere
@@ -221,196 +221,133 @@ def creer_vulnerabilites_base(
     print(f"[VULN] {compteur} vulnérabilité(s) sauvegardée(s) dans la table vulnerabilites")
 
 # ════════════════════════════════════════════════════════
-# ENDPOINT 1 — Lancer une analyse
-# POST /analyses/lancer
+# REMPLACEMENT — fonction lancer_analyse dans analyses.py
+#
+# Ce qui était faux dans l'original :
+#   - celery_task_id = None  (jamais remplacé par un vrai ID)
+#   - apply_async() n'était JAMAIS appelé
+#   - L'analyse se faisait directement dans la route (synchrone)
+#   - depot_id=depot.id ajoutait une FK violation
+#
+# Ce qui est corrigé ici :
+#   - Analyse créée avec statut="en_attente"
+#   - run_analyse.apply_async() appelé correctement
+#   - celery_task_id sauvegardé dans la base
+#   - Retour immédiat avec analyse_id (le frontend suit le statut)
 # ════════════════════════════════════════════════════════
+
 @router.post("/lancer")
 def lancer_analyse(
-    data          : LancerAnalyseRequest,
-    db            : Session = Depends(get_db),
-    authorization : str     = Header(None)
+    data: LancerAnalyseRequest,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
 ):
-    # ── 1. Récupérer user_id ─────────────────────────────
-    user_id = get_user_id_from_token(authorization, db)
-    print(f"[ANALYSE] user_id = {user_id}")  # ← debug
-
-    # ── 2. Chercher si le dépôt existe déjà ─────────────
-    depot = db.query(DepotAnalyse).filter(
-        DepotAnalyse.user_id     == user_id,
-        DepotAnalyse.project_url == data.project_url
-    ).first()
-
-    # ── 3. Sinon créer le dépôt ──────────────────────────
-    if not depot:
-        depot = DepotAnalyse(
-            user_id      = user_id,
-            nom          = data.nom_projet,
-            gitlab_token = data.gitlab_token,
-            project_url  = data.project_url,
-            branche      = data.branche
-        )
-        db.add(depot)
-        db.commit()
-        db.refresh(depot)
-        print(f"[ANALYSE] Nouveau dépôt créé id={depot.id}")
-    else:
-        # Mettre à jour le token à chaque analyse (peut avoir changé ou expiré)
-        depot.gitlab_token = data.gitlab_token
-        depot.branche      = data.branche
-        db.commit()
-        print(f"[ANALYSE] Dépôt existant id={depot.id} — token mis à jour")
-
-    # ── 4. Créer l'analyse avec statut en_cours ──────────
-    analyse = Analyse(
-    depot_analyse_id = depot.id,
-    branche          = data.branche,
-    statut           = "en_attente",  # ← change en_attente au lieu de en_cours
-    owasp_enabled    = data.owasp_enabled,
-    auto_tests       = data.auto_tests,
-    auto_mr          = data.auto_mr,
-    seuil_qualite    = data.seuil_qualite,
-    modele_llm       = "llama-3.3-70b-versatile",
-    celery_task_id   = None,          # ← temporaire
-    etape_courante   = "soumise"      # ← initialise l'étape
-)
-    db.add(analyse)
-    db.commit()
-    db.refresh(analyse)
+    analyse = None
 
     try:
-        # ── 5. Récupérer les fichiers depuis GitLab ──────
-        fichiers = get_project_files(
-            token        = data.gitlab_token,
-            project_name = data.project_url,
-            branch       = data.branche,
-            extensions   = [
-                ".py", ".js", ".ts", ".tsx", ".jsx",
-                ".java", ".php", ".go", ".rb", ".cpp", ".cs"
-            ]
-        )
+        # ── 1. Récupérer user_id ─────────────────────────────────
+        user_id = get_user_id_from_token(authorization, db)
+        print(f"[ANALYSE] user_id = {user_id}", flush=True)
 
-        if not fichiers:
-            analyse.statut = "erreur"
-            db.commit()
-            raise HTTPException(
-                status_code = 400,
-                detail      = "Aucun fichier de code trouvé dans ce projet"
+        # ── 2. Chercher ou créer le dépôt ────────────────────────
+        depot = db.query(DepotAnalyse).filter(
+            DepotAnalyse.user_id == user_id,
+            DepotAnalyse.project_url == data.project_url
+        ).first()
+
+        if not depot:
+            depot = DepotAnalyse(
+                user_id=user_id,
+                nom=data.nom_projet,
+                gitlab_token=data.gitlab_token,
+                project_url=data.project_url,
+                branche=data.branche
             )
+            db.add(depot)
+            db.commit()
+            db.refresh(depot)
+            print(f"[ANALYSE] Nouveau dépôt créé id={depot.id}", flush=True)
+        else:
+            depot.gitlab_token = data.gitlab_token
+            depot.branche = data.branche
+            db.commit()
+            db.refresh(depot)
+            print(f"[ANALYSE] Dépôt existant id={depot.id}", flush=True)
 
-        # ── 6. Adapter format pour llm_service ───────────
-        fichiers_llm = [
-            {
-                "file_path" : f["path"],
-                "content"   : f["content"]
-            }
-            for f in fichiers
-        ]
-
-        # ── 7. Envoyer au LLM Groq ───────────────────────
-        rapport = analyser_code(fichiers_llm, data.owasp_enabled)
-
-        # ── 8. Sauvegarder le rapport ────────────────────
-        analyse.score_qualite     = rapport["score_qualite"]
-        analyse.score_securite    = rapport["score_securite"]
-        analyse.score_performance = rapport["score_performance"]
-        analyse.vulnerabilites    = rapport["vulnerabilites"]
-        analyse.recommandations   = rapport["recommandations"]
-        analyse.statut            = "termine"
+        # ── 3. Créer l'analyse — PAS de depot_id (FK vers table depots) ──
+        analyse = Analyse(
+            depot_analyse_id=depot.id,   # ← correct : DepotAnalyse
+            branche=data.branche,
+            statut="en_attente",
+            owasp_enabled=data.owasp_enabled,
+            auto_tests=data.auto_tests,
+            auto_mr=data.auto_mr,
+            seuil_qualite=data.seuil_qualite,
+            modele_llm="llama-3.3-70b-versatile",
+            celery_task_id=None,
+            etape_courante="soumise",
+        )
+        db.add(analyse)
         db.commit()
         db.refresh(analyse)
-        if rapport.get("vulnerabilites"):
-            for vuln in rapport["vulnerabilites"]:
-                vuln_db = Vulnerabilite(
-                    analyse_id=analyse.id,
-                    type=vuln.get("type", "Inconnu"),
-                    severite=vuln.get("severite", "MOYENNE"),
-                    description=vuln.get("description", ""),
-                    suggestion=vuln.get("suggestion", ""),
-                    fichier=vuln.get("fichier", "inconnu"),
-                    ligne=vuln.get("ligne", 0),
-                    colonne=vuln.get("colonne"),
-                    categorie_owasp=vuln.get("categorie_owasp"),
-                    cwe_id=vuln.get("cwe_id"),
-                    code_snippet=vuln.get("code_snippet"),
-                    impact=vuln.get("impact"),
-                    statut="detectee"
-                )
-                db.add(vuln_db)
-            db.commit()
-            print(f"[VULN] {len(rapport['vulnerabilites'])} vulnérabilité(s) sauvegardée(s)")
+        print(f"[ANALYSE] Analyse créée id={analyse.id}", flush=True)
 
-      # ── 9. Créer les issues dans GitLab ──────────────
-              # ── 9. Créer les issues dans GitLab ──────────────
-        if rapport.get("vulnerabilites"):
-            creer_issues_gitlab(
-                token           = data.gitlab_token,
-                project_name    = data.project_url,
-                vulnerabilites  = rapport["vulnerabilites"],
-                analyse_id      = analyse.id,
-                depot_analyse_id = depot.id,
-                db              = db
+        # ── 4. Soumettre la tâche à Celery ───────────────────────
+        from app.tasks.analyse_task import run_analyse
+
+        print("[ANALYSE] Soumission Celery...", flush=True)
+
+        task = run_analyse.apply_async(
+            kwargs=dict(
+                analyse_id=analyse.id,
+                depot_id=depot.id,        # paramètre Celery uniquement, pas FK SQL
+                gitlab_token=data.gitlab_token,
+                project_url=data.project_url,
+                branche=data.branche,
+                owasp_enabled=data.owasp_enabled,
+                auto_tests=data.auto_tests,
+                auto_mr=data.auto_mr,
             )
-        if rapport.get("recommandations"):
-            from app.models.recommandation import Recommandation
-            for rec in rapport["recommandations"]:
-                reco_db = Recommandation(
-                    analyse_id=analyse.id,
-                    titre=rec.get("titre", "Recommandation"),
-                    description=rec.get("description", ""),
-                    priorite=rec.get("priorite", "MOYENNE"),
-                    categorie=rec.get("categorie", "bonnes_pratiques"),
-                    fichier=rec.get("fichier"),
-                    ligne=rec.get("ligne")
-                )
-                db.add(reco_db)
-            db.commit()
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        analyse.statut = "erreur"
-        db.commit()
-        traceback.print_exc()
-        raise HTTPException(
-            status_code = 500,
-            detail      = str(e)
         )
 
-    # ── Récupérer les issues créées dans GitLab pour les inclure dans la réponse ──
-    issues_creees = db.query(IssueGitLab).filter(
-        IssueGitLab.analyse_id == analyse.id
-    ).all()
+        analyse.celery_task_id = task.id
+        analyse.statut = "en_file"
+        analyse.etape_courante = "en_file"
+        db.commit()
+        db.refresh(analyse)
 
-    issues_data = [
-        {
-            "id"              : i.id,
-            "issue_id_gitlab" : i.issue_id_gitlab,
-            "issue_url"       : i.issue_url,
-            "titre"           : i.titre,
-            "severite"        : i.severite,
-            "type_vuln"       : i.type_vuln,
-            "fichier"         : i.fichier,
-            "ligne"           : i.ligne,
-            "statut"          : i.statut,
+        print(f"[ANALYSE] Tâche Celery soumise : {task.id}", flush=True)
+
+        # ── 5. Retour immédiat — le frontend suit avec /statut ───
+        return {
+            "depot_analyse_id": depot.id,
+            "analyse_id": analyse.id,
+            "celery_task_id": analyse.celery_task_id,
+            "statut": analyse.statut,
+            "etape_courante": analyse.etape_courante,
+            "branche": analyse.branche,
+            "message": "Analyse soumise. Suivez l'état avec GET /analyses/{analyse_id}/statut",
         }
-        for i in issues_creees
-    ]
 
-    return {
-        "depot_analyse_id"  : depot.id,
-        "analyse_id"        : analyse.id,
-        "score_qualite"     : analyse.score_qualite,
-        "score_securite"    : analyse.score_securite,
-        "score_performance" : analyse.score_performance,
-        "vulnerabilites"    : analyse.vulnerabilites,
-        "recommandations"   : analyse.recommandations,
-        "statut"            : analyse.statut,
-        "branche"           : analyse.branche,
-        "issues_gitlab"     : issues_data,
-        "nb_issues"         : len(issues_data),
-    }
+    except Exception as e:
+        db.rollback()
+        traceback.print_exc()
 
+        # Marquer l'analyse en erreur si elle a été créée
+        if analyse is not None and getattr(analyse, "id", None):
+            try:
+                a = db.query(Analyse).filter(Analyse.id == analyse.id).first()
+                if a:
+                    a.statut = "erreur"
+                    a.etape_courante = "erreur_soumission"
+                    db.commit()
+            except Exception:
+                db.rollback()
 
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lancement analyse : {str(e)}"
+        )
 # ════════════════════════════════════════════════════════
 # ENDPOINT 2 — Historique des analyses d'un dépôt
 # GET /analyses/depot/{depot_analyse_id}
@@ -468,7 +405,40 @@ def get_depots_user(
         for d in depots
     ]
 
+@router.get("/{analyse_id}/statut")
+def get_statut_analyse(
+    analyse_id: int,
+    db: Session = Depends(get_db)
+):
+    analyse = db.query(Analyse).filter(
+        Analyse.id == analyse_id
+    ).first()
 
+    if not analyse:
+        raise HTTPException(
+            status_code=404,
+            detail="Analyse introuvable"
+        )
+
+    return {
+        "id": analyse.id,
+        "depot_analyse_id": analyse.depot_analyse_id,
+        "branche": analyse.branche,
+        "statut": analyse.statut,
+        "etape_courante": getattr(analyse, "etape_courante", None),
+        "celery_task_id": getattr(analyse, "celery_task_id", None),
+        "score_qualite": analyse.score_qualite,
+        "score_securite": analyse.score_securite,
+        "score_performance": analyse.score_performance,
+        "vulnerabilites": analyse.vulnerabilites or [],
+        "recommandations": analyse.recommandations or [],
+        "owasp_enabled": analyse.owasp_enabled,
+        "auto_tests": analyse.auto_tests,
+        "auto_mr": analyse.auto_mr,
+        "seuil_qualite": analyse.seuil_qualite,
+        "modele_llm": analyse.modele_llm,
+        "created_at": str(analyse.created_at)
+    }
 # ════════════════════════════════════════════════════════
 # ENDPOINT 4 — Détail d'une analyse
 # GET /analyses/{analyse_id}

@@ -11,7 +11,7 @@
 // supprimer le token local — même si l'appel échoue, la déconnexion
 // locale se fait quand même.
 
-const API = "http://127.0.0.1:8000";
+const API = "http://localhost:8001";
 
 /**
  * Déconnecte l'utilisateur :

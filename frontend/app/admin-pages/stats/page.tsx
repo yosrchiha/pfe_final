@@ -9,7 +9,7 @@ import {
 } from "recharts";
 import AdminLayout from "../AdminLayout";
 
-const API = "http://127.0.0.1:8000";
+const API = "http://localhost:8001";
 
 // ── TYPES ──────────────────────────────────────────────────────────
 interface ParJour   { date: string; simples: number; diff: number; }

@@ -5,7 +5,7 @@ import axios from "axios";
 import { useTheme } from "@/app/ThemeContext";
 import ThemeToggle from "@/app/ThemeToggle";
 
-const API = "http://127.0.0.1:8000";
+const API = "http://localhost:8001";
 
 export default function DifferencePage() {
   const router = useRouter();

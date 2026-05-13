@@ -1,7 +1,7 @@
-# ════════════════════════════════════════════════════════
-# Dockerfile — Frontend Next.js
-# Chemin : frontend/Dockerfile
-# ════════════════════════════════════════════════════════
+# frontend/Dockerfile
+# CORRECTION : ARG + ENV au lieu de ENV hardcodé
+# Next.js lit NEXT_PUBLIC_* pendant le build (npm run build)
+# Il faut donc passer la valeur comme ARG de build, pas comme ENV runtime
 
 FROM node:20-alpine AS base
 
@@ -17,8 +17,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Variable d'env pour pointer vers le backend Docker
-ENV NEXT_PUBLIC_API_URL=http://backend:8000
+# CORRECTION : ARG reçu depuis docker-compose (build.args)
+# puis exposé comme ENV pour que Next.js le lise pendant npm run build
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 RUN npm run build
 
@@ -31,7 +33,6 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs \
     && adduser --system --uid 1001 nextjs
 
-# Copier uniquement ce qui est nécessaire
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static

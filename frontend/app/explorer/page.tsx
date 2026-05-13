@@ -4,7 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
-const API = "http://127.0.0.1:8000";
+const API = "http://localhost:8001";
 
 interface FileItem { path: string; content: string; size: number; }
 interface SessionData { projet: string; branche: string; total: number; fichiers: FileItem[]; token: string; }

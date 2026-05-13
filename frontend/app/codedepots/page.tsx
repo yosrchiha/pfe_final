@@ -39,7 +39,7 @@ export default function CodeDepotsPage() {
       try {
         const token = localStorage.getItem("token");
         if (!token) return;
-        const res = await axios.get("http://127.0.0.1:8000/depots/", {
+        const res = await axios.get("http://localhost:8001/depots/", {
           headers: { Authorization: `Bearer ${token}` },
         });
         setDepots(res.data);
@@ -63,7 +63,7 @@ export default function CodeDepotsPage() {
     try {
       const token = localStorage.getItem("token");
       const res = await axios.get(
-        `http://127.0.0.1:8000/depots/${depot.id}/files`,
+        `http://localhost:8001/depots/${depot.id}/files`,
         {
           headers: { Authorization: `Bearer ${token}` },
           params: { branch: targetBranch },

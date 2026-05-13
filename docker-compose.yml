@@ -1,25 +1,25 @@
-services:
+﻿services:
 
-  # ── Base de données ───────────────────────────────────────────
   db:
     image: postgres:15-alpine
     container_name: pfe_db
     environment:
-      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      # CORRECTION : ajout de -d ${POSTGRES_DB}
+      # Sans Ã§a PostgreSQL essayait d'ouvrir une base nommÃ©e comme l'utilisateur
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ── Redis ─────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: pfe_redis
@@ -32,15 +32,15 @@ services:
       timeout: 5s
       retries: 3
 
-  # ── Backend FastAPI ───────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pfe_backend
     ports:
-      - "8000:8000"
-    env_file: .env
+      - "8001:8000"
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
@@ -48,16 +48,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
     volumes:
+      # CORRECTION : monter tout le backend pour que les modifs locales
+      # soient prises en compte sans rebuild (uvicorn --reload les dÃ©tecte)
+      - ./backend:/app
       - ./backend/rapports:/app/rapports
 
-  # ── Worker Celery ─────────────────────────────────────────────
   celery_worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pfe_celery_worker
-    command: celery -A app.celery_app.celery worker --loglevel=info --concurrency=1
-    env_file: .env
+    command: ["celery", "-A", "app.celery_app.celery", "worker", "--loglevel=info", "--concurrency=1"]
+    env_file:
+      - .env
     depends_on:
       db:
         condition: service_healthy
@@ -67,26 +70,34 @@ services:
     volumes:
       - ./backend:/app
 
-  # ── Flower ────────────────────────────────────────────────────
   flower:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pfe_flower
-    command: celery -A app.celery_app.celery flower --port=5555
-    env_file: .env
+    command: ["celery", "-A", "app.celery_app.celery", "flower", "--port=5555"]
+    env_file:
+      - .env
     ports:
       - "5555:5555"
     depends_on:
-      - redis
-      - celery_worker
+      redis:
+        condition: service_healthy
+      celery_worker:
+        condition: service_started
     restart: unless-stopped
+    volumes:
+      - ./backend:/app
 
-  # ── Frontend ──────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # CORRECTION : passer l'URL comme build arg
+      # Next.js lit NEXT_PUBLIC_* au moment du build (pas au runtime)
+      # "backend:8000" ne fonctionne pas dans le navigateur (hostname Docker inconnu)
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
     container_name: pfe_frontend
     ports:
       - "3000:3000"

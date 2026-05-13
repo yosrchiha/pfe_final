@@ -1,4 +1,9 @@
 # backend/app/tasks/analyse_task.py
+# ════════════════════════════════════════════════════════
+# Correction : run_analyse accepte maintenant auto_tests et auto_mr
+# (paramètres envoyés par apply_async depuis analyses.py)
+# Sans ça : TypeError: run_analyse() got an unexpected keyword argument 'auto_tests'
+# ════════════════════════════════════════════════════════
 
 from app.celery_app import celery
 from app.config.database import SessionLocal
@@ -33,6 +38,8 @@ def run_analyse(
     project_url:   str,
     branche:       str,
     owasp_enabled: bool,
+    auto_tests:    bool = False,   # ← ajouté
+    auto_mr:       bool = False,   # ← ajouté
 ):
     db = SessionLocal()
     try:
@@ -58,6 +65,7 @@ def run_analyse(
 
         if not fichiers:
             analyse.statut = "erreur"
+            analyse.etape_courante = "aucun_fichier"
             db.commit()
             return {"statut": "erreur", "detail": "Aucun fichier source trouvé"}
 
@@ -70,11 +78,11 @@ def run_analyse(
 
         # ── 3. Sauvegarde ─────────────────────────────────────────
         _maj_etape(analyse, "sauvegarde", db)
-        analyse.score_qualite     = rapport["score_qualite"]
-        analyse.score_securite    = rapport["score_securite"]
-        analyse.score_performance = rapport["score_performance"]
-        analyse.vulnerabilites    = rapport["vulnerabilites"]
-        analyse.recommandations   = rapport["recommandations"]
+        analyse.score_qualite     = rapport.get("score_qualite", 0)
+        analyse.score_securite    = rapport.get("score_securite", 0)
+        analyse.score_performance = rapport.get("score_performance", 0)
+        analyse.vulnerabilites    = rapport.get("vulnerabilites", [])
+        analyse.recommandations   = rapport.get("recommandations", [])
         analyse.statut            = "termine"
         db.commit()
         db.refresh(analyse)
@@ -123,7 +131,7 @@ def run_analyse(
                     db               = db,
                 )
             except Exception:
-                pass
+                pass  # les issues GitLab ne bloquent pas l'analyse
 
         _maj_etape(analyse, "termine", db)
         return {

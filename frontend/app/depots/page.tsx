@@ -27,7 +27,7 @@ interface Analyse {
   created_at        : string;
 }
 
-const API = "http://127.0.0.1:8000";
+const API = "http://localhost:8001";
 
 export default function DepotsPage() {
   const router = useRouter();

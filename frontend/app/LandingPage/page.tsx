@@ -8,7 +8,7 @@ import {
   ArrowRight, LayoutDashboard, BookOpen, Lock, Star
 } from "lucide-react";
 
-const API = "http://127.0.0.1:8000";
+const API = "http://localhost:8001";
 
 const GitLabIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" className={className} xmlns="http://www.w3.org/2000/svg">
