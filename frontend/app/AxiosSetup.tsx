@@ -22,8 +22,8 @@ export default function AxiosSetup() {
   const router = useRouter();
 
   useEffect(() => {
-    // ── 1. Base URL : plus besoin d'écrire http://localhost:8001 partout ──
-    axios.defaults.baseURL = "http://localhost:8001";
+    // ── 1. Base URL : plus besoin d'écrire http://localhost:8000 partout ──
+    axios.defaults.baseURL = "http://localhost:8000";
 
     // ── 2. Intercepteur REQUEST : injecte le token automatiquement ──────────
     const reqId = axios.interceptors.request.use((config) => {
@@ -91,3 +91,4 @@ export default function AxiosSetup() {
 
   return null; // Ce composant ne rend rien
 }
+

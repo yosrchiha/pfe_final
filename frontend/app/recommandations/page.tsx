@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 interface Recommandation {
   id: number;
@@ -415,3 +415,4 @@ export default function RecommandationsPage() {
     </>
   );
 }
+

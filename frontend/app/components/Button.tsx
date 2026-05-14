@@ -14,3 +14,4 @@ export default function Button({ type = "button", children }: ButtonProps) {
     </button>
   );
 }
+

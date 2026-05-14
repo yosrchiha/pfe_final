@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 interface GitLabProjet {
   id: number;
@@ -487,3 +487,4 @@ const lancerExploration = async () => {
     </>
   );
 }
+

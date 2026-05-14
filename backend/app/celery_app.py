@@ -23,8 +23,8 @@ celery.conf.update(
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=None,
-    task_time_limit=1200,
-    task_soft_time_limit=1100,
+    task_time_limit=3600,
+    task_soft_time_limit=3500,
     timezone="Africa/Tunis",
     enable_utc=True,
 )

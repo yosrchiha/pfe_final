@@ -6,7 +6,7 @@ import axios from "axios";
 import { useTheme } from "@/app/ThemeContext";
 import ThemeToggle from "@/app/ThemeToggle";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 interface DepotAnalyse {
   id: number; nom: string; project_url: string; branche: string; created_at: string;
@@ -502,3 +502,4 @@ export default function Dashboard() {
     </Suspense>
   );
 }
+

@@ -6,7 +6,7 @@ import axios from "axios";
 import { useTheme } from "@/app/ThemeContext";
 import ThemeToggle from "@/app/ThemeToggle";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 interface UserData {
   id: number; email: string; username: string;
@@ -494,3 +494,4 @@ export default function ProfilePage() {
     </>
   );
 }
+

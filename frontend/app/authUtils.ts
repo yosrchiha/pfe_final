@@ -11,7 +11,7 @@
 // supprimer le token local — même si l'appel échoue, la déconnexion
 // locale se fait quand même.
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 /**
  * Déconnecte l'utilisateur :
@@ -51,3 +51,4 @@ export async function logout(router: { push: (path: string) => void }): Promise<
   // Redirection
   router.push("/login");
 }
+

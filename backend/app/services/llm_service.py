@@ -24,7 +24,7 @@ openrouter_client = OpenAI(
 openrouter_model = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct")
 
 # ── Constantes ─────────────────────────────────────────────
-CHARS_PAR_LOT = 60_000
+CHARS_PAR_LOT = 20_000
 MAX_TOKENS_REP = 6000
 
 

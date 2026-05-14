@@ -481,3 +481,4 @@ function btnStyle(color: string, outline: boolean): React.CSSProperties {
     transition: "all 0.15s", whiteSpace: "nowrap",
   };
 }
+

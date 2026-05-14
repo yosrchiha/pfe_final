@@ -39,7 +39,7 @@ export interface TestGenere {
 }
 
 // ─── CONSTANTES ───────────────────────────────────────────────────
-export const API = "http://localhost:8001";
+export const API = "http://localhost:8000";
 
 export function getHeaders() {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
@@ -312,4 +312,5 @@ export function PageWrapper({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
 

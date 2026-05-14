@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 // ── TYPES ────────────────────────────────────────────────────────
 interface Projet {
@@ -677,3 +677,4 @@ export default function MergeRequestsPage() {
     </div>
   );
 }
+

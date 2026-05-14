@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from "react";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 export type VideoType = "application" | "vulnerabilite" | "rapport";
 
@@ -168,3 +168,4 @@ export function useVideoGenerator(): UseVideoGeneratorReturn {
 
   return { genererVideo, loading, progression, erreur, videoUrl, savedVideoId, resetVideo, verifierStatus };
 }
+

@@ -6,7 +6,7 @@ import axios from "axios";
 import { useTheme } from "@/app/ThemeContext";
 import ThemeToggle from "@/app/ThemeToggle";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 interface Ticket {
   id: number;
@@ -397,3 +397,4 @@ export default function HelpPage() {
     </>
   );
 }
+

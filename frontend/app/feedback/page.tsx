@@ -5,7 +5,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 function FeedbackContent() {
    
@@ -513,3 +513,4 @@ export default function FeedbackPage() {
     </Suspense>
   );
 }
+

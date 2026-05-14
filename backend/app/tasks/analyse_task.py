@@ -38,8 +38,8 @@ def run_analyse(
     project_url:   str,
     branche:       str,
     owasp_enabled: bool,
-    auto_tests:    bool = False,   # ← ajouté
-    auto_mr:       bool = False,   # ← ajouté
+    auto_tests:    bool = False,
+    auto_mr:       bool = False,
 ):
     db = SessionLocal()
     try:
@@ -78,6 +78,11 @@ def run_analyse(
 
         # ── 3. Sauvegarde ─────────────────────────────────────────
         _maj_etape(analyse, "sauvegarde", db)
+
+        # Réinitialise la session pour éviter PendingRollbackError
+        db.rollback()
+        db.expunge_all()
+        analyse = db.query(Analyse).filter(Analyse.id == analyse_id).first()
         analyse.score_qualite     = rapport.get("score_qualite", 0)
         analyse.score_securite    = rapport.get("score_securite", 0)
         analyse.score_performance = rapport.get("score_performance", 0)
@@ -145,6 +150,7 @@ def run_analyse(
     except Exception as exc:
         traceback.print_exc()
         try:
+            db.rollback()
             a = db.query(Analyse).filter(Analyse.id == analyse_id).first()
             if a:
                 a.statut         = "erreur"

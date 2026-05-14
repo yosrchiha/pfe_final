@@ -27,7 +27,7 @@ interface Analyse {
   created_at        : string;
 }
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 export default function DepotsPage() {
   const router = useRouter();
@@ -648,3 +648,4 @@ export default function DepotsPage() {
     </>
   );
 }
+

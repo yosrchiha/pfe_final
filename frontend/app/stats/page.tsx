@@ -10,7 +10,7 @@ import {
 import { useTheme } from "@/app/ThemeContext";
 import ThemeToggle from "@/app/ThemeToggle";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 interface StatsParJour {
   date: string;
@@ -483,3 +483,4 @@ export default function StatsPage() {
     </div>
   );
 }
+

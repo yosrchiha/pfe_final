@@ -1,5 +1,4 @@
 # backend/app/models/analyse.py
-# Remplacer entièrement par ce fichier
 
 from sqlalchemy import (
     Column, Integer, String, Boolean,
@@ -7,6 +6,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.sql import func
 from app.config.database import Base
+
 
 class Analyse(Base):
     __tablename__ = "analyses"
@@ -18,11 +18,6 @@ class Analyse(Base):
         ForeignKey("depots_analyse.id", ondelete="CASCADE"),
         nullable=True
     )
-    depot_id          = Column(
-        Integer,
-        ForeignKey("depots.id", ondelete="CASCADE"),
-        nullable=True
-    )
 
     branche           = Column(String)
     score_qualite     = Column(Integer,  nullable=True)
@@ -30,7 +25,7 @@ class Analyse(Base):
     score_performance = Column(Integer,  nullable=True)
     vulnerabilites    = Column(JSON,     nullable=True)
     recommandations   = Column(JSON,     nullable=True)
-    statut            = Column(String,   default="en_attente")  # ← en_attente par défaut
+    statut            = Column(String,   default="en_attente")
     modele_llm        = Column(String,   nullable=True)
     owasp_enabled     = Column(Boolean,  default=True)
     auto_tests        = Column(Boolean,  default=True)
@@ -38,6 +33,5 @@ class Analyse(Base):
     seuil_qualite     = Column(Integer,  default=60)
     created_at        = Column(DateTime, server_default=func.now())
 
-    # ── Nouvelles colonnes pour Celery ─────────────────────
-    celery_task_id    = Column(String,   nullable=True)   # ID de la tâche Celery
-    etape_courante    = Column(String,   nullable=True)   # étape visible par le polling
+    celery_task_id    = Column(String,   nullable=True)
+    etape_courante    = Column(String,   nullable=True)

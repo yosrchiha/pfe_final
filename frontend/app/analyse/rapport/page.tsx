@@ -13,7 +13,7 @@ import ThemeToggle from "@/app/ThemeToggle";
 // - src/hooks/useVideoGenerator.ts
 import VideoGeneratorModal from "@/app/components/VideoGeneratorModal";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 
 function RapportPage() {
   const router = useRouter();
@@ -1161,3 +1161,4 @@ export default function RapportPageWrapper() {
     </Suspense>
   );
 }
+

@@ -1,6 +1,6 @@
 // "lib/api.ts" - fonctions pour appeler ton backend FastAPI
 export async function loginUser(data: { email: string; password: string }) {
-  const res = await fetch("http://localhost:8001/auth/login", {
+  const res = await fetch("http://localhost:8000/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -15,7 +15,7 @@ export async function loginUser(data: { email: string; password: string }) {
 }
 
 export async function registerUser(data: { email: string; username: string; password: string }) {
-  const res = await fetch("http://localhost:8001/auth/register", {
+  const res = await fetch("http://localhost:8000/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -28,3 +28,4 @@ export async function registerUser(data: { email: string; username: string; pass
 
   return res.json();
 }
+

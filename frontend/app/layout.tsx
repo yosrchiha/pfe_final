@@ -1,18 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "./ThemeContext";
-import AxiosSetup from "./AxiosSetup";   // ← ligne 1 : import
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+import AxiosSetup from "./AxiosSetup";
 
 export const metadata: Metadata = {
   title: "AuditPlatform",
@@ -26,11 +15,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="fr">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className="antialiased">
         <ThemeProvider>
-          <AxiosSetup />   {/* ← ligne 2 : composant */}
+          <AxiosSetup />
           {children}
         </ThemeProvider>
       </body>

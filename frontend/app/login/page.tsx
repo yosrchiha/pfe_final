@@ -21,7 +21,7 @@ export default function LoginPage() {
       const data = await loginUser({ email, password });
       localStorage.setItem("token", data.access_token);
 
-      const meRes = await fetch("http://localhost:8001/auth/me", {
+      const meRes = await fetch("http://localhost:8000/auth/me", {
         headers: { Authorization: `Bearer ${data.access_token}` },
       });
       const me = await meRes.json();
@@ -256,7 +256,7 @@ export default function LoginPage() {
           <button
             type="button"
             className={styles.btnGitlab}
-            onClick={() => { window.location.href = "http://localhost:8001/auth/gitlab/login"; }}
+            onClick={() => { window.location.href = "http://localhost:8000/auth/gitlab/login"; }}
           >
             <span className={styles.gitlabIcon}>🦊</span>
             Continuer avec GitLab
@@ -279,3 +279,4 @@ export default function LoginPage() {
     </div>
   );
 }
+
