@@ -534,29 +534,21 @@ def generer_tests_endpoint(
         )
 
     # ── Décrypter le token depuis le dépôt ────────────────
-    depot_obj = db.query(DepotAnalyse).filter(
-        DepotAnalyse.id == analyse.depot_analyse_id
-    ).first()
-
-    token_clair = None
-
-    if depot_obj and depot_obj.gitlab_token:
-        try:
-            token_clair = decrypt_token(depot_obj.gitlab_token)
-            print(f"[TESTS] Token déchiffré depuis la base : {token_clair[:8]}...", flush=True)
-        except Exception as e:
-            print(f"[TESTS] Decrypt échoué ({e}), token utilisé tel quel", flush=True)
-            token_clair = depot_obj.gitlab_token
-
-    # Fallback : token envoyé par le frontend
-    if not token_clair:
+    depot_obj = db.query(DepotAnalyse).filter(DepotAnalyse.id == analyse.depot_analyse_id).first()
+    try:
+        token_clair = decrypt_token(depot_obj.gitlab_token) if depot_obj else data.gitlab_token
+    except Exception:
         token_clair = data.gitlab_token
-        print(f"[TESTS] Token fallback frontend : {token_clair[:8] if token_clair else 'VIDE'}...", flush=True)
-
-    if not token_clair:
+    if not analyse:
         raise HTTPException(
-            status_code=400,
-            detail="Token GitLab introuvable pour ce dépôt"
+            status_code = 404,
+            detail      = "Analyse introuvable"
+        )
+
+    if analyse.statut != "termine":
+        raise HTTPException(
+            status_code = 400,
+            detail      = "L'analyse doit être terminée avant de générer les tests"
         )
 
     try:
@@ -636,7 +628,7 @@ def generer_tests_endpoint(
         )
         db.add(test_db)
         db.commit()
-        db.refresh(test_db)
+        db.refresh(test_db)  # ← récupère l'ID généré
 
         # ── 8. Sauvegarde de la MR en base (si créée) ─────
         mr_db = None
@@ -656,7 +648,7 @@ def generer_tests_endpoint(
             )
             db.add(mr_db)
             db.commit()
-            db.refresh(mr_db)
+            db.refresh(mr_db)  # ← facultatif, récupère l'ID
 
         # ── 9. Retour API propre ──────────────────────────
         return {
@@ -680,6 +672,7 @@ def generer_tests_endpoint(
             status_code = 500,
             detail      = str(e)
         )
+
         # ════════════════════════════════════════════════════════
 # ENDPOINT — Analyser le diff + merger si propre
 # POST /analyses/analyser-diff

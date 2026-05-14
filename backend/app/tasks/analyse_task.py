@@ -1,4 +1,4 @@
-# backend/app/tasks/analyse_task.py
+﻿# backend/app/tasks/analyse_task.py
 # ════════════════════════════════════════════════════════
 # Correction : run_analyse accepte maintenant auto_tests et auto_mr
 # (paramètres envoyés par apply_async depuis analyses.py)
@@ -89,6 +89,7 @@ def run_analyse(
         analyse.vulnerabilites    = rapport.get("vulnerabilites", [])
         analyse.recommandations   = rapport.get("recommandations", [])
         analyse.statut            = "termine"
+        db.rollback()
         db.commit()
         db.refresh(analyse)
 
@@ -135,9 +136,10 @@ def run_analyse(
                     depot_analyse_id = depot.id,
                     db               = db,
                 )
-            except Exception:
-                pass  # les issues GitLab ne bloquent pas l'analyse
-
+            except Exception as e:
+                print(f"[ISSUES] Erreur: {e}")
+                import traceback
+                traceback.print_exc()
         _maj_etape(analyse, "termine", db)
         return {
             "statut"            : "termine",

@@ -257,40 +257,48 @@ function RapportPage() {
       }
     }
 
-    // Cas 2 : chargement direct depuis l'URL ?analyse_id=X (ex: lien partagé ou navigation dépôts)
-    if (urlAnalyseId) {
-      axios.get(`${API}/analyses/${urlAnalyseId}`, { headers })
-        .then(res => {
-          const data = { ...res.data, analyse_id: res.data.id };
-          // Récupérer infos du dépôt si disponible
-          const depotId = data.depot_analyse_id || data.depot_id;
-          if (depotId) {
-            axios.get(`${API}/analyses/depots/${depotId}`, { headers })
-              .then(depotRes => {
-                const depot = depotRes.data;
-                sessionStorage.setItem("rapport", JSON.stringify(data));
-                sessionStorage.setItem("nomProjet", depot.nom || "");
-                sessionStorage.setItem("projectUrl", depot.project_url || "");
-                sessionStorage.setItem("branche", data.branche || depot.branche || "main");
-                sessionStorage.setItem("autoTests", "false");
-                applyData(data, depot.nom || "", "", depot.project_url || "", data.branche || depot.branche || "main", false);
-              })
-              .catch(() => {
-                // Dépôt non trouvé, afficher quand même
-                sessionStorage.setItem("rapport", JSON.stringify(data));
-                applyData(data, `Analyse #${urlAnalyseId}`, "", "", data.branche || "main", false);
-              });
-          } else {
+   // Cas 2 : chargement direct depuis l'URL ?analyse_id=X (ex: lien partagé ou navigation dépôts)
+if (urlAnalyseId) {
+  axios.get(`${API}/analyses/${urlAnalyseId}`, { headers })
+    .then(res => {
+      const data = { ...res.data, analyse_id: res.data.id };
+      const depotId = data.depot_analyse_id || data.depot_id;
+      if (depotId) {
+        axios.get(`${API}/analyses/depots/${depotId}`, { headers })
+          .then(depotRes => {
+            const depot = depotRes.data;
+            sessionStorage.setItem("rapport", JSON.stringify(data));
+            sessionStorage.setItem("nomProjet", depot.nom || "");
+            sessionStorage.setItem("projectUrl", depot.project_url || "");
+            sessionStorage.setItem("branche", data.branche || depot.branche || "main");
+            sessionStorage.setItem("autoTests", "false");
+
+            // ✅ CORRECTION : sauvegarder le token GitLab du dépôt
+            sessionStorage.setItem("token", depot.gitlab_token || "");
+
+            applyData(
+              data,
+              depot.nom || "",
+              depot.gitlab_token || "",   // ← était "" avant
+              depot.project_url || "",
+              data.branche || depot.branche || "main",
+              false
+            );
+          })
+          .catch(() => {
             sessionStorage.setItem("rapport", JSON.stringify(data));
             applyData(data, `Analyse #${urlAnalyseId}`, "", "", data.branche || "main", false);
-          }
-        })
-        .catch(() => {
-          // Analyse introuvable → retour
-          router.push("/depots");
-        });
-      return;
-    }
+          });
+      } else {
+        sessionStorage.setItem("rapport", JSON.stringify(data));
+        applyData(data, `Analyse #${urlAnalyseId}`, "", "", data.branche || "main", false);
+      }
+    })
+    .catch(() => {
+      router.push("/depots");
+    });
+  return;
+}
 
     // Cas 3 : ni sessionStorage ni URL → redirection
     router.push("/analyse");
@@ -335,11 +343,19 @@ function RapportPage() {
     const analyseId = rapport?.analyse_id;
     if (!analyseId) { setErreur("ID analyse manquant"); setLoadingTests(false); return; }
     try {
-      const res = await axios.post(
-        `${API}/analyses/generer-tests`,
-        { analyse_id: analyseId, gitlab_token: token, project_url: projectUrl, branche, creer_mr: creerMr },
-        { headers: getHeaders() }
-      );
+      // APRÈS
+const tokenEffectif = token || sessionStorage.getItem("token") || "";
+if (!tokenEffectif) {
+  setErreur("Token GitLab manquant. Relancez une analyse depuis le formulaire.");
+  setLoadingTests(false);
+  return;
+}
+
+const res = await axios.post(
+  `${API}/analyses/generer-tests`,
+  { analyse_id: analyseId, gitlab_token: tokenEffectif, project_url: projectUrl, branche, creer_mr: creerMr },
+  { headers: getHeaders() }
+);
       setResultatMr(res.data);
     } catch (e: any) {
       const detail = e.response?.data?.detail;
