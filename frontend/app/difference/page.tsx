@@ -29,24 +29,24 @@ export default function DifferencePage() {
     errorText: "#ef4444",
   };
 
-  const [compareData, setCompareData] = useState<any>(null);
-  const [loadingData, setLoadingData] = useState(true);
-  const [loading, setLoading] = useState(false);
-  const [resultat, setResultat] = useState<any>(null);
-  const [erreur, setErreur] = useState("");
+  const [compareData, setCompareData]           = useState<any>(null);
+  const [loadingData, setLoadingData]           = useState(true);
+  const [loading, setLoading]                   = useState(false);
+  const [resultat, setResultat]                 = useState<any>(null);
+  const [erreur, setErreur]                     = useState("");
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const [analyseId, setAnalyseId] = useState<number | null>(null);
+  const [analyseId, setAnalyseId]               = useState<number | null>(null);
+
+  // ── Correction automatique ──────────────────────────────────────
+  const [corrigingVuln, setCorrigingVuln] = useState<string | null>(null);
+  const [corrModal, setCorrModal]         = useState<{ vuln: any; result: any } | null>(null);
+  const [corrErreur, setCorrErreur]       = useState("");
 
   useEffect(() => {
-    console.log("[DEBUG] Page difference chargée");
     const stored = localStorage.getItem("compareData");
-    console.log("[DEBUG] Données dans localStorage:", stored ? "Présentes" : "Absentes");
-    
     if (stored) {
       try {
         const data = JSON.parse(stored);
-        console.log("[DEBUG] Données parsées:", data);
-        console.log("[DEBUG] depot_id présent?", data.depot_id);
         setCompareData(data);
         localStorage.removeItem("compareData");
       } catch (e) {
@@ -74,11 +74,21 @@ export default function DifferencePage() {
     return { Authorization: jwt ? `Bearer ${jwt}` : "" };
   };
 
+  const getContenuSource = (fichierPath: string): string => {
+    if (!compareData?.files) return "";
+    const f = compareData.files.find((f: any) => f.path === fichierPath);
+    if (!f) return "";
+    const diff: string = f.diff || f.content || "";
+    return diff
+      .split("\n")
+      .filter((l: string) => !l.startsWith("-") && !l.startsWith("@@") && !l.startsWith("+++") && !l.startsWith("---"))
+      .map((l: string) => l.startsWith("+") ? l.slice(1) : l)
+      .join("\n");
+  };
+
+  // ── Analyser le diff ────────────────────────────────────────────
   const analyserDiff = async () => {
     if (!compareData) return;
-    
-    console.log("[DEBUG] compareData.depot_id:", compareData.depot_id);
-    
     setLoading(true);
     setResultat(null);
     setErreur("");
@@ -87,19 +97,14 @@ export default function DifferencePage() {
     try {
       const res = await axios.post(
         `${API}/depots/${compareData.depot_id}/analyser-diff`,
-        {
-          owasp_enabled: true,
-        },
+        { owasp_enabled: true },
         { headers: getHeaders() }
       );
-      
       const data = res.data;
       setResultat(data);
-      
       if (data.statut === "merge_bloque" && data.vulnerabilites_bloquantes?.length > 0) {
         setAnalyseId(data.analyse_id);
       }
-      
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       setErreur(typeof detail === "string" ? detail : "Erreur lors de l'analyse");
@@ -108,29 +113,25 @@ export default function DifferencePage() {
     }
   };
 
+  // ── Forcer la MR ────────────────────────────────────────────────
   const creerMRForce = async () => {
     if (!analyseId || !compareData) return;
-    
     setLoading(true);
     setErreur("");
     setShowConfirmation(false);
-    
+
     try {
       const res = await axios.post(
         `${API}/depots/${compareData.depot_id}/creer-mr-force`,
-        {
-          analyse_id: analyseId,
-        },
+        { analyse_id: analyseId },
         { headers: getHeaders() }
       );
-      
       setResultat((prev: any) => ({
         ...prev,
         statut: "merge_autorise",
         message: "MR créée (forcée)",
-        mr: res.data.mr
+        mr: res.data.mr,
       }));
-      
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       setErreur(typeof detail === "string" ? detail : "Erreur lors de la création de la MR");
@@ -139,6 +140,77 @@ export default function DifferencePage() {
     }
   };
 
+  // ── Correction automatique d'une vulnérabilité ──────────────────
+  const corrigerVuln = async (vuln: any) => {
+    if (!compareData) return;
+    const key = `${vuln.fichier}-${vuln.ligne}-${vuln.type}`;
+    setCorrigingVuln(key);
+    setCorrErreur("");
+
+    try {
+      const res = await axios.post(
+        `${API}/depots/${compareData.depot_id}/corriger-vuln`,
+        {
+          vuln_type:       vuln.type,
+          vuln_severite:   vuln.severite,
+          vuln_ligne:      vuln.ligne,
+          vuln_suggestion: vuln.suggestion,
+          fichier_path:    vuln.fichier,
+          contenu_source:  getContenuSource(vuln.fichier),
+        },
+        { headers: getHeaders() }
+      );
+      setCorrModal({ vuln, result: res.data });
+    } catch (e: any) {
+      const detail = e.response?.data?.detail;
+      setCorrErreur(typeof detail === "string" ? detail : "Erreur lors de la correction");
+    } finally {
+      setCorrigingVuln(null);
+    }
+  };
+
+  // ── Composant carte vulnérabilité réutilisable ──────────────────
+  const VulnCard = ({ v, i }: { v: any; i: number }) => {
+    const key = `${v.fichier}-${v.ligne}-${v.type}`;
+    const isFixing = corrigingVuln === key;
+    return (
+      <div key={i} style={{ background: D.card, border: `1px solid ${D.border}`, borderLeft: `3px solid ${cSev(v.severite)}`, borderRadius: 7, padding: "10px 14px", marginBottom: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 8, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", padding: "2px 7px", borderRadius: 20, background: cSev(v.severite), color: "#000" }}>
+            {v.severite}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: D.text }}>{v.type}</span>
+          <div style={{ marginLeft: "auto" }}>
+            <button
+              onClick={() => corrigerVuln(v)}
+              disabled={isFixing || corrigingVuln !== null}
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "5px 12px",
+                background: isFixing ? "rgba(99,102,241,0.15)" : "linear-gradient(135deg,#5b63f5,#818cf8)",
+                border: "none", borderRadius: 6,
+                color: "#fff", fontSize: 11, fontWeight: 600,
+                cursor: isFixing || corrigingVuln !== null ? "not-allowed" : "pointer",
+                opacity: corrigingVuln !== null && !isFixing ? 0.4 : 1,
+              }}
+            >
+              {isFixing
+                ? <><div style={{ width: 10, height: 10, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "white", borderRadius: "50%", animation: "spin 0.6s linear infinite" }} /> Correction...</>
+                : "🔧 Corriger automatiquement"}
+            </button>
+          </div>
+        </div>
+        <div style={{ fontSize: 10, color: D.faint, fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>
+          📄 {v.fichier} — ligne {v.ligne}
+        </div>
+        <div style={{ fontSize: 11, color: D.muted, background: D.inputBg, padding: "6px 10px", borderRadius: 5 }}>
+          💡 {v.suggestion}
+        </div>
+      </div>
+    );
+  };
+
+  // ── États de chargement ─────────────────────────────────────────
   if (loadingData) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", gap: 12, background: D.bg, fontFamily: "'Inter', sans-serif" }}>
@@ -164,6 +236,12 @@ export default function DifferencePage() {
     );
   }
 
+  // ── Calculs utiles ──────────────────────────────────────────────
+  const vulnsBloquantes   = resultat?.vulnerabilites_bloquantes || [];
+  const vulnsNonBloquantes = resultat?.vulnerabilites?.filter(
+    (v: any) => v.severite !== "CRITIQUE" && v.severite !== "HAUTE"
+  ) || [];
+
   return (
     <>
       <style>{`
@@ -174,6 +252,7 @@ export default function DifferencePage() {
 
       <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text, padding: 32 }}>
 
+        {/* ── Header ── */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button onClick={() => router.push("/dashboard")} style={{ background: "transparent", border: `1px solid ${D.border}`, borderRadius: 7, color: D.muted, fontSize: 16, width: 34, height: 34, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -196,10 +275,12 @@ export default function DifferencePage() {
                 border: "none", borderRadius: 8,
                 color: "#fff", fontFamily: "'Inter', sans-serif",
                 fontSize: 13, fontWeight: 700,
-                cursor: "pointer", opacity: loading ? 0.5 : 1
+                cursor: "pointer", opacity: loading ? 0.5 : 1,
               }}
             >
-              {loading ? <><div style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "white", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} /> Analyse en cours...</> : "◎ Analyser et merger si propre"}
+              {loading
+                ? <><div style={{ width: 14, height: 14, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "white", borderRadius: "50%", animation: "spin 0.6s linear infinite", display: "inline-block" }} /> Analyse en cours...</>
+                : "◎ Analyser et merger si propre"}
             </button>
             <button onClick={() => router.push("/dashboard")} style={{ padding: "8px 18px", background: "transparent", border: `1px solid ${D.border}`, borderRadius: 7, color: D.muted, fontFamily: "'Inter', sans-serif", fontSize: 13, cursor: "pointer" }}>
               ▦ Dashboard
@@ -207,34 +288,40 @@ export default function DifferencePage() {
           </div>
         </div>
 
+        {/* ── Erreur globale ── */}
         {erreur && (
           <div style={{ background: D.errorBg, border: `1px solid ${D.errorBorder}`, borderRadius: 8, padding: "12px 14px", fontSize: 12, color: D.errorText, fontFamily: "'JetBrains Mono', monospace", marginBottom: 20 }}>
             ⚠ {erreur}
           </div>
         )}
 
+        {/* ── Erreur correction ── */}
+        {corrErreur && (
+          <div style={{ background: D.errorBg, border: `1px solid ${D.errorBorder}`, borderRadius: 8, padding: "12px 14px", fontSize: 12, color: D.errorText, fontFamily: "'JetBrains Mono', monospace", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>⚠ {corrErreur}</span>
+            <button onClick={() => setCorrErreur("")} style={{ background: "none", border: "none", color: D.errorText, cursor: "pointer", fontSize: 16 }}>×</button>
+          </div>
+        )}
+
+        {/* ── Résultat analyse ── */}
         {resultat && !showConfirmation && (
           <div style={{
-            borderRadius: 12,
-            padding: 22,
-            marginBottom: 28,
-            border: "1px solid",
+            borderRadius: 12, padding: 22, marginBottom: 28, border: "1px solid",
             background: resultat.statut === "merge_autorise" ? "#00d4aa08" : resultat.statut === "merge_bloque" ? "#ff6b6b08" : "#ffd16608",
-            borderColor: resultat.statut === "merge_autorise" ? "#00d4aa30" : resultat.statut === "merge_bloque" ? "#ff6b6b30" : "#ffd16630"
+            borderColor: resultat.statut === "merge_autorise" ? "#00d4aa30" : resultat.statut === "merge_bloque" ? "#ff6b6b30" : "#ffd16630",
           }}>
+
+            {/* Statut */}
             <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 18 }}>
               <div style={{ fontSize: 32, lineHeight: 1 }}>
                 {resultat.statut === "merge_autorise" ? "✅" : resultat.statut === "merge_bloque" ? "🚫" : "⚠️"}
               </div>
               <div>
-                <div style={{
-                  fontSize: 16, fontWeight: 700, marginBottom: 4,
-                  color: resultat.statut === "merge_autorise" ? "#00d4aa" : resultat.statut === "merge_bloque" ? "#ff6b6b" : "#ffd166"
-                }}>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: resultat.statut === "merge_autorise" ? "#00d4aa" : resultat.statut === "merge_bloque" ? "#ff6b6b" : "#ffd166" }}>
                   {resultat.statut === "merge_autorise"
                     ? "Code propre — Merge Request créée automatiquement !"
                     : resultat.statut === "merge_bloque"
-                    ? `Merge bloqué — ${resultat.vulnerabilites_bloquantes?.length} vulnérabilité(s) critique(s) détectée(s)`
+                    ? `Merge bloqué — ${vulnsBloquantes.length} vulnérabilité(s) critique(s) détectée(s)`
                     : "Erreur lors de l'analyse"}
                 </div>
                 <div style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: D.faint }}>
@@ -247,11 +334,12 @@ export default function DifferencePage() {
               </div>
             </div>
 
+            {/* Scores */}
             {resultat.score_qualite !== undefined && (
               <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
                 {[
-                  { label: "Qualité", val: resultat.score_qualite },
-                  { label: "Sécurité", val: resultat.score_securite },
+                  { label: "Qualité",     val: resultat.score_qualite },
+                  { label: "Sécurité",    val: resultat.score_securite },
                   { label: "Performance", val: resultat.score_performance },
                 ].map(s => (
                   <div key={s.label} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, padding: "12px 18px", textAlign: "center", minWidth: 100 }}>
@@ -265,8 +353,9 @@ export default function DifferencePage() {
               </div>
             )}
 
+            {/* Lien MR si autorisé */}
             {resultat.statut === "merge_autorise" && resultat.mr && (
-              <div style={{ display: "flex", alignItems: "center", gap: 12, background: "#00d4aa0d", border: "1px solid #00d4aa25", borderRadius: 8, padding: "14px 16px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, background: "#00d4aa0d", border: "1px solid #00d4aa25", borderRadius: 8, padding: "14px 16px", flexWrap: "wrap", marginBottom: 16 }}>
                 <div style={{ fontSize: 13, color: "#00d4aa", fontWeight: 600, flex: 1 }}>
                   🔀 MR #{resultat.mr.mr_id} — {compareData.from_branch} → {compareData.to_branch}
                 </div>
@@ -276,66 +365,61 @@ export default function DifferencePage() {
               </div>
             )}
 
-            {resultat.statut === "merge_bloque" && resultat.vulnerabilites_bloquantes?.length > 0 && (
+            {/* ── Vulnérabilités BLOQUANTES ── */}
+            {vulnsBloquantes.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>
-                  🚫 Vulnérabilités bloquantes ({resultat.vulnerabilites_bloquantes.length})
+                  🚫 Vulnérabilités bloquantes ({vulnsBloquantes.length})
                 </div>
-                {resultat.vulnerabilites_bloquantes.map((v: any, i: number) => (
-                  <div key={i} style={{ background: D.card, border: `1px solid ${D.border}`, borderLeft: `3px solid ${cSev(v.severite)}`, borderRadius: 7, padding: "10px 14px", marginBottom: 6 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <span style={{ fontSize: 8, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", padding: "2px 7px", borderRadius: 20, background: cSev(v.severite), color: "#000" }}>{v.severite}</span>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: D.text }}>{v.type}</span>
-                    </div>
-                    <div style={{ fontSize: 10, color: D.faint, fontFamily: "'JetBrains Mono', monospace", marginBottom: 4 }}>📄 {v.fichier} — ligne {v.ligne}</div>
-                    <div style={{ fontSize: 11, color: D.muted, background: D.inputBg, padding: "6px 10px", borderRadius: 5 }}>💡 {v.suggestion}</div>
-                  </div>
+                {vulnsBloquantes.map((v: any, i: number) => (
+                  <VulnCard key={i} v={v} i={i} />
                 ))}
-                
+
                 <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${D.border}`, display: "flex", justifyContent: "flex-end" }}>
                   <button
                     onClick={() => setShowConfirmation(true)}
-                    style={{
-                      padding: "10px 20px",
-                      background: "linear-gradient(135deg, #ff6b6b, #ff4757)",
-                      border: "none", borderRadius: 8,
-                      color: "#fff", fontWeight: "bold",
-                      cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
-                      fontSize: 13
-                    }}
+                    style={{ padding: "10px 20px", background: "linear-gradient(135deg, #ff6b6b, #ff4757)", border: "none", borderRadius: 8, color: "#fff", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}
                   >
                     ⚠️ Créer la Merge Request quand même
                   </button>
                 </div>
               </div>
             )}
+
+            {/* ── Vulnérabilités NON BLOQUANTES ── */}
+            {vulnsNonBloquantes.length > 0 && (
+              <div style={{ marginTop: 20 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>
+                  ⚠️ Autres vulnérabilités ({vulnsNonBloquantes.length})
+                  <span style={{ marginLeft: 8, fontSize: 9, color: D.faint, fontWeight: 400, textTransform: "none" }}>— non bloquantes, correction optionnelle</span>
+                </div>
+                {vulnsNonBloquantes.map((v: any, i: number) => (
+                  <VulnCard key={i} v={v} i={i} />
+                ))}
+              </div>
+            )}
+
           </div>
         )}
 
-        {/* Modal de confirmation */}
+        {/* ── Modal confirmation MR forcée ── */}
         {showConfirmation && resultat && (
           <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setShowConfirmation(false)}>
             <div style={{ background: D.modalBg, border: `1px solid ${D.border}`, borderRadius: 16, padding: 24, maxWidth: 500, width: "90%", color: D.text }} onClick={e => e.stopPropagation()}>
               <h3 style={{ color: "#ffd166", marginBottom: 16 }}>⚠️ Confirmation</h3>
               <p>Vous êtes sur le point de créer une Merge Request malgré les vulnérabilités suivantes :</p>
               <ul style={{ margin: "16px 0", paddingLeft: 20, maxHeight: 200, overflow: "auto" }}>
-                {resultat.vulnerabilites_bloquantes?.slice(0, 5).map((v: any, i: number) => (
+                {vulnsBloquantes.slice(0, 5).map((v: any, i: number) => (
                   <li key={i} style={{ marginBottom: 8 }}>
                     <strong style={{ color: "#ff6b6b" }}>[{v.severite}]</strong> {v.type}
-                    <span style={{ fontSize: 11, color: D.faint, display: "block" }}>
-                      📄 {v.fichier} — ligne {v.ligne}
-                    </span>
+                    <span style={{ fontSize: 11, color: D.faint, display: "block" }}>📄 {v.fichier} — ligne {v.ligne}</span>
                   </li>
                 ))}
-                {resultat.vulnerabilites_bloquantes?.length > 5 && (
-                  <li style={{ color: D.faint, fontSize: 11 }}>
-                    ... et {resultat.vulnerabilites_bloquantes.length - 5} autres
-                  </li>
+                {vulnsBloquantes.length > 5 && (
+                  <li style={{ color: D.faint, fontSize: 11 }}>... et {vulnsBloquantes.length - 5} autres</li>
                 )}
               </ul>
-              <p style={{ marginBottom: 20, color: "#ffd166", fontSize: 13 }}>
-                ⚠️ Cette action est déconseillée. La fusion pourrait introduire des vulnérabilités.
-              </p>
+              <p style={{ marginBottom: 20, color: "#ffd166", fontSize: 13 }}>⚠️ Cette action est déconseillée. La fusion pourrait introduire des vulnérabilités.</p>
               <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 20 }}>
                 <button onClick={() => setShowConfirmation(false)} style={{ padding: "8px 20px", background: "transparent", border: `1px solid ${D.border}`, borderRadius: 8, color: D.muted, cursor: "pointer" }}>
                   Annuler
@@ -348,7 +432,43 @@ export default function DifferencePage() {
           </div>
         )}
 
-        {/* Meta row */}
+        {/* ── Modal résultat correction ── */}
+        {corrModal && (
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setCorrModal(null)}>
+            <div style={{ background: D.modalBg, border: `1px solid ${D.border}`, borderRadius: 16, padding: 24, maxWidth: 520, width: "90%", color: D.text }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+                <span style={{ fontSize: 22 }}>🔧</span>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#00d4aa" }}>Correction appliquée avec succès</div>
+                  <div style={{ fontSize: 11, color: D.faint, fontFamily: "'JetBrains Mono', monospace" }}>
+                    {corrModal.vuln.type} · {corrModal.vuln.fichier} · ligne {corrModal.vuln.ligne}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: "#00d4aa0d", border: "1px solid #00d4aa25", borderRadius: 8, padding: "12px 14px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, color: D.faint, fontFamily: "'JetBrains Mono', monospace", marginBottom: 6 }}>Branche de correction</div>
+                <div style={{ fontSize: 12, fontFamily: "'JetBrains Mono', monospace", color: "#9b91ff" }}>{corrModal.result.branche_correction}</div>
+              </div>
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20, flexWrap: "wrap" }}>
+                <button onClick={() => setCorrModal(null)} style={{ padding: "8px 18px", background: "transparent", border: `1px solid ${D.border}`, borderRadius: 8, color: D.muted, cursor: "pointer", fontSize: 13 }}>
+                  Fermer
+                </button>
+                <a
+                  href={corrModal.result.mr_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ padding: "8px 18px", background: "#00d4aa", border: "none", borderRadius: 8, color: "#000", fontWeight: 700, cursor: "pointer", fontSize: 13, textDecoration: "none" }}
+                >
+                  Voir la MR de correction →
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Meta row ── */}
         <div style={{ display: "flex", gap: 12, marginBottom: 28, flexWrap: "wrap" }}>
           <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 10, padding: "14px 20px", display: "flex", flexDirection: "column", gap: 4, minWidth: 160 }}>
             <div style={{ fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "'JetBrains Mono', monospace" }}>Branches comparées</div>
@@ -372,6 +492,7 @@ export default function DifferencePage() {
           </div>
         </div>
 
+        {/* ── Liste des fichiers diff ── */}
         <div style={{ fontSize: 10, fontWeight: 600, color: D.faint, textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: "'JetBrains Mono', monospace", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
           Fichiers modifiés
           <span style={{ background: D.border, color: D.muted, borderRadius: 20, padding: "1px 8px", fontSize: 10 }}>{compareData.files?.length ?? 0}</span>
@@ -395,10 +516,9 @@ export default function DifferencePage() {
                   </div>
                   <pre style={{ margin: 0, padding: 16, background: D.inputBg, color: D.text, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, lineHeight: 1.7, overflowX: "auto", whiteSpace: "pre", maxHeight: 400, overflowY: "auto" }}>
                     {lines.map((line: string, i: number) => {
-                      const cls = line.startsWith("+") ? "line-add" : line.startsWith("-") ? "line-del" : line.startsWith("@@") ? "line-info" : "";
-                      if (cls === "line-add") return <span key={i} style={{ color: "#00d4aa", background: "#00d4aa08", display: "block" }}>{line}{"\n"}</span>;
-                      if (cls === "line-del") return <span key={i} style={{ color: "#ff6b6b", background: "#ff6b6b08", display: "block" }}>{line}{"\n"}</span>;
-                      if (cls === "line-info") return <span key={i} style={{ color: D.faint, display: "block" }}>{line}{"\n"}</span>;
+                      if (line.startsWith("+"))  return <span key={i} style={{ color: "#00d4aa", background: "#00d4aa08", display: "block" }}>{line}{"\n"}</span>;
+                      if (line.startsWith("-"))  return <span key={i} style={{ color: "#ff6b6b", background: "#ff6b6b08", display: "block" }}>{line}{"\n"}</span>;
+                      if (line.startsWith("@@")) return <span key={i} style={{ color: D.faint, display: "block" }}>{line}{"\n"}</span>;
                       return line + "\n";
                     })}
                   </pre>
@@ -411,4 +531,3 @@ export default function DifferencePage() {
     </>
   );
 }
-

@@ -116,12 +116,20 @@ export default function AnalysePage() {
         setEtapeCourante(data.etape_courante || data.statut || "");
 
         if (data.statut === "termine") {
-          clearInterval(pollingRef.current!);
-          setPollingActif(false);
+  clearInterval(pollingRef.current!);
+  setPollingActif(false);
 
-          // Récupérer les issues créées
-          const issuesRes = await axios.get(`${API}/analyses/${id}/statut`, { headers: getHeaders() }).catch(() => ({ data: {} }));
-          const issues = issuesRes.data.issues_gitlab || [];
+  // ✅ CORRECTION — appeler le bon endpoint pour les issues
+  try {
+    const issuesRes = await axios.get(
+      `${API}/issues/analyse/${id}`,
+      { headers: getHeaders() }
+    );
+    setIssuesGitlab(issuesRes.data || []);
+  } catch (e) {
+    console.warn("Issues non récupérées :", e);
+    setIssuesGitlab([]);
+  }
 
           // Si autoTests coché → générer les tests maintenant
           if (avecTests) {
@@ -154,7 +162,7 @@ export default function AnalysePage() {
           sessionStorage.setItem("autoMr",     String(avecMr));
 
           setRapportData(data);
-          setIssuesGitlab(issues);
+          
           setAnalyseTerminee(true);
           setLoading(false);
 
@@ -500,7 +508,7 @@ export default function AnalysePage() {
               <div style={{ width: 8, height: 8, background: "#6366f1", borderRadius: "50%" }} />
               AuditPlatform · IA
             </div>
-            <h1 style={{ fontSize: 32, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", marginBottom: 8 }}>Ajouter un projet</h1>
+            <h1 style={{ fontSize: 32, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", marginBottom: 8 }}>Analyser un projet</h1>
             <p style={{ fontSize: 15, color: D.faint }}>Entrez votre token GitLab pour charger vos projets</p>
           </div>
 

@@ -1,9 +1,4 @@
 ﻿# backend/app/tasks/analyse_task.py
-# ════════════════════════════════════════════════════════
-# Correction : run_analyse accepte maintenant auto_tests et auto_mr
-# (paramètres envoyés par apply_async depuis analyses.py)
-# Sans ça : TypeError: run_analyse() got an unexpected keyword argument 'auto_tests'
-# ════════════════════════════════════════════════════════
 
 from app.celery_app import celery
 from app.config.database import SessionLocal
@@ -79,17 +74,16 @@ def run_analyse(
         # ── 3. Sauvegarde ─────────────────────────────────────────
         _maj_etape(analyse, "sauvegarde", db)
 
-        # Réinitialise la session pour éviter PendingRollbackError
         db.rollback()
         db.expunge_all()
         analyse = db.query(Analyse).filter(Analyse.id == analyse_id).first()
+        depot   = db.query(DepotAnalyse).filter(DepotAnalyse.id == depot_id).first()
+
         analyse.score_qualite     = rapport.get("score_qualite", 0)
         analyse.score_securite    = rapport.get("score_securite", 0)
         analyse.score_performance = rapport.get("score_performance", 0)
         analyse.vulnerabilites    = rapport.get("vulnerabilites", [])
         analyse.recommandations   = rapport.get("recommandations", [])
-        analyse.statut            = "termine"
-        db.rollback()
         db.commit()
         db.refresh(analyse)
 
@@ -123,24 +117,30 @@ def run_analyse(
             ))
         db.commit()
 
-        # ── 4. Issues GitLab ──────────────────────────────────────
+        # ── 4. Issues GitLab — AVANT de passer à "termine" ────────
         _maj_etape(analyse, "creation_issues", db)
-        if rapport.get("vulnerabilites"):
+        vulns = rapport.get("vulnerabilites", [])
+        if vulns:
             try:
-                from app.routes.analyses import creer_issues_gitlab
+                from app.services.issues_service import creer_issues_gitlab
                 creer_issues_gitlab(
                     token            = gitlab_token,
                     project_name     = project_url,
-                    vulnerabilites   = rapport["vulnerabilites"],
+                    vulnerabilites   = vulns,
                     analyse_id       = analyse.id,
                     depot_analyse_id = depot.id,
                     db               = db,
                 )
             except Exception as e:
-                print(f"[ISSUES] Erreur: {e}")
-                import traceback
+                print(f"[ISSUES] Erreur non bloquante: {e}", flush=True)
                 traceback.print_exc()
-        _maj_etape(analyse, "termine", db)
+
+        # ── 5. Marquer "termine" SEULEMENT après les issues ───────
+        analyse = db.query(Analyse).filter(Analyse.id == analyse_id).first()
+        analyse.statut         = "termine"
+        analyse.etape_courante = "termine"
+        db.commit()
+
         return {
             "statut"            : "termine",
             "analyse_id"        : analyse.id,

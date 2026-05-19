@@ -286,6 +286,9 @@ A10 — SSRF (SERVER-SIDE REQUEST FORGERY)
 SECRETS ET DONNÉES SENSIBLES
    - Clés API, tokens, mots de passe dans le code source
    - Variables d'environnement non utilisées correctement
+RÈGLE IMPORTANTE : Si le fichier est un fichier de tests (contient pytest, unittest, Mock, patch),
+ne signale PAS de vulnérabilités de sécurité — les fichiers de tests ne sont pas du code de production.
+Retourne un score_securite de 90 et une liste vulnerabilites vide.
 
 RÈGLE ABSOLUE : Chaque vulnérabilité doit être précisément localisée (fichier + ligne).
 Le code fourni est numéroté ligne par ligne au format "   N | code".
@@ -346,9 +349,10 @@ D. APPELS RÉSEAU ET API EXTERNES
    - Absence de timeout sur les appels HTTP
    - Absence de mécanisme de cache pour des données rarement modifiées
 
-RÈGLE ABSOLUE : Tu DOIS signaler au minimum 2 problèmes de performance par fichier.
-Le code fourni est numéroté ligne par ligne au format "   N | code".
-Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
+RÈGLE : Signale uniquement les vrais problèmes de performance existants.
+Si le fichier est un fichier de tests (pytest, unittest, Mock, patch),
+retourne score_performance=85 et vulnerabilites=[].
+Ne jamais inventer de problèmes inexistants.
 
 Structure JSON de retour :
 {
@@ -399,6 +403,10 @@ C. DOCUMENTATION DES CLASSES ET MODULES
 D. NOMMAGE COMME DOCUMENTATION IMPLICITE
    - Toute variable booléenne dont le nom n'indique pas son état (ex: flag au lieu de is_active) est signalée
    - Toute fonction dont le nom ne reflète pas précisément son action est signalée
+
+RÈGLE : Si le fichier est un fichier de tests (pytest, unittest, Mock, patch),
+évalue uniquement la documentation des tests eux-mêmes.
+Ne pas inventer de problèmes inexistants.
 
 Le code fourni est numéroté ligne par ligne au format "   N | code".
 Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
@@ -456,6 +464,11 @@ D. GESTION DES TRANSACTIONS ET COHÉRENCE
    - Opérations sur la base de données sans transaction explicite
    - Rollback non implémenté en cas d'erreur partielle
    - État incohérent possible si une opération en chaîne échoue à mi-parcours
+
+RÈGLE : Signale uniquement les vrais problèmes existants dans le code.
+Si le fichier est un fichier de tests (pytest, unittest, Mock, patch),
+évalue uniquement la qualité des tests eux-mêmes.
+Ne jamais inventer de problèmes inexistants.
 
 Le code fourni est numéroté ligne par ligne au format "   N | code".
 Tu DOIS utiliser le numéro N visible à gauche du pipe "|" pour le champ "ligne".
@@ -736,12 +749,14 @@ def _fusionner_tous(resultats_par_dimension: dict) -> dict:
     vulnerabilites = []
     titres_vus = set()
     recommandations = []
-
-    r_qualite = resultats_par_dimension.get("qualite", {})
-    r_securite = resultats_par_dimension.get("securite", {})
-    r_performance = resultats_par_dimension.get("performance", {})
-    r_doc = resultats_par_dimension.get("documentation", {})
-    r_pratiques = resultats_par_dimension.get("bonnes_pratiques", {})
+    # Protection : si le LLM retourne une liste au lieu d'un dict, on ignore
+    def _safe(val):
+        return val if isinstance(val, dict) else {}
+    r_qualite     = _safe(resultats_par_dimension.get("qualite", {}))
+    r_securite    = _safe(resultats_par_dimension.get("securite", {}))
+    r_performance = _safe(resultats_par_dimension.get("performance", {}))
+    r_doc         = _safe(resultats_par_dimension.get("documentation", {}))
+    r_pratiques   = _safe(resultats_par_dimension.get("bonnes_pratiques", {}))
 
     if r_qualite.get("score_qualite") is not None:
         scores_qualite.append(r_qualite["score_qualite"])

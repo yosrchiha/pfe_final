@@ -254,7 +254,7 @@ function DashboardContent() {
               </div>
             </div>
             <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-              <button onClick={() => router.push("/Exploreformpage")} style={{ padding:"10px 20px", background:D.btnSec, border:`1px solid ${D.border}`, borderRadius:12, color:D.muted, fontSize:13, fontWeight:500, cursor:"pointer" }}>📁 Dépôts</button>
+              <button onClick={() => router.push("/Exploreformpage")} style={{ padding:"10px 20px", background:D.btnSec, border:`1px solid ${D.border}`, borderRadius:12, color:D.muted, fontSize:13, fontWeight:500, cursor:"pointer" }}>📁 exploration du code</button>
               <button onClick={() => router.push("/add-repository")} style={{ padding:"10px 20px", background:D.btnSec, border:`1px solid ${D.border}`, borderRadius:12, color:D.muted, fontSize:13, fontWeight:500, cursor:"pointer" }}>🔀 Comparer</button>
               <button onClick={() => router.push("/analyse")} style={{ padding:"10px 20px", background:D.btnPrimary, border:"none", borderRadius:12, color:"white", fontSize:13, fontWeight:600, cursor:"pointer" }}>+ Nouvelle analyse</button>
 

@@ -7,6 +7,8 @@ from app.models.test_genere import TestGenere
 from app.schemas.test_genere import TestGenereResponse
 from app.schemas.merge_request import MergeRequestResponse
 import traceback
+# En haut de analyses.py, remplacer la définition de creer_issues_gitlab par :
+from app.services.issues_service import creer_issues_gitlab
 from pydantic import BaseModel as PydanticBaseModel
 import os
 from jose import jwt, JWTError
@@ -538,26 +540,16 @@ def generer_tests_endpoint(
         DepotAnalyse.id == analyse.depot_analyse_id
     ).first()
 
-    token_clair = None
-
-    if depot_obj and depot_obj.gitlab_token:
-        try:
-            token_clair = decrypt_token(depot_obj.gitlab_token)
-            print(f"[TESTS] Token déchiffré depuis la base : {token_clair[:8]}...", flush=True)
-        except Exception as e:
-            print(f"[TESTS] Decrypt échoué ({e}), token utilisé tel quel", flush=True)
-            token_clair = depot_obj.gitlab_token
-
-    # Fallback : token envoyé par le frontend
-    if not token_clair:
+    # Le modèle déchiffre automatiquement via @property
+    try:
+        token_clair = depot_obj.gitlab_token
+        print(f"[TESTS] Token récupéré : {token_clair[:8]}...", flush=True)
+    except Exception as e:
+        print(f"[TESTS] Erreur token: {e}")
         token_clair = data.gitlab_token
-        print(f"[TESTS] Token fallback frontend : {token_clair[:8] if token_clair else 'VIDE'}...", flush=True)
 
     if not token_clair:
-        raise HTTPException(
-            status_code=400,
-            detail="Token GitLab introuvable pour ce dépôt"
-        )
+        raise HTTPException(status_code=400, detail="Token GitLab introuvable")
 
     try:
         # ── 2. Récupérer les fichiers ─────────────────────
