@@ -526,6 +526,10 @@ class CorrigerVulnRequest(BaseModel):
     contenu_source: str = ""
 
 
+# Remplacer uniquement la fonction corriger_vuln dans backend/app/routes/depots.py
+# Ajouter cet import en haut du fichier avec les autres imports :
+# from app.models.corre_diff import CorreDiff
+
 @router.post("/{depot_id}/corriger-vuln")
 def corriger_vuln(
     depot_id: int,
@@ -537,6 +541,7 @@ def corriger_vuln(
     import base64
     from datetime import datetime
     from groq import Groq
+    from app.models.corre_diff import CorreDiff
 
     depot = db.query(Depot).filter(Depot.id == depot_id).first()
     if not depot:
@@ -549,11 +554,12 @@ def corriger_vuln(
 
     # ── 1. Lire le contenu original du fichier ────────────────────
     contenu_original = ""
+    branche_source = depot.url_branche_developpement
 
     try:
         f = project.files.get(file_path=data.fichier_path, ref=depot.url_branche_developpement)
         contenu_original = base64.b64decode(f.content).decode("utf-8")
-        print(f"[FIX] Lu depuis branche dev : {data.fichier_path}")
+        branche_source = depot.url_branche_developpement
     except Exception:
         pass
 
@@ -561,13 +567,13 @@ def corriger_vuln(
         try:
             f = project.files.get(file_path=data.fichier_path, ref=depot.url_branche_principale)
             contenu_original = base64.b64decode(f.content).decode("utf-8")
-            print(f"[FIX] Lu depuis branche principale : {data.fichier_path}")
+            branche_source = depot.url_branche_principale
         except Exception:
             pass
 
     if not contenu_original and data.contenu_source:
         contenu_original = data.contenu_source
-        print(f"[FIX] Contenu récupéré depuis le frontend")
+        branche_source = "frontend"
 
     if not contenu_original:
         raise HTTPException(
@@ -575,7 +581,7 @@ def corriger_vuln(
             detail=f"Impossible de lire '{data.fichier_path}' depuis GitLab"
         )
 
-    # ── 2. Demander à l'IA de corriger ───────────────────────────
+    # ── 2. Demander a l IA de corriger ────────────────────────────
     try:
         groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -608,19 +614,16 @@ INSTRUCTIONS STRICTES :
 
         contenu_corrige = response.choices[0].message.content.strip()
 
-        # Nettoyer les balises markdown si présentes
         if contenu_corrige.startswith("```"):
             lines = contenu_corrige.split("\n")
             start = 1
             end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
             contenu_corrige = "\n".join(lines[start:end])
 
-        print(f"[FIX] Code corrigé généré : {len(contenu_corrige)} chars")
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur IA: {str(e)}")
 
-    # ── 3. Créer une branche de correction depuis la branche DEV ──
+    # ── 3. Creer une branche de correction ────────────────────────
     ts = datetime.utcnow().strftime("%Y-%m-%d-%H%M")
     vuln_slug = data.vuln_type.lower().replace(" ", "-").replace("/", "-")[:25]
     branche_correction = f"fix/{vuln_slug}-{ts}"
@@ -630,14 +633,11 @@ INSTRUCTIONS STRICTES :
             "branch": branche_correction,
             "ref": depot.url_branche_developpement
         })
-        print(f"[FIX] Branche créée : {branche_correction}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur création branche: {str(e)}")
 
-    # ── 4. Pousser le fichier corrigé via commits.create ──────────
-    # ✅ Syntaxe correcte python-gitlab : commits.create avec actions
+    # ── 4. Pousser le fichier corrige ─────────────────────────────
     try:
-        # Vérifier si le fichier existe sur la branche de correction
         fichier_existe = True
         try:
             project.files.get(file_path=data.fichier_path, ref=branche_correction)
@@ -658,12 +658,10 @@ INSTRUCTIONS STRICTES :
                 }
             ]
         })
-        print(f"[FIX] Fichier poussé : {data.fichier_path} sur {branche_correction}")
-
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur push fichier: {str(e)}")
 
-    # ── 5. Créer une MR de correction vers la branche DEV ─────────
+    # ── 5. Creer une MR de correction vers la branche DEV ─────────
     try:
         mr = _get_or_create_mr(
             project=project,
@@ -686,9 +684,40 @@ INSTRUCTIONS STRICTES :
 > Corrigé automatiquement par **AuditPlatform** · LLM Groq""",
             labels=["fix-auto", "IA", "securite"]
         )
-        print(f"[FIX] MR créée : !{mr.iid} → {mr.web_url}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur création MR correction: {str(e)}")
+
+    # ── 6. Recuperer l analyse diff liee au depot ─────────────────
+    analyse_diff = db.query(AnalyseDiff).join(
+        Comparaison, AnalyseDiff.comparaison_id == Comparaison.id
+    ).filter(
+        Comparaison.depot_id == depot_id
+    ).order_by(AnalyseDiff.id.desc()).first()
+
+    # ── 7. Sauvegarder la correction dans corre_diff ──────────────
+    corre = CorreDiff(
+        user_id=current_user.id,
+        depot_id=depot.id,
+        analyse_diff_id=analyse_diff.id if analyse_diff else None,
+        comparaison_id=analyse_diff.comparaison_id if analyse_diff else None,
+        fichier_path=data.fichier_path,
+        branche_source=branche_source,
+        branche_correction=branche_correction,
+        vuln_type=data.vuln_type,
+        vuln_severite=data.vuln_severite,
+        vuln_ligne=data.vuln_ligne,
+        vuln_suggestion=data.vuln_suggestion,
+        contenu_original=contenu_original,
+        contenu_corrige=contenu_corrige,
+        modele_utilise=groq_model,
+        mr_url=mr.web_url,
+        mr_id_gitlab=mr.iid,
+        mr_titre=mr.title,
+        statut="mr_creee",
+        pushed_at=datetime.utcnow()
+    )
+    db.add(corre)
+    db.commit()
 
     return {
         "statut": "success",
@@ -699,5 +728,6 @@ INSTRUCTIONS STRICTES :
         "mr_id": mr.iid,
         "mr_titre": mr.title,
         "vuln_type": data.vuln_type,
-        "vuln_severite": data.vuln_severite
+        "vuln_severite": data.vuln_severite,
+        "corre_diff_id": corre.id
     }

@@ -120,12 +120,15 @@ export default function AnalysePage() {
   setPollingActif(false);
 
   // ✅ CORRECTION — appeler le bon endpoint pour les issues
+  // ✅ CORRECTION — appeler le bon endpoint pour les issues
+  let issuesList: any[] = [];
   try {
     const issuesRes = await axios.get(
       `${API}/issues/analyse/${id}`,
       { headers: getHeaders() }
     );
-    setIssuesGitlab(issuesRes.data || []);
+    issuesList = issuesRes.data || [];
+    setIssuesGitlab(issuesList);
   } catch (e) {
     console.warn("Issues non récupérées :", e);
     setIssuesGitlab([]);
@@ -153,7 +156,12 @@ export default function AnalysePage() {
           }
 
           // Sauvegarder pour la page rapport
-          sessionStorage.setItem("rapport",    JSON.stringify(data));
+          // Sauvegarder pour la page rapport — inclure issues_gitlab et analyse_id
+          sessionStorage.setItem("rapport", JSON.stringify({
+            ...data,
+            analyse_id:    id,           // ← data a "id", on ajoute "analyse_id" explicitement
+            issues_gitlab: issuesList,   // ← inclure les issues fetchées
+          }));
           sessionStorage.setItem("nomProjet",  projetChoisi?.nom || "");
           sessionStorage.setItem("token",      tokenGitlab);
           sessionStorage.setItem("projectUrl", projetChemin);

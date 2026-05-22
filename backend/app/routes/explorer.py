@@ -8,7 +8,7 @@ from typing import List, Optional
 import gitlab
 import json
 import os
-
+from sqlalchemy.sql import func
 from app.config.database import get_db
 from app.routes.auth import get_current_user
 from app.models.user import User
@@ -337,11 +337,19 @@ def corriger_fichier(body: CorrigerRequest):
     """
     Envoie le fichier (numéroté) + la description de la vuln au LLM.
     Retourne { contenu_corrige, explication }.
+    Fallback automatique : Groq → OpenRouter si rate limit 429.
     """
     from groq import Groq
+    from openai import OpenAI
 
     groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    groq_model  = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    openrouter_client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.getenv("OPENROUTER_API_KEY"),
+    )
+    openrouter_model = os.getenv("OPENROUTER_DIFF_MODEL", "llama-3.1-8b-instruct")
 
     prompt = f"""Tu es un expert en sécurité logicielle. Corrige UNIQUEMENT la vulnérabilité décrite.
 
@@ -358,53 +366,113 @@ RÈGLES :
 3. Retourne UNIQUEMENT un objet JSON valide, sans markdown, sans texte autour.
 
 JSON attendu :
-{{"contenu_corrige": "<fichier entier corrigé SANS numéros de ligne>", "explication": "<une phrase>>"}}
+{{"contenu_corrige": "<fichier entier corrigé SANS numéros de ligne>", "explication": "<une phrase>"}}
 
 Code (lignes numérotées pour référence) :
 {body.contenu_numerote}
 """
 
-    try:
-        response = groq_client.chat.completions.create(
-            model=groq_model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=4000,
-            temperature=0.1
-        )
-        raw = response.choices[0].message.content.strip()
-
-        # Extraire le JSON même si entouré de markdown
+    def _parse_json(raw: str):
+        """Extrait le JSON de la réponse même si entouré de markdown."""
         if "```" in raw:
             for part in raw.split("```"):
                 part = part.strip()
+
                 if part.startswith("json"):
-                    part = part[4:]
-                part = part.strip()
+                    part = part[4:].strip()
+
                 if part.startswith("{"):
                     try:
                         return json.loads(part)
                     except Exception:
                         continue
 
-        # Tentative directe
         try:
             return json.loads(raw)
         except Exception:
             pass
 
-        # Extraction JSON brute
         s = raw.find("{")
         e = raw.rfind("}") + 1
+
         if s >= 0 and e > s:
             return json.loads(raw[s:e])
 
-        raise HTTPException(status_code=500, detail="Le LLM n'a pas retourné un JSON valide.")
+        return None
+
+    # ── Tentative 1 : Groq ───────────────────────────────
+    try:
+        print(f"[CORRIGER] → Groq ({groq_model})...")
+
+        response = groq_client.chat.completions.create(
+            model=groq_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            max_tokens=4000,
+            temperature=0.1,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        result = _parse_json(raw)
+
+        if result:
+            print("[CORRIGER] ✅ Groq OK")
+            return result
+
+        raise ValueError("JSON invalide retourné par Groq")
+
+    except Exception as e:
+        err_str = str(e)
+
+        if (
+            "429" in err_str
+            or "rate_limit" in err_str.lower()
+            or "rate limit" in err_str.lower()
+        ):
+            print(f"[CORRIGER] ⚠️ Groq rate limit — fallback OpenRouter ({openrouter_model})")
+        else:
+            print(f"[CORRIGER] ⚠️ Groq erreur ({err_str[:80]}) — fallback OpenRouter")
+
+    # ── Tentative 2 : OpenRouter ─────────────────────────
+    try:
+        print(f"[CORRIGER] → OpenRouter ({openrouter_model})...")
+
+        response = openrouter_client.chat.completions.create(
+            model=openrouter_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            max_tokens=4000,
+            temperature=0.1,
+        )
+
+        raw = response.choices[0].message.content.strip()
+        result = _parse_json(raw)
+
+        if result:
+            print("[CORRIGER] ✅ OpenRouter OK")
+            return result
+
+        raise HTTPException(
+            status_code=500,
+            detail="Le LLM n'a pas retourné un JSON valide.",
+        )
 
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur LLM : {str(e)}")
 
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur LLM (Groq + OpenRouter): {str(e)}",
+        )
 
 # ══════════════════════════════════════════════════════════
 # ROUTE 5 — Push des fichiers modifiés vers GitLab
@@ -478,12 +546,37 @@ def push_vers_gitlab(body: PushRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur GitLab commit : {str(e)}")
 
+    # ── Créer la MR sur GitLab si mode "new" ─────────────
+    mr_url  = None
+    mr_id   = None
+    mr_iid  = None
+
+    if body.mode == "new":
+        try:
+            mr = project.mergerequests.create({
+                "source_branch": branche_cible,
+                "target_branch": body.branche_src.strip(),
+                "title":         body.message.strip(),
+                "description":   f"Corrections automatiques par IA — {len(actions)} fichier(s) modifié(s)",
+                "labels":        "IA,auto-merge",
+            })
+            mr_url = mr.web_url
+            mr_id  = mr.id
+            mr_iid = mr.iid
+            print(f"[MR] ✅ MR créée : {mr_url}")
+        except Exception as e:
+            print(f"[MR] ⚠️ Erreur création MR : {str(e)}")
+            # On ne bloque pas le push si la MR échoue
+
     return {
         "message":   f"✓ {len(actions)} fichier(s) poussé(s) sur '{branche_cible}'",
         "commit_id": commit.id,
         "branche":   branche_cible,
         "fichiers":  len(actions),
-        "url":       f"{project.web_url}/-/commit/{commit.id}",
+        "url":       mr_url or f"{project.web_url}/-/commit/{commit.id}",
+        "mr_url":    mr_url,
+        "mr_id":     mr_id,
+        "mr_iid":    mr_iid,
         "mode":      body.mode,
     }
 @router.post("/mr/save", response_model=MrExplorationResponse)

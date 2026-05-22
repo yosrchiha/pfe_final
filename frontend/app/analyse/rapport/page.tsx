@@ -219,25 +219,34 @@ function RapportPage() {
     const headers = { Authorization: jwt ? `Bearer ${jwt}` : "" };
 
     const applyData = (data: any, np: string, t: string, pu: string, br: string, at: boolean) => {
-      setRapport(data);
-      setNomProjet(np);
-      setToken(t);
-      setProjectUrl(pu);
-      setBranche(br);
-      setAutoTests(at);
-      if (data.issues_gitlab && data.issues_gitlab.length > 0) {
-        setIssuesGitlab(data.issues_gitlab);
-      } else if (data.analyse_id) {
-        axios.get(`${API}/issues/analyse/${data.analyse_id}`, { headers })
-          .then(res => setIssuesGitlab(res.data)).catch(() => {});
-      }
-      if (data.depot_analyse_id) {
-        axios.get(`${API}/analyses/depot/${data.depot_analyse_id}`)
-          .then(res => setHistorique(res.data))
-          .catch(() => setHistorique([]));
-      }
-      if (at) setTimeout(() => setShowPopup(true), 600);
-    };
+  setRapport(data);
+  setNomProjet(np);
+  setToken(t);
+  setProjectUrl(pu);
+  setBranche(br);
+  setAutoTests(at);
+
+  // ✅ CORRECTION
+  if (data.issues_gitlab && data.issues_gitlab.length > 0) {
+    setIssuesGitlab(data.issues_gitlab);
+  } else {
+    const effectiveId = data.analyse_id || data.id;
+    if (effectiveId) {
+      const jwt = localStorage.getItem("token");  // ← définir headers ici localement
+      const localHeaders = { Authorization: jwt ? `Bearer ${jwt}` : "" };
+      axios.get(`${API}/issues/analyse/${effectiveId}`, { headers: localHeaders })
+        .then(res => setIssuesGitlab(res.data || []))
+        .catch(() => setIssuesGitlab([]));
+    }
+  }
+
+  if (data.depot_analyse_id) {
+    axios.get(`${API}/analyses/depot/${data.depot_analyse_id}`)
+      .then(res => setHistorique(res.data))
+      .catch(() => setHistorique([]));
+  }
+  if (at) setTimeout(() => setShowPopup(true), 600);
+};
 
     // Cas 1 : vient de la page dépôts via sessionStorage (prioritaire si analyse_id correspond)
     const stored = sessionStorage.getItem("rapport");

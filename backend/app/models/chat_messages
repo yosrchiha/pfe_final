@@ -1,0 +1,48 @@
+# backend/app/models/chat_message.py
+
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
+from app.config.database import Base
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Utilisateur qui a pose la question
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Contexte de l analyse liee au message
+    # Peut pointer vers une analyse diff ou une analyse fichier
+    analyse_diff_id = Column(Integer, ForeignKey("analyses_diff.id", ondelete="SET NULL"), nullable=True)
+    analyse_fichier_id = Column(Integer, ForeignKey("analyses_fichier.id", ondelete="SET NULL"), nullable=True)
+    projet_nom = Column(String(255), nullable=True)
+
+    # La vulnerabilite sur laquelle porte la question (optionnel)
+    vuln_type = Column(String(255), nullable=True)
+    vuln_severite = Column(String(50), nullable=True)
+    vuln_fichier = Column(String(500), nullable=True)
+    vuln_ligne = Column(Integer, nullable=True)
+
+    # Le message envoye par l utilisateur
+    question = Column(Text, nullable=False)
+
+    # La reponse generee par le chatbot IA
+    reponse = Column(Text, nullable=False)
+
+    # Le modele IA utilise pour generer la reponse
+    modele_utilise = Column(String(100), nullable=True)  # ex: meta-llama/llama-3.1-8b-instruct
+
+    # Scores du contexte au moment du chat (snapshot)
+    scores_contexte = Column(JSON, nullable=True)
+    # ex: {"qualite": 72, "securite": 45, "performance": 80}
+
+    # Timestamps
+    created_at = Column(DateTime, server_default=func.now())
+
+    # Relations
+    user = relationship("User", backref="chat_messages")
+    analyse_diff = relationship("AnalyseDiff", backref="chat_messages")
+    analyse_fichier = relationship("AnalyseFichier", backref="chat_messages")

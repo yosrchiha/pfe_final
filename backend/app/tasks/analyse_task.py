@@ -2,6 +2,7 @@
 
 from app.celery_app import celery
 from app.config.database import SessionLocal
+import app.models
 from app.models.analyse        import Analyse
 from app.models.depot_analyse  import DepotAnalyse
 from app.models.vulnerabilite  import Vulnerabilite

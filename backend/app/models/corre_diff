@@ -1,0 +1,61 @@
+# backend/app/models/corre_diff.py
+
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
+from app.config.database import Base
+
+
+class CorreDiff(Base):
+    __tablename__ = "corre_diff"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Utilisateur qui a declenche la correction
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Depot et analyse diff d origine
+    depot_id = Column(Integer, ForeignKey("depots.id", ondelete="CASCADE"), nullable=False)
+    analyse_diff_id = Column(Integer, ForeignKey("analyses_diff.id", ondelete="SET NULL"), nullable=True)
+    comparaison_id = Column(Integer, ForeignKey("comparaisons.id", ondelete="SET NULL"), nullable=True)
+
+    # Informations sur le fichier corrige
+    fichier_path = Column(String(500), nullable=False)
+    branche_source = Column(String(255), nullable=False)   # branche depuis laquelle le fichier a ete lu
+    branche_correction = Column(String(255), nullable=False)  # branche fix/type-horodatage creee
+
+    # Vulnerabilite corrigee
+    vuln_type = Column(String(255), nullable=False)
+    vuln_severite = Column(String(50), nullable=False)     # CRITIQUE, HAUTE, MOYENNE, FAIBLE
+    vuln_ligne = Column(Integer, nullable=False)
+    vuln_suggestion = Column(Text, nullable=True)
+
+    # Contenu avant et apres correction
+    contenu_original = Column(Text, nullable=False)
+    contenu_corrige = Column(Text, nullable=False)
+
+    # Modele IA utilise pour la correction
+    modele_utilise = Column(String(100), nullable=True)    # ex: llama-3.3-70b-versatile
+
+    # MR creee sur GitLab apres le push
+    mr_url = Column(String(500), nullable=True)
+    mr_id_gitlab = Column(Integer, nullable=True)
+    mr_titre = Column(String(500), nullable=True)
+
+    # Statut du cycle de vie de la correction
+    statut = Column(String(50), default="appliquee")
+    # appliquee   -> correction generee et poussee sur branche fix
+    # mr_creee    -> MR ouverte vers branche dev
+    # mr_mergee   -> MR acceptee et mergee
+    # annulee     -> correction abandonnee
+
+    # Timestamps
+    created_at = Column(DateTime, server_default=func.now())
+    pushed_at = Column(DateTime, nullable=True)
+    merged_at = Column(DateTime, nullable=True)
+
+    # Relations
+    user = relationship("User", backref="corre_diff")
+    depot = relationship("Depot", backref="corre_diff")
+    analyse_diff = relationship("AnalyseDiff", backref="corre_diff")
+    comparaison = relationship("Comparaison", backref="corre_diff")
