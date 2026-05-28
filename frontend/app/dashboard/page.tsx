@@ -21,7 +21,11 @@ interface TicketNotif { id: number; subject: string; status: string; }
 const menuItems = [
   { key: "dashboard",      label: "Tableau de bord", icon: "▦",  href: "/dashboard" },
   { key: "repositories",   label: "Dépôts",          icon: "◈",  href: "/depots" },
+  { key: "mes_analyses", label: "Mes Analyses", icon: "📋", href: "/mes-analyses" },
   { key: "comparaisons",   label: "Comparaisons",    icon: "📊", href: "/comparaisons" },
+  { key: "pipelines", label: "Configuration CI/CD", icon: "⚙️", href: "/pipelines" },
+  { key: "mes pipelines ", label: "Suivi des Pipelines", icon: "⚙️", href: "/pipelines-monitoring" },
+                                                                  
   { key: "analyses",       label: "Analyse",         icon: "◎",  href: "/analyse" },
   { key: "videos",         label: "Mes Vidéos",      icon: "🎬", href: "/mes-videos" },
   { key: "rapports",       label: "Mes Rapports",    icon: "📄", href: "/mes-rapports" },

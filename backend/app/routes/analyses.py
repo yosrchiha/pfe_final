@@ -17,6 +17,7 @@ from app.config.database import get_db
 from app.models.analyse       import Analyse
 from app.models.depot_analyse import DepotAnalyse
 from app.models.user          import User
+from app.routes.auth import get_current_user
 from app.schemas.analyse      import LancerAnalyseRequest
 from app.services.llm_service import analyser_code
 from app.models.issue_gitlab import IssueGitLab
@@ -33,6 +34,9 @@ from app.schemas.export_rapport import ExportRapportCreate
 from pydantic import BaseModel as PydanticBaseModel
 from typing import Optional
 from app.models.vulnerabilite import Vulnerabilite
+from app.models.feedback import Feedback
+from app.models.video_generee import VideoGeneree
+from sqlalchemy import or_
 
 
 router = APIRouter(prefix="/analyses", tags=["Analyses"])
@@ -406,6 +410,132 @@ def get_depots_user(
         }
         for d in depots
     ]
+
+
+
+# ════════════════════════════════════════════════════════
+# ENDPOINT — Historique global des analyses du client connecté
+# GET /analyses/historique/mes-analyses
+# ════════════════════════════════════════════════════════
+@router.get("/historique/mes-analyses")
+def get_mes_analyses(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Retourne toutes les analyses de tous les dépôts appartenant
+    au client connecté, enrichies avec les informations du dépôt.
+    """
+    lignes = (
+        db.query(Analyse, DepotAnalyse)
+        .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
+        .filter(DepotAnalyse.user_id == current_user.id)
+        .order_by(Analyse.created_at.desc())
+        .all()
+    )
+
+    resultats = []
+    for analyse, depot in lignes:
+        vulnerabilites = analyse.vulnerabilites if isinstance(analyse.vulnerabilites, list) else []
+        recommandations = analyse.recommandations if isinstance(analyse.recommandations, list) else []
+
+        severites = [
+            str(v.get("severite", "")).upper()
+            for v in vulnerabilites
+            if isinstance(v, dict)
+        ]
+
+        resultats.append({
+            "id": analyse.id,
+            "depot_analyse_id": depot.id,
+            "depot_nom": depot.nom,
+            "project_url": depot.project_url,
+            "branche": analyse.branche or depot.branche or "main",
+            "score_qualite": analyse.score_qualite,
+            "score_securite": analyse.score_securite,
+            "score_performance": analyse.score_performance,
+            "vulnerabilites": vulnerabilites,
+            "recommandations": recommandations,
+            "nb_vulnerabilites": len(vulnerabilites),
+            "nb_critiques": severites.count("CRITIQUE"),
+            "nb_hautes": severites.count("HAUTE"),
+            "statut": analyse.statut,
+            "modele_llm": analyse.modele_llm,
+            "owasp_enabled": analyse.owasp_enabled,
+            "auto_tests": analyse.auto_tests,
+            "auto_mr": analyse.auto_mr,
+            "created_at": str(analyse.created_at),
+        })
+
+    return resultats
+
+
+
+# ════════════════════════════════════════════════════════
+# ENDPOINT — Supprimer une analyse depuis « Mes analyses »
+# DELETE /analyses/historique/mes-analyses/{analyse_id}
+# ════════════════════════════════════════════════════════
+@router.delete("/historique/mes-analyses/{analyse_id}", status_code=204)
+def supprimer_mon_analyse(
+    analyse_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Supprime une seule analyse du client connecté et ses dépendances locales.
+    Le dépôt est conservé et les objets déjà créés sur GitLab distant
+    ne sont pas supprimés.
+    """
+    analyse = (
+        db.query(Analyse)
+        .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
+        .filter(
+            Analyse.id == analyse_id,
+            DepotAnalyse.user_id == current_user.id
+        )
+        .first()
+    )
+
+    if not analyse:
+        raise HTTPException(status_code=404, detail="Analyse introuvable ou accès non autorisé.")
+
+    if analyse.statut == "en_cours":
+        raise HTTPException(status_code=409, detail="Une analyse en cours ne peut pas être supprimée.")
+
+    try:
+        exports = db.query(ExportRapport).filter(ExportRapport.analyse_id == analyse_id).all()
+        for export in exports:
+            if export.chemin_fichier and os.path.isfile(export.chemin_fichier):
+                try:
+                    os.remove(export.chemin_fichier)
+                except OSError:
+                    pass
+
+        tests = db.query(TestGenere).filter(TestGenere.analyse_id == analyse_id).all()
+        test_ids = [test.id for test in tests]
+
+        conditions_mr = [MergeRequest.analyse_id == analyse_id]
+        if test_ids:
+            conditions_mr.append(MergeRequest.test_id.in_(test_ids))
+
+        db.query(MergeRequest).filter(or_(*conditions_mr)).delete(synchronize_session=False)
+        db.query(IssueGitLab).filter(IssueGitLab.analyse_id == analyse_id).delete(synchronize_session=False)
+        db.query(TestGenere).filter(TestGenere.analyse_id == analyse_id).delete(synchronize_session=False)
+        db.query(Feedback).filter(Feedback.analyse_id == analyse_id).delete(synchronize_session=False)
+        db.query(ExportRapport).filter(ExportRapport.analyse_id == analyse_id).delete(synchronize_session=False)
+        db.query(Recommandation).filter(Recommandation.analyse_id == analyse_id).delete(synchronize_session=False)
+        db.query(Vulnerabilite).filter(Vulnerabilite.analyse_id == analyse_id).delete(synchronize_session=False)
+
+        db.delete(analyse)
+        db.commit()
+        return None
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la suppression de l'analyse : {str(e)}"
+        )
 
 @router.get("/{analyse_id}/statut")
 def get_statut_analyse(
@@ -981,22 +1111,97 @@ def supprimer_depot(
     authorization : str     = Header(None)
 ):
     """
-    Supprime le dépôt et tout ce qui lui est lié en cascade.
+    Supprime un dépôt d'analyse globale et toutes ses données associées.
+
+    La suppression est explicite car les anciennes bases déjà créées peuvent
+    ne pas contenir les règles ON DELETE CASCADE ajoutées dans les modèles.
     """
     user_id = get_user_id_from_token(authorization, db)
- 
+
     depot = db.query(DepotAnalyse).filter(
-        DepotAnalyse.id      == depot_id,
+        DepotAnalyse.id == depot_id,
         DepotAnalyse.user_id == user_id
     ).first()
- 
+
     if not depot:
         raise HTTPException(
             status_code=404,
             detail="Dépôt introuvable ou accès non autorisé"
         )
- 
-    db.delete(depot)
-    db.commit()
-    # 204 No Content
+
+    try:
+        analyses = db.query(Analyse).filter(Analyse.depot_analyse_id == depot_id).all()
+        analyse_ids = [a.id for a in analyses]
+
+        # Supprimer les fichiers physiques générés avant leurs enregistrements.
+        if analyse_ids:
+            exports = db.query(ExportRapport).filter(ExportRapport.analyse_id.in_(analyse_ids)).all()
+            for export in exports:
+                if export.chemin_fichier and os.path.isfile(export.chemin_fichier):
+                    try:
+                        os.remove(export.chemin_fichier)
+                    except OSError:
+                        pass
+
+        # Les vidéos de rapport ne portent pas de FK analyse_id : elles sont
+        # associées au dépôt par le propriétaire et le nom du projet.
+        videos = db.query(VideoGeneree).filter(
+            VideoGeneree.user_id == user_id,
+            VideoGeneree.nom_projet == depot.nom
+        ).all()
+        for video in videos:
+            if video.chemin_fichier and os.path.isfile(video.chemin_fichier):
+                try:
+                    os.remove(video.chemin_fichier)
+                except OSError:
+                    pass
+            db.delete(video)
+
+        if analyse_ids:
+            # Dépendances liées à l'analyse.
+            db.query(Feedback).filter(Feedback.analyse_id.in_(analyse_ids)).delete(synchronize_session=False)
+            db.query(ExportRapport).filter(ExportRapport.analyse_id.in_(analyse_ids)).delete(synchronize_session=False)
+            db.query(Recommandation).filter(Recommandation.analyse_id.in_(analyse_ids)).delete(synchronize_session=False)
+            db.query(Vulnerabilite).filter(Vulnerabilite.analyse_id.in_(analyse_ids)).delete(synchronize_session=False)
+
+            # Supprimer les MR avant les tests : merge_requests.test_id peut
+            # référencer tests_generes et bloquer leur suppression.
+            db.query(MergeRequest).filter(
+                or_(
+                    MergeRequest.depot_analyse_id == depot_id,
+                    MergeRequest.analyse_id.in_(analyse_ids)
+                )
+            ).delete(synchronize_session=False)
+
+            db.query(IssueGitLab).filter(
+                or_(
+                    IssueGitLab.depot_analyse_id == depot_id,
+                    IssueGitLab.analyse_id.in_(analyse_ids)
+                )
+            ).delete(synchronize_session=False)
+
+            db.query(TestGenere).filter(
+                or_(
+                    TestGenere.depot_analyse_id == depot_id,
+                    TestGenere.analyse_id.in_(analyse_ids)
+                )
+            ).delete(synchronize_session=False)
+
+            db.query(Analyse).filter(Analyse.id.in_(analyse_ids)).delete(synchronize_session=False)
+        else:
+            # Sécurise aussi le cas d'un dépôt sans analyse mais avec artefacts.
+            db.query(MergeRequest).filter(MergeRequest.depot_analyse_id == depot_id).delete(synchronize_session=False)
+            db.query(IssueGitLab).filter(IssueGitLab.depot_analyse_id == depot_id).delete(synchronize_session=False)
+            db.query(TestGenere).filter(TestGenere.depot_analyse_id == depot_id).delete(synchronize_session=False)
+
+        db.delete(depot)
+        db.commit()
+        return None
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la suppression complète du dépôt : {str(e)}"
+        )
  

@@ -1,11 +1,8 @@
 "use client";
-
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
-
+import axios, { AxiosError } from "axios";
 const API = "http://localhost:8000";
-
 interface FileItem { path: string; content: string; size: number; }
 interface SessionData { projet: string; branche: string; total: number; fichiers: FileItem[]; token: string; }
 interface Vuln { fichier: string; ligne: number; type: string; severite: string; suggestion: string; }
@@ -26,6 +23,7 @@ interface CorrectionHistory {
 }
 
 type Tab = "code" | "analyse" | "edit" | "history";
+type Theme = "dark" | "light";
 type TreeNode = { name: string; path: string; type: "file" | "dir"; children?: TreeNode[]; file?: FileItem; };
 
 function buildTree(files: FileItem[], filter: string): TreeNode[] {
@@ -87,13 +85,26 @@ export default function ExplorerPage() {
   const [showPush,    setShowPush]    = useState(false);
   const [pushBranch,  setPushBranch]  = useState("");
   const [pushMsg,     setPushMsg]     = useState("");
-  const [pushMode,    setPushMode]    = useState<"existing" | "new">("existing");
+  // ✅ FIX : mode "new" par défaut pour créer une MR automatiquement
+  const [pushMode,    setPushMode]    = useState<"existing" | "new">("new");
   const [pushLoading, setPushLoading] = useState(false);
-  const [pushRes,     setPushRes]     = useState<{ ok: boolean; msg: string; url?: string } | null>(null);
+  // ✅ FIX : pushRes inclut mr_url séparé de url (commit)
+  const [pushRes,     setPushRes]     = useState<{ ok: boolean; msg: string; url?: string; mr_url?: string } | null>(null);
   const [toast,       setToast]       = useState<{ msg: string; ok: boolean } | null>(null);
-  
-  // ✅ Historique des corrections
   const [correctionHistory, setCorrectionHistory] = useState<CorrectionHistory[]>([]);
+  // UI only: theme preference does not modify any business action or API call.
+  const [theme, setTheme] = useState<Theme>("dark");
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("explorer_theme") as Theme | null;
+    if (savedTheme === "light" || savedTheme === "dark") setTheme(savedTheme);
+  }, []);
+
+  const toggleTheme = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    localStorage.setItem("explorer_theme", next);
+  };
 
   const showToast = (msg: string, ok = true) => {
     setToast({ msg, ok });
@@ -105,10 +116,9 @@ export default function ExplorerPage() {
     return t ? { Authorization: `Bearer ${t}` } : {};
   };
 
-  // ✅ Charger l'historique des corrections
   const loadCorrectionHistory = async (fichier?: string) => {
     try {
-      const url = fichier 
+      const url = fichier
         ? `${API}/explorer/correction/history?fichier_path=${encodeURIComponent(fichier)}`
         : `${API}/explorer/correction/history`;
       const res = await axios.get(url, { headers: jwt() });
@@ -141,7 +151,6 @@ export default function ExplorerPage() {
     setActiveTab("code");
     setFixBanner(null);
     setEditContent(edits[file.path] ?? file.content);
-    // ✅ Charger l'historique pour ce fichier
     loadCorrectionHistory(file.path);
   };
 
@@ -151,11 +160,13 @@ export default function ExplorerPage() {
     setFixBanner(null);
     setActiveTab("edit");
   };
+
   const handleSave = () => {
     if (!selFile) return;
     saveEditLocal(selFile.path, editContent);
     showToast("Sauvegardé localement");
   };
+
   const handleRevert = () => {
     if (!selFile) return;
     setEdits(prev => { const n = { ...prev }; delete n[selFile.path]; return n; });
@@ -163,19 +174,33 @@ export default function ExplorerPage() {
     setFixBanner(null);
     showToast("Modifications annulées");
   };
+
   const analyserFichier = async (file: FileItem) => {
     if (!data) return;
     setLoadingAna(true);
     setSelFile(file);
     setActiveTab("analyse");
-    setAnalyses(prev => ({ ...prev, [file.path]: { ...prev[file.path], statut: "en_cours" } as any }));
+    setAnalyses(prev => ({
+      ...prev,
+      [file.path]: prev[file.path]
+        ? { ...prev[file.path], statut: "en_cours" }
+        : {
+            score_qualite: 0,
+            score_securite: 0,
+            score_performance: 0,
+            vulnerabilites: [],
+            recommandations: [],
+            statut: "en_cours",
+          },
+    }));
     try {
       const res = await axios.post(`${API}/analyses-fichier/`,
         { projet_nom: data.projet, fichier_path: file.path, contenu: file.content, branche: data.branche },
         { headers: jwt() }
       );
       setAnalyses(prev => ({ ...prev, [file.path]: { ...res.data, statut: "termine" } }));
-    } catch (e: any) {
+    } catch (error: unknown) {
+      const e = error as AxiosError<{ detail?: string }>;
       setAnalyses(prev => ({
         ...prev, [file.path]: {
           score_qualite: 0, score_securite: 0, score_performance: 0,
@@ -185,69 +210,61 @@ export default function ExplorerPage() {
       }));
     } finally { setLoadingAna(false); }
   };
+
   const corrigerParIA = async (vuln: Vuln) => {
-  if (!selFile || !data) return;
-  setFixingVuln(vuln);
-  setFixBanner(null);
-  setActiveTab("edit");
-  const contenuActuel = edits[selFile.path] ?? selFile.content;
-  // Numéroter les lignes
-  const contenuNumerote = contenuActuel.split("\n").map((l, i) => `${String(i+1).padStart(4)} | ${l}`).join("\n");
-  
-  try {
-    const res = await axios.post(`${API}/explorer/corriger`, {
-      fichier_path: selFile.path,
-      contenu_numerote: contenuNumerote,
-      vuln_type: vuln.type,
-      vuln_ligne: vuln.ligne,
-      vuln_suggestion: vuln.suggestion,
-      severite: vuln.severite,
-    }, { headers: jwt() });
-    
-    const corrige = res.data.contenu_corrige as string;
-    setEditContent(corrige);
-    // Dans corrigerParIA, après setEditContent(corrige) :
-    setAnalyses(prev => {
-     const next = { ...prev };
-     delete next[selFile.path];   // ← invalide l'ancienne analyse
-     return next;
-    });
-    // Après setEditContent(corrige) et l'invalidation ci-dessus :
-   // Re-lancer l'analyse sur le contenu corrigé
-    await analyserFichier({ ...selFile, content: corrige });
-    saveEditLocal(selFile.path, corrige);
-    
-    // Sauvegarde en base
+    if (!selFile || !data) return;
+    setFixingVuln(vuln);
+    setFixBanner(null);
+    setActiveTab("edit");
+    const contenuActuel = edits[selFile.path] ?? selFile.content;
+    const contenuNumerote = contenuActuel.split("\n").map((l, i) => `${String(i+1).padStart(4)} | ${l}`).join("\n");
+
     try {
-      await axios.post(`${API}/explorer/correction/save`, {
-        projet_nom: data.projet,
+      const res = await axios.post(`${API}/explorer/corriger`, {
         fichier_path: selFile.path,
-        branche: data.branche,
+        contenu_numerote: contenuNumerote,
         vuln_type: vuln.type,
-        vuln_severite: vuln.severite,
         vuln_ligne: vuln.ligne,
         vuln_suggestion: vuln.suggestion,
-        contenu_original: contenuActuel,
-        contenu_corrige: corrige
+        severite: vuln.severite,
       }, { headers: jwt() });
-      // Recharger l'historique après sauvegarde
-      loadCorrectionHistory(selFile.path);
-    } catch (saveErr) {
-      console.error("[SAVE] Erreur:", saveErr);
+
+      const corrige = res.data.contenu_corrige as string;
+      setEditContent(corrige);
+      setAnalyses(prev => { const next = { ...prev }; delete next[selFile.path]; return next; });
+      await analyserFichier({ ...selFile, content: corrige });
+      saveEditLocal(selFile.path, corrige);
+
+      try {
+        await axios.post(`${API}/explorer/correction/save`, {
+          projet_nom: data.projet,
+          fichier_path: selFile.path,
+          branche: data.branche,
+          vuln_type: vuln.type,
+          vuln_severite: vuln.severite,
+          vuln_ligne: vuln.ligne,
+          vuln_suggestion: vuln.suggestion,
+          contenu_original: contenuActuel,
+          contenu_corrige: corrige
+        }, { headers: jwt() });
+        loadCorrectionHistory(selFile.path);
+      } catch (saveErr) {
+        console.error("[SAVE] Erreur:", saveErr);
+      }
+
+      let msg = res.data.explication || "Correction appliquée";
+      if (typeof msg !== "string") msg = JSON.stringify(msg);
+      setFixBanner({ ok: true, msg });
+
+    } catch (error: unknown) {
+      const e = error as AxiosError<{ detail?: string }>;
+      let errorMsg = e.response?.data?.detail || e.message || "Échec de la correction IA";
+      if (typeof errorMsg !== "string") errorMsg = JSON.stringify(errorMsg);
+      setFixBanner({ ok: false, msg: errorMsg });
+    } finally {
+      setFixingVuln(null);
     }
-    
-    let msg = res.data.explication || "Correction appliquée";
-    if (typeof msg !== 'string') msg = JSON.stringify(msg);
-    setFixBanner({ ok: true, msg });
-    
-  } catch (e: any) {
-    let errorMsg = e.response?.data?.detail || e.message || "Échec de la correction IA";
-    if (typeof errorMsg !== 'string') errorMsg = JSON.stringify(errorMsg);
-    setFixBanner({ ok: false, msg: errorMsg });
-  } finally {
-    setFixingVuln(null);
-  }
-};
+  };
 
   const modifiedPaths = Object.keys(edits).filter(p => {
     const orig = data?.fichiers.find(f => f.path === p)?.content ?? "";
@@ -257,480 +274,679 @@ export default function ExplorerPage() {
   const openPushModal = () => {
     if (activeTab === "edit" && selFile) saveEditLocal(selFile.path, editContent);
     if (modifiedPaths.length === 0) { showToast("Aucune modification à pousser", false); return; }
-    setPushBranch(data?.branche || "main");
+    // ✅ FIX : mode "new" par défaut + nom de branche auto généré
+    setPushMode("new");
+    setPushBranch(`fix/ia-${Date.now().toString(36)}`);
     setPushMsg(`fix: corrections IA — ${modifiedPaths.length} fichier(s)`);
-    setPushMode("existing");
     setPushRes(null);
     setShowPush(true);
   };
 
-  // ── Pusher vers GitLab ────────────────────────────────────
-const pusherGitLab = async () => {
-  if (!data || !token) { 
-    setPushRes({ ok: false, msg: "Token GitLab manquant. Relancez depuis le formulaire." }); 
-    return; 
-  }
-  setPushLoading(true); 
-  setPushRes(null);
-  try {
-    const fichiers = modifiedPaths.map(p => ({ path: p, contenu: edits[p] }));
-    const res = await axios.post(`${API}/explorer/push`, {
-      token, 
-      projet: data.projet, 
-      branche_src: data.branche,
-      branche_dst: pushBranch, 
-      mode: pushMode, 
-      message: pushMsg, 
-      fichiers,
-    }, { headers: jwt() });
-    
-    setPushRes({ ok: true, msg: res.data.message, url: res.data.url });
-    
-    // ✅ Sauvegarde de la MR dans la base de données
-    if (res.data.url) {
-      try {
-        await axios.post(`${API}/explorer/mr/save`, {
-          projet_nom: data.projet,
-          projet_chemin: data.projet,
-          branche_source: pushBranch,
-          branche_cible: data.branche,
-          titre: `[IA] Corrections sur ${modifiedPaths.length} fichier(s)`,
-          description: pushMsg,
-          mr_id_gitlab: res.data.mr_id || 0,
-          mr_iid_gitlab: res.data.mr_iid || 0,
-          mr_url: res.data.url,
-          fichiers_modifies: modifiedPaths
-        }, { headers: jwt() });
-        console.log("[SAVE] MR sauvegardée en base");
-      } catch (saveErr) {
-        console.error("[SAVE] Erreur sauvegarde MR:", saveErr);
-      }
+  const pusherGitLab = async () => {
+    if (!data || !token) {
+      setPushRes({ ok: false, msg: "Token GitLab manquant. Relancez depuis le formulaire." });
+      return;
     }
-    
-    setEdits({});
-    if (selFile) setEditContent(selFile.content);
-    showToast("Push réussi !");
-    
-  } catch (e: any) {
-    const d = e.response?.data?.detail;
-    setPushRes({ ok: false, msg: typeof d === "string" ? d : "Erreur lors du push" });
-  } finally { 
-    setPushLoading(false); 
-  }
-};
+    setPushLoading(true);
+    setPushRes(null);
+    try {
+      const fichiers = modifiedPaths.map(p => ({ path: p, contenu: edits[p] }));
+      const res = await axios.post(`${API}/explorer/push`, {
+        token,
+        projet: data.projet,
+        branche_src: data.branche,
+        branche_dst: pushBranch,
+        mode: pushMode,
+        message: pushMsg,
+        fichiers,
+      }, { headers: jwt() });
+
+      // ✅ FIX : récupérer mr_url séparément de url (commit)
+      setPushRes({
+        ok: true,
+        msg: res.data.message,
+        url: res.data.url,
+        mr_url: res.data.mr_url || null,
+      });
+
+      // Sauvegarde MR en base
+      if (res.data.url) {
+        try {
+          await axios.post(`${API}/explorer/mr/save`, {
+            projet_nom: data.projet,
+            projet_chemin: data.projet,
+            branche_source: pushBranch,
+            branche_cible: data.branche,
+            titre: `[IA] Corrections sur ${modifiedPaths.length} fichier(s)`,
+            description: pushMsg,
+            mr_id_gitlab: res.data.mr_id || 0,
+            mr_iid_gitlab: res.data.mr_iid || 0,
+            mr_url: res.data.mr_url || res.data.url,
+            fichiers_modifies: modifiedPaths
+          }, { headers: jwt() });
+        } catch (saveErr) {
+          console.error("[SAVE] Erreur sauvegarde MR:", saveErr);
+        }
+      }
+
+      setEdits({});
+      if (selFile) setEditContent(selFile.content);
+      showToast("Push réussi !");
+
+    } catch (error: unknown) {
+      const e = error as AxiosError<{ detail?: string }>;
+      const d = e.response?.data?.detail;
+      setPushRes({ ok: false, msg: typeof d === "string" ? d : "Erreur lors du push" });
+    } finally {
+      setPushLoading(false);
+    }
+  };
 
   const toggleDir = (p: string) =>
-    setExpanded(prev => { const n = new Set(prev); n.has(p) ? n.delete(p) : n.add(p); return n; });
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(p)) next.delete(p);
+      else next.add(p);
+      return next;
+    });
 
   const renderTree = (nodes: TreeNode[], depth = 0): React.ReactElement[] =>
     nodes.flatMap(node => {
-      const isSel     = selFile?.path === node.path;
-      const isDirty   = node.file ? (node.file.path in edits && edits[node.file.path] !== node.file.content) : false;
-      const ana       = node.file ? analyses[node.file.path] : null;
+      const isSel   = selFile?.path === node.path;
+      const isDirty = node.file ? (node.file.path in edits && edits[node.file.path] !== node.file.content) : false;
+      const ana     = node.file ? analyses[node.file.path] : null;
       return [
-        <div key={node.path}
-          style={{
-            paddingLeft: depth*14+(node.type==="dir"?8:22), paddingRight:8,
-            paddingTop:4, paddingBottom:4, display:"flex", alignItems:"center", gap:6,
-            cursor:"pointer", fontSize:11, fontFamily:"monospace",
-            background: isSel ? "rgba(99,102,241,0.15)" : "transparent",
-            color: isSel ? "#a5b4fc" : node.type==="dir" ? "#6b7280" : "#9ca3af",
-            borderLeft: isSel ? "2px solid #6366f1" : "2px solid transparent",
-          }}
-          className="tree-row"
-          onClick={() => node.type==="dir" ? toggleDir(node.path) : selectFile(node.file!)}
+        <div
+          key={node.path}
+          className={`xp-tree-row ${node.type === "dir" ? "is-dir" : "is-file"} ${isSel ? "is-selected" : ""}`}
+          style={{ paddingLeft: depth * 14 + (node.type === "dir" ? 10 : 26) }}
+          onClick={() => node.type === "dir" ? toggleDir(node.path) : selectFile(node.file!)}
         >
           {node.type === "dir" ? (
-            <><span style={{fontSize:9,color:"#4b5563"}}>{expanded.has(node.path)?"▾":"▸"}</span><span>📁</span><span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{node.name}</span></>
+            <>
+              <span className="xp-chevron">{expanded.has(node.path) ? "▾" : "▸"}</span>
+              <span className="xp-folder">▦</span>
+              <span className="xp-tree-name">{node.name}</span>
+            </>
           ) : (
             <>
-              <span>{fileIcon(node.path)}</span>
-              <span style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{node.name}</span>
-              {isDirty && <span style={{color:"#f59e0b",fontSize:10,flexShrink:0}} title="Modifié">●</span>}
-              {ana?.statut==="termine" && !isDirty && <span style={{color:"#10b981",fontSize:10,flexShrink:0}}>✓</span>}
-              {ana?.statut==="en_cours" && <span style={{color:"#6366f1",fontSize:10,flexShrink:0}}>⟳</span>}
-              <button className="ana-btn"
-                onClick={e=>{e.stopPropagation();analyserFichier(node.file!);}}
-                style={{display:"none",padding:"2px 7px",background:"rgba(99,102,241,0.2)",border:"none",borderRadius:4,color:"#818cf8",cursor:"pointer",fontSize:9,fontFamily:"monospace"}}>
-                🔍
+              <span className="xp-file-icon">{fileIcon(node.path)}</span>
+              <span className="xp-tree-name">{node.name}</span>
+              {isDirty && <span className="xp-dot dirty" title="Modifié" />}
+              {ana?.statut === "termine" && !isDirty && <span className="xp-dot valid" title="Analysé" />}
+              {ana?.statut === "en_cours" && <span className="xp-spinner small" title="Analyse en cours" />}
+              <button
+                className="xp-tree-analyse"
+                onClick={e => { e.stopPropagation(); analyserFichier(node.file!); }}
+                title="Analyser ce fichier"
+              >
+                Analyser
               </button>
             </>
           )}
         </div>,
-        ...(node.type==="dir" && expanded.has(node.path) && node.children ? renderTree(node.children, depth+1) : [])
+        ...(node.type === "dir" && expanded.has(node.path) && node.children ? renderTree(node.children, depth + 1) : [])
       ];
     });
 
-  if (!data) return <div style={{display:"flex",height:"100vh",alignItems:"center",justifyContent:"center",background:"#030712",color:"#4b5563",fontFamily:"monospace"}}>Chargement…</div>;
+  if (!data) return (
+    <div className={`xp-loading ${theme}`}>
+      <span className="xp-spinner" />
+      <span>Chargement de l&apos;explorateur…</span>
+      <style>{explorerStyles}</style>
+    </div>
+  );
 
   const tree      = buildTree(data.fichiers, search);
   const ana       = selFile ? analyses[selFile.path] : null;
   const isDirty   = selFile ? (selFile.path in edits && edits[selFile.path] !== selFile.content) : false;
   const displayed = selFile ? (edits[selFile.path] ?? selFile.content) : "";
+  const fileHistory = correctionHistory.length;
 
   return (
     <>
-      <style>{`
-        *{box-sizing:border-box;margin:0;padding:0;}
-        body{background:#030712;overflow:hidden;}
-        ::-webkit-scrollbar{width:4px;height:4px;}
-        ::-webkit-scrollbar-track{background:#0a0f1a;}
-        ::-webkit-scrollbar-thumb{background:#1e2538;border-radius:3px;}
-        @keyframes spin{to{transform:rotate(360deg);}}
-        @keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
-        .tree-row:hover{background:rgba(255,255,255,0.04)!important;}
-        .tree-row:hover .ana-btn{display:block!important;}
-        textarea{resize:none;outline:none;tab-size:2;}
-      `}</style>
-
-      <div style={{display:"flex",flexDirection:"column",height:"100vh",background:"#030712",color:"#e2e8f0",fontFamily:"'JetBrains Mono',monospace",fontSize:12,overflow:"hidden"}}>
-
-        {/* TOPBAR */}
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:"#0a0f1a",borderBottom:"1px solid #1e2538",flexShrink:0,minHeight:42}}>
-          <button onClick={()=>router.push("/Exploreformpage")} style={{padding:"5px 10px",background:"rgba(255,255,255,0.04)",border:"1px solid #1e2538",borderRadius:7,color:"#6b7280",cursor:"pointer",fontSize:11}}>← Retour</button>
-          <span style={{fontSize:12,fontWeight:700,color:"#f1f5f9",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{data.projet}</span>
-          <span style={{fontSize:10,color:"#818cf8",background:"rgba(99,102,241,0.1)",border:"1px solid rgba(99,102,241,0.2)",borderRadius:5,padding:"2px 8px",flexShrink:0}}>⑂ {data.branche}</span>
-          <span style={{fontSize:10,color:"#374151",flexShrink:0}}>{data.total} fichiers</span>
-          {modifiedPaths.length > 0 && (
-            <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8}}>
-              <span style={{fontSize:10,color:"#f59e0b",background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:5,padding:"2px 8px"}}>
-                {modifiedPaths.length} modifié{modifiedPaths.length>1?"s":""}
-              </span>
-              <button onClick={openPushModal} style={{padding:"6px 14px",background:"linear-gradient(135deg,#5b63f5,#9b5cf6)",border:"none",borderRadius:7,color:"white",cursor:"pointer",fontSize:11,fontWeight:700,boxShadow:"0 2px 10px rgba(91,99,245,0.35)"}}>↑ Push GitLab</button>
+      <style>{explorerStyles}</style>
+      <div className={`xp-shell ${theme}`}>
+        <header className="xp-topbar">
+          <div className="xp-brand">
+            <button className="xp-icon-button" onClick={() => router.push("/Exploreformpage")} aria-label="Retour">←</button>
+            <div className="xp-logo">AI</div>
+            <div>
+              <div className="xp-brand-title">Code Explorer</div>
+              <div className="xp-brand-subtitle">AuditIA · Analyse et correction intelligente</div>
             </div>
-          )}
-        </div>
-
-        {/* BODY */}
-        <div style={{display:"flex",flex:1,overflow:"hidden"}}>
-
-          {/* SIDEBAR */}
-          <div style={{width:240,flexShrink:0,background:"#0a0f1a",borderRight:"1px solid #1e2538",display:"flex",flexDirection:"column",overflow:"hidden"}}>
-            <div style={{padding:"8px",borderBottom:"1px solid #1e2538"}}>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Filtrer..."
-                style={{width:"100%",background:"#030712",border:"1px solid #1e2538",borderRadius:6,padding:"6px 10px",color:"#9ca3af",fontSize:11,outline:"none"}}/>
-            </div>
-            <div style={{flex:1,overflowY:"auto",paddingTop:4}}>{renderTree(tree)}</div>
           </div>
 
-          {/* PANEL DROIT */}
-          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div className="xp-project-bar">
+            <div className="xp-project-title">{data.projet}</div>
+            <span className="xp-pill branch">⑂ {data.branche}</span>
+            <span className="xp-pill neutral">{data.total} fichiers</span>
+            {modifiedPaths.length > 0 && <span className="xp-pill warning">● {modifiedPaths.length} modifié{modifiedPaths.length > 1 ? "s" : ""}</span>}
+          </div>
+
+          <div className="xp-actions">
+            <button className="xp-theme-toggle" onClick={toggleTheme} aria-label="Changer le thème">
+              <span>{theme === "dark" ? "☀" : "☾"}</span>
+              {theme === "dark" ? "Mode clair" : "Mode sombre"}
+            </button>
+            {modifiedPaths.length > 0 && (
+              <button className="xp-primary-button" onClick={openPushModal}>
+                ↑ Push GitLab
+              </button>
+            )}
+          </div>
+        </header>
+
+        <main className="xp-content">
+          <aside className="xp-sidebar">
+            <div className="xp-repository-card">
+              <div className="xp-label">Dépôt actif</div>
+              <div className="xp-repository-name">{data.projet}</div>
+              <div className="xp-repository-meta">
+                <span className="xp-status-dot" /> Branche {data.branche}
+              </div>
+            </div>
+
+            <div className="xp-sidebar-header">
+              <div>
+                <div className="xp-label">Explorateur</div>
+                <div className="xp-sidebar-title">Fichiers du projet</div>
+              </div>
+              <span className="xp-count">{data.fichiers.length}</span>
+            </div>
+            <label className="xp-search">
+              <span>⌕</span>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un fichier…" />
+            </label>
+            <div className="xp-tree">{renderTree(tree)}</div>
+            <div className="xp-sidebar-footer">
+              <div className="xp-help-icon">✦</div>
+              <div>
+                <strong>Conseil IA</strong>
+                <p>Sélectionnez un fichier puis lancez une analyse ciblée.</p>
+              </div>
+            </div>
+          </aside>
+
+          <section className="xp-workspace">
             {!selFile ? (
-              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8,opacity:0.2}}>
-                <div style={{fontSize:36}}>📄</div>
-                <div style={{fontSize:11}}>Sélectionnez un fichier</div>
+              <div className="xp-empty">
+                <div className="xp-empty-icon">⌘</div>
+                <h2>Explorez votre dépôt</h2>
+                <p>Sélectionnez un fichier pour consulter son code, l&apos;analyser ou appliquer une correction IA.</p>
+                <div className="xp-empty-features">
+                  <span>Analyse ciblée</span>
+                  <span>Correction assistée</span>
+                  <span>Push sécurisé</span>
+                </div>
               </div>
             ) : (
               <>
-                {/* TABS */}
-                <div style={{display:"flex",alignItems:"center",borderBottom:"1px solid #1e2538",background:"#0a0f1a",flexShrink:0,paddingLeft:4}}>
-                  {(["code","analyse","edit","history"] as Tab[]).map(t => {
-                    const labels: Record<Tab,string> = {
-                      code:"📄 Code", 
-                      analyse:"🧠 Analyse", 
-                      edit:"✏️ Éditeur",
-                      history:"📜 Historique"
-                    };
-                    const act = activeTab===t;
-                    return (
-                      <button key={t} onClick={() => {
-                        if (t === "edit") openEditor();
-                        else if (t === "history") loadCorrectionHistory(selFile?.path);
-                        setActiveTab(t);
-                      }}
-                        style={{padding:"9px 16px",background:"transparent",border:"none",borderBottom:act?"2px solid #6366f1":"2px solid transparent",color:act?"#818cf8":"#4b5563",cursor:"pointer",fontSize:11,fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>
-                        {labels[t]}
-                        {t==="analyse"&&ana?.statut==="termine"&&<span style={{color:"#10b981",fontSize:9}}>✓</span>}
-                        {t==="edit"&&isDirty&&<span style={{color:"#f59e0b",fontSize:10}}>●</span>}
-                        {t==="history"&&correctionHistory.length>0&&<span style={{color:"#818cf8",fontSize:9}}>({correctionHistory.length})</span>}
-                      </button>
-                    );
-                  })}
-                  <div style={{marginLeft:"auto",display:"flex",gap:6,padding:"4px 10px",alignItems:"center"}}>
-                    {activeTab==="code" && (
-                      <>
-                        <button onClick={()=>analyserFichier(selFile)} disabled={loadingAna}
-                          style={{padding:"5px 11px",background:"rgba(99,102,241,0.1)",border:"1px solid rgba(99,102,241,0.25)",borderRadius:7,color:"#818cf8",cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
-                          {loadingAna?"…":"🔍 Analyser"}
-                        </button>
-                        <button onClick={openEditor}
-                          style={{padding:"5px 11px",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:7,color:"#f59e0b",cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
-                          ✏️ Éditer
-                        </button>
-                      </>
-                    )}
-                    {activeTab==="edit" && (
-                      <>
-                        <button onClick={handleSave}
-                          style={{padding:"5px 11px",background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.25)",borderRadius:7,color:"#10b981",cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
-                          💾 Sauvegarder
-                        </button>
-                        {isDirty&&<button onClick={handleRevert}
-                          style={{padding:"5px 11px",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:7,color:"#f87171",cursor:"pointer",fontSize:10,fontFamily:"inherit"}}>
-                          ↩ Annuler
-                        </button>}
-                      </>
-                    )}
+                <div className="xp-file-header">
+                  <div className="xp-file-identity">
+                    <span className="xp-file-large-icon">{fileIcon(selFile.path)}</span>
+                    <div>
+                      <div className="xp-file-path">{selFile.path}</div>
+                      <div className="xp-file-metadata">
+                        {selFile.size} octets
+                        {isDirty && <span className="xp-inline-warning">● Modifications non poussées</span>}
+                        {ana?.statut === "termine" && !isDirty && <span className="xp-inline-valid">✓ Analyse terminée</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="xp-file-buttons">
+                    <button className="xp-secondary-button" onClick={() => analyserFichier(selFile)} disabled={loadingAna}>
+                      {loadingAna ? <><span className="xp-spinner small" /> Analyse…</> : "✦ Analyser"}
+                    </button>
+                    <button className="xp-secondary-button accent" onClick={openEditor}>✎ Éditer</button>
                   </div>
                 </div>
 
-                {/* TAB CODE */}
-                {activeTab==="code" && (
-                  <div style={{flex:1,overflowY:"auto"}}>
-                    {displayed.split("\n").map((line,i)=>{
-                      const ln=i+1;
-                      const vuln=ana?.vulnerabilites?.find(v=>v.ligne===ln);
-                      return (
-                        <div key={i} style={{display:"flex",alignItems:"flex-start",minHeight:20,background:vuln?`${sevCol(vuln.severite)}12`:"transparent",borderLeft:vuln?`2px solid ${sevCol(vuln.severite)}`:"2px solid transparent"}}>
-                          <span style={{userSelect:"none",color:"#374151",textAlign:"right",paddingRight:14,paddingLeft:14,width:50,flexShrink:0,lineHeight:"1.6",fontSize:11}}>{ln}</span>
-                          <span style={{flex:1,paddingRight:14,fontFamily:"'JetBrains Mono',monospace",fontSize:12,lineHeight:"1.6",whiteSpace:"pre",color:"#d1d5db"}}>{line||" "}</span>
-                          {vuln&&<span title={vuln.suggestion} onClick={()=>setActiveTab("analyse")} style={{flexShrink:0,fontSize:9,color:sevCol(vuln.severite),padding:"0 8px",cursor:"pointer",lineHeight:"1.6",whiteSpace:"nowrap"}}>⚠ {vuln.severite}</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <nav className="xp-tabs" aria-label="Onglets fichier">
+                  {(["code", "analyse", "edit", "history"] as Tab[]).map(t => {
+                    const labels: Record<Tab, string> = { code: "Code", analyse: "Analyse IA", edit: "Éditeur", history: "Historique" };
+                    const icons: Record<Tab, string> = { code: "</>", analyse: "✦", edit: "✎", history: "↺" };
+                    const active = activeTab === t;
+                    return (
+                      <button
+                        key={t}
+                        className={`xp-tab ${active ? "active" : ""}`}
+                        onClick={() => {
+                          if (t === "edit") openEditor();
+                          else {
+                            if (t === "history") loadCorrectionHistory(selFile.path);
+                            setActiveTab(t);
+                          }
+                        }}
+                      >
+                        <span>{icons[t]}</span>{labels[t]}
+                        {t === "analyse" && ana?.statut === "termine" && <i className="xp-badge-dot valid" />}
+                        {t === "edit" && isDirty && <i className="xp-badge-dot dirty" />}
+                        {t === "history" && fileHistory > 0 && <em>{fileHistory}</em>}
+                      </button>
+                    );
+                  })}
+                </nav>
 
-                {/* TAB ANALYSE */}
-                {activeTab==="analyse" && (
-                  <div style={{flex:1,overflowY:"auto",padding:18}}>
-                    {loadingAna&&ana?.statut==="en_cours" ? (
-                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"60px 0",gap:12}}>
-                        <div style={{width:28,height:28,border:"2px solid #1e2538",borderTopColor:"#6366f1",borderRadius:"50%",animation:"spin 0.7s linear infinite"}}/>
-                        <span style={{color:"#4b5563",fontSize:11}}>Analyse IA en cours…</span>
+                <div className="xp-panel">
+                  {activeTab === "code" && (
+                    <div className="xp-code-window">
+                      <div className="xp-code-toolbar">
+                        <span>Lecture seule</span>
+                        <span>{displayed.split("\n").length} lignes</span>
                       </div>
-                    ) : ana?.statut==="termine" ? (
-                      <div style={{animation:"fade 0.2s ease"}}>
-                        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:18}}>
-                          {[{l:"Qualité",v:ana.score_qualite},{l:"Sécurité",v:ana.score_securite},{l:"Perf.",v:ana.score_performance}].map(s=>(
-                            <div key={s.l} style={{background:"#0a0f1a",border:"1px solid #1e2538",borderRadius:10,padding:"14px 10px",textAlign:"center"}}>
-                              <div style={{fontSize:28,fontWeight:700,color:scoreCol(s.v)}}>{s.v??"—"}</div>
-                              <div style={{fontSize:10,color:"#4b5563",marginTop:4}}>{s.l}</div>
-                              <div style={{height:2,background:"#1e2538",borderRadius:1,marginTop:6,overflow:"hidden"}}>
-                                <div style={{height:"100%",width:`${s.v??0}%`,background:scoreCol(s.v)}}/>
-                              </div>
+                      <div className="xp-code-lines">
+                        {displayed.split("\n").map((line, i) => {
+                          const lineNo = i + 1;
+                          const vuln = ana?.vulnerabilites?.find(v => v.ligne === lineNo);
+                          return (
+                            <div key={i} className={`xp-code-line ${vuln ? "vulnerable" : ""}`} style={vuln ? { borderLeftColor: sevCol(vuln.severite), background: `${sevCol(vuln.severite)}10` } : undefined}>
+                              <span className="xp-line-number">{lineNo}</span>
+                              <pre>{line || " "}</pre>
+                              {vuln && (
+                                <button className="xp-severity" style={{ color: sevCol(vuln.severite), borderColor: `${sevCol(vuln.severite)}35`, background: `${sevCol(vuln.severite)}12` }} onClick={() => setActiveTab("analyse")}>
+                                  ⚠ {vuln.severite}
+                                </button>
+                              )}
                             </div>
-                          ))}
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === "analyse" && (
+                    <div className="xp-analysis">
+                      {loadingAna && ana?.statut === "en_cours" ? (
+                        <div className="xp-state">
+                          <span className="xp-spinner large" />
+                          <h3>Analyse intelligente en cours</h3>
+                          <p>Évaluation de la qualité, la sécurité et la performance du fichier.</p>
                         </div>
-
-                        {ana.vulnerabilites.length>0&&(
-                          <>
-                            <div style={{fontSize:10,color:"#6b7280",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
-                              <span style={{width:2,height:12,background:"#ef4444",borderRadius:1,display:"inline-block"}}/>Vulnérabilités ({ana.vulnerabilites.length})
-                            </div>
-                            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18}}>
-                              {ana.vulnerabilites.map((v,i)=>(
-                                <div key={i} style={{background:"#0a0f1a",border:"1px solid #1e2538",borderLeft:`3px solid ${sevCol(v.severite)}`,borderRadius:9,padding:12,animation:"fade 0.15s ease"}}>
-                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:6}}>
-                                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                                      <span style={{fontSize:9,padding:"2px 7px",borderRadius:20,background:`${sevCol(v.severite)}18`,color:sevCol(v.severite),fontWeight:700}}>{v.severite}</span>
-                                      <span style={{fontSize:11,color:"#d1d5db"}}>{v.type}</span>
-                                      <span style={{fontSize:10,color:"#374151"}}>ligne {v.ligne}</span>
-                                    </div>
-                                    <button onClick={()=>corrigerParIA(v)} disabled={fixingVuln!==null}
-                                      style={{flexShrink:0,padding:"5px 11px",background:fixingVuln?.ligne===v.ligne&&fixingVuln?.type===v.type?"rgba(91,99,245,0.06)":"linear-gradient(135deg,#5b63f5,#9b5cf6)",border:"none",borderRadius:7,color:"white",cursor:"pointer",fontSize:10,fontFamily:"inherit",fontWeight:700,opacity:fixingVuln&&!(fixingVuln.ligne===v.ligne&&fixingVuln.type===v.type)?0.4:1,display:"flex",alignItems:"center",gap:5}}>
-                                      {fixingVuln?.ligne===v.ligne&&fixingVuln?.type===v.type
-                                        ?<><span style={{width:10,height:10,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"white",borderRadius:"50%",animation:"spin 0.6s linear infinite",display:"inline-block"}}/>IA…</>
-                                        :"🤖 Corriger par IA"}
-                                    </button>
-                                  </div>
-                                  <div style={{fontSize:11,color:"#6b7280"}}>💡 {v.suggestion}</div>
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        )}
-
-                        {ana.recommandations.length>0&&(
-                          <>
-                            <div style={{fontSize:10,color:"#6b7280",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
-                              <span style={{width:2,height:12,background:"#10b981",borderRadius:1,display:"inline-block"}}/>Recommandations ({ana.recommandations.length})
-                            </div>
-                            {ana.recommandations.map((r,i)=>(
-                              <div key={i} style={{background:"#0a0f1a",border:"1px solid #1e2538",borderRadius:9,padding:12,marginBottom:8}}>
-                                <div style={{fontSize:11,color:"#818cf8",marginBottom:4}}>✓ {r.titre}</div>
-                                <div style={{fontSize:11,color:"#4b5563"}}>{r.description}</div>
+                      ) : ana?.statut === "termine" ? (
+                        <>
+                          <div className="xp-score-grid">
+                            {[{ l: "Qualité", v: ana.score_qualite }, { l: "Sécurité", v: ana.score_securite }, { l: "Performance", v: ana.score_performance }].map(s => (
+                              <div className="xp-score-card" key={s.l}>
+                                <div className="xp-score-head"><span>{s.l}</span><strong style={{ color: scoreCol(s.v) }}>{s.v}</strong></div>
+                                <div className="xp-score-track"><div style={{ width: `${s.v ?? 0}%`, background: scoreCol(s.v) }} /></div>
+                                <small>{s.v >= 75 ? "Bon niveau" : s.v >= 50 ? "À améliorer" : "Critique"}</small>
                               </div>
                             ))}
-                          </>
-                        )}
-
-                        {ana.vulnerabilites.length===0&&(
-                          <div style={{background:"rgba(16,185,129,0.05)",border:"1px solid rgba(16,185,129,0.15)",borderRadius:10,padding:24,textAlign:"center"}}>
-                            <div style={{fontSize:28,marginBottom:6}}>✅</div>
-                            <div style={{color:"#10b981",fontSize:12}}>Aucune vulnérabilité — Code propre !</div>
                           </div>
-                        )}
-                      </div>
-                    ) : ana?.statut==="erreur" ? (
-                      <div style={{textAlign:"center",padding:"40px 0"}}>
-                        <div style={{fontSize:28,marginBottom:8}}>❌</div>
-                        <div style={{color:"#f87171",fontSize:11,marginBottom:14}}>{ana.erreur}</div>
-                        <button onClick={()=>analyserFichier(selFile)} style={{padding:"7px 16px",background:"rgba(99,102,241,0.1)",border:"1px solid rgba(99,102,241,0.25)",borderRadius:7,color:"#818cf8",cursor:"pointer",fontSize:11}}>🔍 Réessayer</button>
-                      </div>
-                    ) : (
-                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"60px 0",gap:10,opacity:0.3}}>
-                        <div style={{fontSize:32}}>🧠</div>
-                        <div style={{fontSize:11}}>Pas encore analysé</div>
-                        <button onClick={()=>analyserFichier(selFile)} style={{opacity:1,padding:"7px 16px",background:"rgba(99,102,241,0.1)",border:"1px solid rgba(99,102,241,0.25)",borderRadius:7,color:"#818cf8",cursor:"pointer",fontSize:11}}>🔍 Analyser ce fichier</button>
-                      </div>
-                    )}
-                  </div>
-                )}
 
-                {/* TAB ÉDITEUR */}
-                {activeTab==="edit" && (
-                  <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-                    {fixBanner&&(
-                      <div style={{padding:"8px 14px",flexShrink:0,animation:"fade 0.2s ease",background:fixBanner.ok?"rgba(91,99,245,0.07)":"rgba(239,68,68,0.07)",borderBottom:`1px solid ${fixBanner.ok?"rgba(91,99,245,0.2)":"rgba(239,68,68,0.2)"}`,display:"flex",alignItems:"center",gap:10}}>
-                        <span style={{fontSize:11,color:fixBanner.ok?"#818cf8":"#f87171",flex:1}}>{fixBanner.ok?"🤖 Correction IA —":"❌"} {fixBanner.msg}</span>
-                        {fixBanner.ok&&<button onClick={()=>{setEditContent(selFile!.content);setFixBanner(null);handleRevert();}} style={{padding:"3px 9px",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:5,color:"#f87171",cursor:"pointer",fontSize:10}}>↩ Annuler correction</button>}
-                        <button onClick={()=>setFixBanner(null)} style={{background:"none",border:"none",color:"#374151",cursor:"pointer",fontSize:12}}>✕</button>
-                      </div>
-                    )}
-                    <div style={{flex:1,display:"flex",overflow:"hidden"}}>
-                      {/* Numéros de ligne */}
-                      <div style={{width:48,flexShrink:0,background:"#030712",borderRight:"1px solid #111827",overflowY:"hidden"}}>
-                        <div style={{fontFamily:"'JetBrains Mono',monospace",fontSize:12,lineHeight:"1.6",color:"#374151",textAlign:"right",paddingRight:10,paddingTop:0}}>
-                          {editContent.split("\n").map((_,i)=>(
-                            <div key={i} style={{lineHeight:"1.6"}}>{i+1}</div>
-                          ))}
-                        </div>
-                      </div>
-                      <textarea ref={textareaRef} value={editContent} onChange={e=>setEditContent(e.target.value)} spellCheck={false}
-                        style={{flex:1,background:"#030712",color:"#d1d5db",border:"none",padding:"0 14px",fontFamily:"'JetBrains Mono',monospace",fontSize:12,lineHeight:"1.6",whiteSpace:"pre",overflowWrap:"normal",overflowX:"auto"}}
-                      />
-                    </div>
-                  </div>
-                )}
+                          {ana.vulnerabilites.length > 0 ? (
+                            <section className="xp-result-section">
+                              <div className="xp-section-title"><span className="red" /> Vulnérabilités détectées <b>{ana.vulnerabilites.length}</b></div>
+                              <div className="xp-vuln-list">
+                                {ana.vulnerabilites.map((v, i) => (
+                                  <article className="xp-vuln" key={i} style={{ borderLeftColor: sevCol(v.severite) }}>
+                                    <div className="xp-vuln-top">
+                                      <div className="xp-vuln-meta">
+                                        <span style={{ color: sevCol(v.severite), background: `${sevCol(v.severite)}12`, borderColor: `${sevCol(v.severite)}25` }}>{v.severite}</span>
+                                        <strong>{v.type}</strong>
+                                        <small>Ligne {v.ligne}</small>
+                                      </div>
+                                      <button className="xp-ai-button" onClick={() => corrigerParIA(v)} disabled={fixingVuln !== null}>
+                                        {fixingVuln?.ligne === v.ligne && fixingVuln?.type === v.type ? <><span className="xp-spinner small" /> Correction…</> : "✦ Corriger par IA"}
+                                      </button>
+                                    </div>
+                                    <p>Suggestion : {v.suggestion}</p>
+                                  </article>
+                                ))}
+                              </div>
+                            </section>
+                          ) : (
+                            <div className="xp-success-state"><div>✓</div><strong>Aucune vulnérabilité détectée</strong><span>Le fichier analysé ne présente pas de risque signalé.</span></div>
+                          )}
 
-                {/* ✅ TAB HISTORIQUE - NOUVEAU */}
-                {activeTab === "history" && (
-                  <div style={{flex:1,overflowY:"auto",padding:18}}>
-                    <div style={{marginBottom:16}}>
-                      <div style={{fontSize:11,color:"#6b7280",display:"flex",alignItems:"center",gap:6,marginBottom:12}}>
-                        <span>📜</span> Historique des corrections IA pour <code style={{background:"#0a0f1a",padding:"2px 6px",borderRadius:4}}>{selFile?.path}</code>
-                      </div>
-                      {correctionHistory.length === 0 ? (
-                        <div style={{textAlign:"center",padding:"40px 0",color:"#4b5563"}}>
-                          <div style={{fontSize:32,marginBottom:8}}>📭</div>
-                          <div style={{fontSize:12}}>Aucune correction enregistrée pour ce fichier</div>
-                          <div style={{fontSize:10,color:"#374151",marginTop:4}}>Utilisez le bouton "🤖 Corriger par IA" dans l'onglet Analyse pour créer une correction</div>
+                          {ana.recommandations.length > 0 && (
+                            <section className="xp-result-section">
+                              <div className="xp-section-title"><span className="green" /> Recommandations <b>{ana.recommandations.length}</b></div>
+                              <div className="xp-recommendations">
+                                {ana.recommandations.map((r, i) => (
+                                  <article key={i}><strong>✓ {r.titre}</strong><p>{r.description}</p></article>
+                                ))}
+                              </div>
+                            </section>
+                          )}
+                        </>
+                      ) : ana?.statut === "erreur" ? (
+                        <div className="xp-state error">
+                          <div>!</div><h3>Analyse indisponible</h3><p>{ana.erreur}</p>
+                          <button className="xp-primary-button" onClick={() => analyserFichier(selFile)}>Réessayer</button>
                         </div>
                       ) : (
-                        <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                          {correctionHistory.map((corr) => (
-                            <div key={corr.id} style={{background:"#0a0f1a",border:"1px solid #1e2538",borderRadius:10,padding:14,animation:"fade 0.2s ease"}}>
-                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                                  <span style={{fontSize:10,color:"#818cf8",background:"rgba(99,102,241,0.1)",padding:"2px 8px",borderRadius:15}}>
-                                    #{corr.id}
-                                  </span>
-                                  <span style={{fontSize:10,color:"#374151"}}>
-                                    {new Date(corr.created_at).toLocaleString()}
-                                  </span>
-                                </div>
-                                <span style={{fontSize:9,padding:"2px 8px",borderRadius:15,
-                                  background:corr.statut==="poussee"?"rgba(16,185,129,0.15)":"rgba(91,99,245,0.1)",
-                                  color:corr.statut==="poussee"?"#10b981":"#818cf8"}}>
-                                  {corr.statut==="poussee"?"✓ Poussée":"● Appliquée"}
-                                </span>
+                        <div className="xp-state">
+                          <div className="xp-empty-icon">✦</div>
+                          <h3>Prêt pour l&apos;analyse IA</h3>
+                          <p>Lancez une analyse ciblée de ce fichier pour détecter les vulnérabilités et recommandations.</p>
+                          <button className="xp-primary-button" onClick={() => analyserFichier(selFile)}>Analyser ce fichier</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {activeTab === "edit" && (
+                    <div className="xp-editor">
+                      {fixBanner && (
+                        <div className={`xp-banner ${fixBanner.ok ? "success" : "error"}`}>
+                          <span>{fixBanner.ok ? "✦" : "!"}</span>
+                          <p>{fixBanner.msg}</p>
+                          {fixBanner.ok && <button onClick={() => { setEditContent(selFile.content); setFixBanner(null); handleRevert(); }}>Annuler la correction</button>}
+                          <button className="close" onClick={() => setFixBanner(null)}>×</button>
+                        </div>
+                      )}
+                      <div className="xp-editor-actions">
+                        <span>Édition sécurisée · Les changements restent locaux avant push</span>
+                        <div>
+                          <button className="xp-secondary-button" onClick={handleRevert} disabled={!isDirty}>Annuler</button>
+                          <button className="xp-primary-button" onClick={handleSave}>Sauvegarder localement</button>
+                        </div>
+                      </div>
+                      <div className="xp-editor-body">
+                        <div className="xp-gutter">{editContent.split("\n").map((_, i) => <div key={i}>{i + 1}</div>)}</div>
+                        <textarea ref={textareaRef} value={editContent} onChange={e => setEditContent(e.target.value)} spellCheck={false} />
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === "history" && (
+                    <div className="xp-history">
+                      <div className="xp-history-header">
+                        <div><div className="xp-label">Traçabilité</div><h3>Corrections IA appliquées</h3><p>{selFile.path}</p></div>
+                        <span className="xp-count">{correctionHistory.length}</span>
+                      </div>
+                      {correctionHistory.length === 0 ? (
+                        <div className="xp-state small-state"><div className="xp-empty-icon">↺</div><h3>Aucune correction enregistrée</h3><p>Les corrections IA appliquées à ce fichier apparaîtront ici.</p></div>
+                      ) : (
+                        <div className="xp-history-list">
+                          {correctionHistory.map(corr => (
+                            <article key={corr.id} className="xp-history-card">
+                              <div className="xp-history-top">
+                                <span className="xp-pill branch">#{corr.id}</span>
+                                <time>{new Date(corr.created_at).toLocaleString()}</time>
+                                <span className={`xp-history-status ${corr.statut === "poussee" ? "pushed" : ""}`}>{corr.statut === "poussee" ? "✓ Poussée" : "● Appliquée"}</span>
                               </div>
-                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                                <span style={{fontSize:9,padding:"2px 6px",borderRadius:12,background:`${sevCol(corr.vuln_severite)}18`,color:sevCol(corr.vuln_severite),fontWeight:700}}>
-                                  {corr.vuln_severite}
-                                </span>
-                                <span style={{fontSize:11,color:"#d1d5db"}}>{corr.vuln_type}</span>
-                                <span style={{fontSize:10,color:"#374151"}}>ligne {corr.vuln_ligne}</span>
+                              <div className="xp-vuln-meta">
+                                <span style={{ color: sevCol(corr.vuln_severite), background: `${sevCol(corr.vuln_severite)}12`, borderColor: `${sevCol(corr.vuln_severite)}25` }}>{corr.vuln_severite}</span>
+                                <strong>{corr.vuln_type}</strong><small>Ligne {corr.vuln_ligne}</small>
                               </div>
-                              <div style={{fontSize:11,color:"#6b7280",marginBottom:8}}>
-                                💡 {corr.vuln_suggestion?.substring(0,150)}...
-                              </div>
-                              <details style={{fontSize:10,color:"#4b5563",marginTop:8}}>
-                                <summary style={{cursor:"pointer",color:"#818cf8"}}>Voir le diff</summary>
-                                <pre style={{marginTop:8,padding:8,background:"#030712",borderRadius:6,overflowX:"auto",fontSize:9,fontFamily:"monospace"}}>
-                                  <span style={{color:"#f87171"}}>- Ligne {corr.vuln_ligne} (original)</span>{"\n"}
-                                  <span style={{color:"#10b981"}}>+ Ligne {corr.vuln_ligne} (corrigé)</span>
-                                </pre>
-                              </details>
-                            </div>
+                              <p>Suggestion : {corr.vuln_suggestion}</p>
+                              <details><summary>Voir le diff</summary><pre><span>- Ligne {corr.vuln_ligne} (original)</span>{"\n"}<b>+ Ligne {corr.vuln_ligne} (corrigé)</b></pre></details>
+                            </article>
                           ))}
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
               </>
             )}
-          </div>
-        </div>
+          </section>
+        </main>
       </div>
 
-      {/* MODAL PUSH */}
-      {showPush&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}} onClick={()=>!pushLoading&&setShowPush(false)}>
-          <div style={{background:"#0a0f1a",border:"1px solid #1e2538",borderRadius:18,width:"100%",maxWidth:500,padding:"26px 30px",boxShadow:"0 24px 80px rgba(0,0,0,0.7)",animation:"fade 0.2s ease"}} onClick={e=>e.stopPropagation()}>
-            <div style={{marginBottom:22}}>
-              <div style={{fontSize:9,color:"#818cf8",textTransform:"uppercase",letterSpacing:"0.15em",marginBottom:6}}>↑ PUSH GITLAB</div>
-              <div style={{fontSize:16,fontWeight:700,color:"#f1f5f9"}}>Pousser les modifications</div>
-              <div style={{fontSize:10,color:"#374151",marginTop:4}}>{modifiedPaths.length} fichier{modifiedPaths.length>1?"s":""} · {data.projet}</div>
+      {showPush && (
+        <div className={`xp-overlay ${theme}`} onClick={() => !pushLoading && setShowPush(false)}>
+          <div className="xp-modal" onClick={e => e.stopPropagation()}>
+            <div className="xp-modal-header">
+              <div>
+                <div className="xp-label">Publication GitLab</div>
+                <h2>Pousser les corrections</h2>
+                <p>{modifiedPaths.length} fichier{modifiedPaths.length > 1 ? "s" : ""} modifié{modifiedPaths.length > 1 ? "s" : ""} · {data.projet}</p>
+              </div>
+              <button className="xp-icon-button" onClick={() => setShowPush(false)} disabled={pushLoading}>×</button>
             </div>
 
-            <div style={{background:"#030712",border:"1px solid #1e2538",borderRadius:8,padding:"8px 12px",marginBottom:16,maxHeight:90,overflowY:"auto"}}>
-              {modifiedPaths.map(p=>(
-                <div key={p} style={{fontSize:10,color:"#f59e0b",padding:"1px 0",display:"flex",alignItems:"center",gap:5}}>
-                  <span style={{fontSize:8}}>●</span>{p}
-                </div>
-              ))}
+            <div className="xp-changed-files">
+              {modifiedPaths.map(path => <div key={path}><span />{path}</div>)}
             </div>
 
-            <div style={{marginBottom:14}}>
-              <div style={{fontSize:9,color:"#374151",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:7}}>Mode</div>
-              <div style={{display:"flex",gap:8}}>
-                {([{v:"existing",l:"✏️ Branche existante",d:"Commit direct"},{v:"new",l:"⑂ Nouvelle branche",d:"Créer une branche séparée"}] as const).map(o=>(
-                  <button key={o.v} onClick={()=>{setPushMode(o.v);setPushBranch(o.v==="new"?`fix/ia-${Date.now().toString(36)}`:data.branche||"main");}}
-                    style={{flex:1,padding:"9px 10px",cursor:"pointer",textAlign:"left",background:pushMode===o.v?"rgba(91,99,245,0.12)":"transparent",border:`1px solid ${pushMode===o.v?"rgba(91,99,245,0.35)":"#1e2538"}`,borderRadius:8}}>
-                    <div style={{fontSize:11,color:pushMode===o.v?"#818cf8":"#6b7280",fontWeight:700}}>{o.l}</div>
-                    <div style={{fontSize:9,color:"#374151",marginTop:2}}>{o.d}</div>
+            <div className="xp-field">
+              <label>Mode de publication</label>
+              <div className="xp-mode-grid">
+                {([{ v: "existing", l: "Branche existante", d: "Commit direct — sans MR" }, { v: "new", l: "Nouvelle branche", d: "Branche dédiée + Merge Request" }] as const).map(option => (
+                  <button key={option.v} className={pushMode === option.v ? "active" : ""} onClick={() => { setPushMode(option.v); setPushBranch(option.v === "new" ? `fix/ia-${Date.now().toString(36)}` : data.branche || "main"); }}>
+                    <strong>{option.v === "new" ? "⑂" : "✎"} {option.l}</strong><span>{option.d}</span>
                   </button>
                 ))}
               </div>
             </div>
 
-            <div style={{marginBottom:12}}>
-              <div style={{fontSize:9,color:"#374151",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5}}>{pushMode==="new"?"Nom de la nouvelle branche":"Branche cible"}</div>
-              <input value={pushBranch} onChange={e=>setPushBranch(e.target.value)} style={{width:"100%",background:"#030712",border:"1px solid #1e2538",borderRadius:7,padding:"8px 12px",color:"#d1d5db",fontSize:11,fontFamily:"inherit",outline:"none"}}/>
+            <div className="xp-field">
+              <label>{pushMode === "new" ? "Nom de la nouvelle branche" : "Branche cible"}</label>
+              <input value={pushBranch} onChange={e => setPushBranch(e.target.value)} />
+            </div>
+            <div className="xp-field">
+              <label>Message de commit</label>
+              <input value={pushMsg} onChange={e => setPushMsg(e.target.value)} />
             </div>
 
-            <div style={{marginBottom:18}}>
-              <div style={{fontSize:9,color:"#374151",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5}}>Message de commit</div>
-              <input value={pushMsg} onChange={e=>setPushMsg(e.target.value)} style={{width:"100%",background:"#030712",border:"1px solid #1e2538",borderRadius:7,padding:"8px 12px",color:"#d1d5db",fontSize:11,fontFamily:"inherit",outline:"none"}}/>
-            </div>
-
-            {pushRes&&(
-              <div style={{background:pushRes.ok?"rgba(16,185,129,0.07)":"rgba(239,68,68,0.07)",border:`1px solid ${pushRes.ok?"rgba(16,185,129,0.2)":"rgba(239,68,68,0.2)"}`,borderRadius:8,padding:"10px 12px",marginBottom:14,animation:"fade 0.2s ease"}}>
-                <div style={{fontSize:11,color:pushRes.ok?"#10b981":"#f87171"}}>{pushRes.ok?"✓":"✕"} {pushRes.msg}</div>
-                {pushRes.url&&<a href={pushRes.url} target="_blank" rel="noreferrer" style={{display:"inline-block",marginTop:5,fontSize:10,color:"#818cf8"}}>Voir sur GitLab →</a>}
+            {pushRes && (
+              <div className={`xp-push-result ${pushRes.ok ? "success" : "error"}`}>
+                <div>{pushRes.ok ? "✓" : "!"} {pushRes.msg}</div>
+                {pushRes.mr_url && <a href={pushRes.mr_url} target="_blank" rel="noreferrer">Voir la Merge Request →</a>}
+                {!pushRes.mr_url && pushRes.url && <a href={pushRes.url} target="_blank" rel="noreferrer">Voir le commit →</a>}
               </div>
             )}
 
-            <div style={{display:"flex",gap:10}}>
-              <button onClick={()=>setShowPush(false)} disabled={pushLoading} style={{flex:1,padding:"10px",background:"transparent",border:"1px solid #1e2538",borderRadius:8,color:"#4b5563",cursor:"pointer",fontSize:11,fontFamily:"inherit"}}>Annuler</button>
-              <button onClick={pusherGitLab} disabled={pushLoading||!pushBranch.trim()||!pushMsg.trim()}
-                style={{flex:2,padding:"10px",background:"linear-gradient(135deg,#5b63f5,#9b5cf6)",border:"none",borderRadius:8,color:"white",cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:7,opacity:pushLoading||!pushBranch.trim()?0.6:1}}>
-                {pushLoading?<><span style={{width:12,height:12,border:"2px solid rgba(255,255,255,0.3)",borderTopColor:"white",borderRadius:"50%",animation:"spin 0.6s linear infinite",display:"inline-block"}}/>Push…</>:`↑ Pousser sur ${pushBranch}`}
+            <div className="xp-modal-actions">
+              <button className="xp-secondary-button" onClick={() => setShowPush(false)} disabled={pushLoading}>Annuler</button>
+              <button className="xp-primary-button grow" onClick={pusherGitLab} disabled={pushLoading || !pushBranch.trim() || !pushMsg.trim()}>
+                {pushLoading ? <><span className="xp-spinner small" /> Publication…</> : `↑ Pousser sur ${pushBranch}`}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* TOAST */}
-      {toast&&(
-        <div style={{position:"fixed",bottom:20,right:20,zIndex:2000,animation:"fade 0.2s ease",background:toast.ok?"#0a0f1a":"rgba(239,68,68,0.15)",border:`1px solid ${toast.ok?"rgba(91,99,245,0.3)":"rgba(239,68,68,0.3)"}`,borderRadius:10,padding:"10px 16px",fontSize:11,fontFamily:"'JetBrains Mono',monospace",color:toast.ok?"#818cf8":"#f87171",boxShadow:"0 8px 30px rgba(0,0,0,0.4)"}}>
-          {toast.ok?"✓":"✕"} {toast.msg}
+      {toast && (
+        <div className={`xp-toast ${theme} ${toast.ok ? "success" : "error"}`}>
+          <span>{toast.ok ? "✓" : "!"}</span>{toast.msg}
         </div>
       )}
     </>
-  );}
+  );
+}
 
+const explorerStyles = `
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; }
+.xp-shell, .xp-loading, .xp-overlay, .xp-toast {
+  --bg: #070b14; --surface: #0e1421; --surface-2: #121a2a; --surface-3: #182238;
+  --border: rgba(143,164,202,.14); --border-strong: rgba(94,144,255,.28);
+  --text: #eef4ff; --text-soft: #b2bfd8; --muted: #74839f;
+  --primary: #4f7dff; --primary-2: #7857ff; --primary-soft: rgba(79,125,255,.12);
+  --success: #16c784; --warning: #f4a340; --danger: #ef5c6b;
+  --shadow: 0 24px 72px rgba(0,0,0,.36); --code-bg: #090f1c;
+  color: var(--text); font-family: 'Inter', Arial, sans-serif;
+}
+.xp-shell.light, .xp-loading.light, .xp-overlay.light, .xp-toast.light {
+  --bg: #f5f7fc; --surface: #ffffff; --surface-2: #f7f9fe; --surface-3: #edf2fb;
+  --border: rgba(31,51,88,.10); --border-strong: rgba(51,101,229,.25);
+  --text: #17233d; --text-soft: #455570; --muted: #73819c;
+  --primary: #356bf0; --primary-2: #6246ea; --primary-soft: rgba(53,107,240,.09);
+  --shadow: 0 20px 60px rgba(44,62,105,.10); --code-bg: #f8faff;
+}
+.xp-shell { display: flex; flex-direction: column; height: 100vh; background: var(--bg); transition: background .25s ease, color .25s ease; overflow: hidden; }
+.xp-topbar { height: 72px; padding: 12px 22px; border-bottom: 1px solid var(--border); background: var(--surface); display:flex; align-items:center; justify-content:space-between; gap:20px; flex-shrink:0; }
+.xp-brand, .xp-project-bar, .xp-actions, .xp-file-identity, .xp-file-buttons { display:flex; align-items:center; gap:12px; }
+.xp-brand-title { font-size: 15px; font-weight:700; letter-spacing: -.02em; }
+.xp-brand-subtitle { color: var(--muted); font-size: 11px; margin-top:2px; }
+.xp-logo { width:38px; height:38px; border-radius:12px; display:grid; place-items:center; color:#fff; font-weight:700; font-size:13px; background: linear-gradient(135deg,var(--primary),var(--primary-2)); box-shadow:0 9px 22px rgba(79,125,255,.28); }
+.xp-icon-button { width:38px; height:38px; border-radius:11px; border:1px solid var(--border); color:var(--text-soft); background:var(--surface-2); cursor:pointer; font-size:18px; }
+.xp-icon-button:hover { border-color:var(--border-strong); color:var(--primary); }
+.xp-project-title { max-width:260px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-weight:600; }
+.xp-pill { border-radius:999px; padding:7px 12px; font-size:11px; font-weight:600; display:inline-flex; align-items:center; gap:5px; }
+.xp-pill.branch { color:var(--primary); background:var(--primary-soft); border:1px solid var(--border-strong); }
+.xp-pill.neutral { color:var(--muted); background:var(--surface-2); border:1px solid var(--border); }
+.xp-pill.warning { color:var(--warning); background:rgba(244,163,64,.10); border:1px solid rgba(244,163,64,.22); }
+.xp-theme-toggle { border:1px solid var(--border); background:var(--surface-2); color:var(--text-soft); border-radius:12px; padding:10px 14px; display:flex; gap:8px; cursor:pointer; font-size:12px; font-weight:600; }
+.xp-theme-toggle:hover { border-color:var(--border-strong); }
+.xp-primary-button, .xp-secondary-button { border-radius:11px; padding:11px 16px; border:1px solid transparent; font:600 12px 'Inter',sans-serif; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; gap:7px; transition:transform .16s, opacity .16s, border-color .16s; }
+.xp-primary-button { background:linear-gradient(135deg,var(--primary),var(--primary-2)); color:white; box-shadow:0 12px 28px rgba(62,105,244,.22); }
+.xp-primary-button:hover:not(:disabled) { transform:translateY(-1px); }
+.xp-secondary-button { color:var(--text-soft); background:var(--surface-2); border-color:var(--border); }
+.xp-secondary-button.accent { color:var(--warning); }
+.xp-secondary-button:hover:not(:disabled) { border-color:var(--border-strong); color:var(--primary); }
+.xp-primary-button:disabled, .xp-secondary-button:disabled { opacity:.5; cursor:not-allowed; }
+.xp-content { display:grid; grid-template-columns:300px minmax(0,1fr); gap:18px; padding:18px; flex:1; min-height:0; }
+.xp-sidebar, .xp-workspace { background:var(--surface); border:1px solid var(--border); border-radius:20px; min-height:0; overflow:hidden; }
+.xp-sidebar { display:flex; flex-direction:column; padding:14px; gap:14px; }
+.xp-repository-card { padding:14px; border-radius:15px; background:linear-gradient(135deg,var(--primary-soft),transparent); border:1px solid var(--border-strong); }
+.xp-label { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; margin-bottom:7px; }
+.xp-repository-name { font-size:14px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.xp-repository-meta { margin-top:10px; font-size:11px; color:var(--text-soft); display:flex; align-items:center; gap:7px; }
+.xp-status-dot { width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px rgba(22,199,132,.12); }
+.xp-sidebar-header { display:flex; justify-content:space-between; align-items:end; }
+.xp-sidebar-title { font-size:14px; font-weight:650; }
+.xp-count { min-width:28px; height:28px; border-radius:9px; padding:0 9px; background:var(--surface-3); color:var(--muted); display:grid; place-items:center; font-size:12px; font-weight:700; }
+.xp-search { height:42px; display:flex; align-items:center; gap:9px; padding:0 12px; border-radius:12px; background:var(--surface-2); border:1px solid var(--border); color:var(--muted); }
+.xp-search:focus-within { border-color:var(--border-strong); box-shadow:0 0 0 3px var(--primary-soft); }
+.xp-search input { border:0; outline:0; width:100%; color:var(--text); background:transparent; font-size:12px; }
+.xp-search input::placeholder { color:var(--muted); }
+.xp-tree { flex:1; min-height:0; overflow:auto; padding:4px 0; }
+.xp-tree-row { position:relative; height:34px; display:flex; align-items:center; gap:8px; border-radius:9px; padding-right:7px; margin:2px 0; cursor:pointer; color:var(--text-soft); font:500 12px 'JetBrains Mono', monospace; }
+.xp-tree-row:hover { background:var(--surface-2); }
+.xp-tree-row.is-selected { background:var(--primary-soft); color:var(--primary); }
+.xp-chevron { width:10px; color:var(--muted); }
+.xp-folder { color:var(--primary); font-size:13px; }
+.xp-file-icon { width:16px; font-size:13px; }
+.xp-tree-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.xp-dot { height:7px;width:7px;border-radius:50%;flex-shrink:0; }
+.xp-dot.dirty { background:var(--warning); }
+.xp-dot.valid { background:var(--success); }
+.xp-tree-analyse { visibility:hidden; border:0; background:var(--primary-soft); color:var(--primary); border-radius:7px; font-size:10px; padding:5px 7px; cursor:pointer; }
+.xp-tree-row:hover .xp-tree-analyse { visibility:visible; }
+.xp-sidebar-footer { display:flex; gap:10px; padding:12px; border:1px solid var(--border); border-radius:13px; background:var(--surface-2); }
+.xp-help-icon { color:var(--primary); }
+.xp-sidebar-footer strong { font-size:11px; }
+.xp-sidebar-footer p { margin:4px 0 0; color:var(--muted); font-size:10px; line-height:1.4; }
+.xp-workspace { display:flex; flex-direction:column; }
+.xp-empty, .xp-state { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:40px; gap:10px; }
+.xp-empty-icon { width:62px;height:62px;border-radius:20px;background:var(--primary-soft);color:var(--primary);display:grid;place-items:center;font-size:25px;margin-bottom:8px; }
+.xp-empty h2, .xp-state h3 { margin:0; font-size:22px; letter-spacing:-.04em; }
+.xp-empty p, .xp-state p { max-width:450px; font-size:13px; color:var(--muted); line-height:1.6; margin:0 0 16px; }
+.xp-empty-features { display:flex; gap:9px; }
+.xp-empty-features span { border:1px solid var(--border); color:var(--text-soft); background:var(--surface-2); border-radius:999px; padding:9px 13px; font-size:11px; }
+.xp-file-header { padding:17px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.xp-file-large-icon { width:43px;height:43px;border-radius:13px;display:grid;place-items:center;background:var(--surface-2);border:1px solid var(--border);font-size:19px; }
+.xp-file-path { font:600 13px 'JetBrains Mono',monospace; color:var(--text); }
+.xp-file-metadata { display:flex; gap:14px; align-items:center; margin-top:5px; color:var(--muted); font-size:11px; }
+.xp-inline-warning { color:var(--warning); }
+.xp-inline-valid { color:var(--success); }
+.xp-tabs { border-bottom:1px solid var(--border); display:flex; padding:0 14px; gap:4px; }
+.xp-tab { position:relative; border:0; background:transparent; height:52px; padding:0 15px; display:flex; gap:8px; align-items:center; color:var(--muted); cursor:pointer; font:600 12px 'Inter',sans-serif; }
+.xp-tab.active { color:var(--primary); }
+.xp-tab.active::after { content:''; position:absolute; height:2px; bottom:0;left:10px;right:10px; background:var(--primary); border-radius:4px; }
+.xp-tab em { font-style:normal; font-size:10px; background:var(--primary-soft); color:var(--primary); border-radius:12px; padding:2px 6px; }
+.xp-badge-dot { display:inline-block; width:7px;height:7px;border-radius:50%; }
+.xp-badge-dot.valid { background:var(--success); }
+.xp-badge-dot.dirty { background:var(--warning); }
+.xp-panel { flex:1; min-height:0; overflow:hidden; }
+.xp-code-window, .xp-editor { height:100%; display:flex; flex-direction:column; background:var(--code-bg); }
+.xp-code-toolbar { height:42px; padding:0 18px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; color:var(--muted); font-size:11px; }
+.xp-code-lines { overflow:auto; flex:1; padding:10px 0; font:12px/1.7 'JetBrains Mono', monospace; }
+.xp-code-line { min-height:22px; display:flex; align-items:flex-start; border-left:3px solid transparent; }
+.xp-line-number { width:54px; flex-shrink:0; text-align:right; padding-right:17px; user-select:none; color:var(--muted); opacity:.55; }
+.xp-code-line pre { flex:1; margin:0; color:var(--text-soft); white-space:pre; font:inherit; }
+.xp-severity { margin:0 16px; align-self:center; border:1px solid; border-radius:999px; padding:3px 8px; cursor:pointer; font-size:9px; font-weight:700; }
+.xp-analysis, .xp-history { padding:20px; height:100%; overflow:auto; }
+.xp-score-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:22px; }
+.xp-score-card { border:1px solid var(--border); background:var(--surface-2); border-radius:15px; padding:16px; }
+.xp-score-head { display:flex; justify-content:space-between; align-items:center; color:var(--text-soft); font-size:12px; font-weight:600; }
+.xp-score-head strong { font-size:28px; }
+.xp-score-track { height:6px; border-radius:99px; background:var(--surface-3); overflow:hidden; margin:13px 0 9px; }
+.xp-score-track div { height:100%; border-radius:99px; }
+.xp-score-card small { color:var(--muted); font-size:11px; }
+.xp-result-section { margin-top:20px; }
+.xp-section-title { display:flex; align-items:center; gap:8px; color:var(--text-soft); font-size:12px; font-weight:700; margin-bottom:12px; }
+.xp-section-title span { width:5px; height:17px; border-radius:4px; }
+.xp-section-title span.red { background:var(--danger); }
+.xp-section-title span.green { background:var(--success); }
+.xp-section-title b { color:var(--muted); border:1px solid var(--border); border-radius:99px; padding:2px 8px; font-size:10px; }
+.xp-vuln-list { display:flex; flex-direction:column; gap:10px; }
+.xp-vuln { padding:14px 15px; border:1px solid var(--border); border-left:3px solid; background:var(--surface-2); border-radius:13px; }
+.xp-vuln-top { display:flex; justify-content:space-between; gap:12px; align-items:start; }
+.xp-vuln-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.xp-vuln-meta span { font-size:9px; font-weight:700; border:1px solid; border-radius:999px; padding:4px 8px; }
+.xp-vuln-meta strong { font-size:12px; }
+.xp-vuln-meta small { color:var(--muted); font-size:11px; }
+.xp-vuln p, .xp-history-card p { font-size:11px; line-height:1.55; color:var(--muted); margin:11px 0 0; }
+.xp-ai-button { border:0; border-radius:9px; background:linear-gradient(135deg,var(--primary),var(--primary-2)); color:#fff; font-size:11px; font-weight:600; padding:9px 12px; display:flex; gap:6px; align-items:center; cursor:pointer; white-space:nowrap; }
+.xp-ai-button:disabled { opacity:.55; }
+.xp-recommendations { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; }
+.xp-recommendations article { background:var(--surface-2); border:1px solid var(--border); border-radius:13px; padding:14px; }
+.xp-recommendations strong { color:var(--success); font-size:12px; }
+.xp-recommendations p { color:var(--muted); font-size:11px; line-height:1.55; margin:7px 0 0; }
+.xp-success-state { padding:32px; border:1px solid rgba(22,199,132,.2); border-radius:16px; background:rgba(22,199,132,.05); display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px; color:var(--success); }
+.xp-success-state div { width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:rgba(22,199,132,.14);font-size:20px; }
+.xp-success-state span { color:var(--muted); font-size:12px; }
+.xp-state { min-height:420px; }
+.xp-state.error > div { width:52px;height:52px;border-radius:50%;display:grid;place-items:center;color:var(--danger);background:rgba(239,92,107,.10);font-size:25px;font-weight:700; }
+.xp-editor-actions { height:58px; padding:0 18px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; color:var(--muted); font-size:11px; background:var(--surface); }
+.xp-editor-actions > div { display:flex; gap:8px; }
+.xp-editor-body { flex:1; min-height:0; display:flex; font:12px/1.72 'JetBrains Mono', monospace; }
+.xp-gutter { width:56px; flex-shrink:0; border-right:1px solid var(--border); color:var(--muted); opacity:.65; text-align:right; padding:14px 14px 14px 0; overflow:hidden; }
+.xp-editor textarea { flex:1; border:0; outline:0; resize:none; background:transparent; color:var(--text-soft); font:12px/1.72 'JetBrains Mono',monospace; padding:14px 16px; white-space:pre; overflow-wrap:normal; overflow:auto; tab-size:2; }
+.xp-banner { display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid; font-size:11px; }
+.xp-banner.success { color:var(--primary); border-color:var(--border-strong); background:var(--primary-soft); }
+.xp-banner.error { color:var(--danger); border-color:rgba(239,92,107,.22); background:rgba(239,92,107,.08); }
+.xp-banner p { margin:0; flex:1; }
+.xp-banner button { border:1px solid currentColor; border-radius:7px; padding:5px 9px; color:inherit; background:transparent; cursor:pointer; font-size:10px; }
+.xp-banner .close { border:0; font-size:16px; }
+.xp-history-header { display:flex; justify-content:space-between; align-items:start; border-bottom:1px solid var(--border); padding-bottom:16px; margin-bottom:16px; }
+.xp-history-header h3 { margin:0 0 4px; font-size:17px; }
+.xp-history-header p { margin:0; font:11px 'JetBrains Mono', monospace; color:var(--muted); }
+.xp-history-list { display:flex; flex-direction:column; gap:11px; }
+.xp-history-card { border:1px solid var(--border); border-radius:14px; background:var(--surface-2); padding:15px; }
+.xp-history-top { display:flex; gap:9px; align-items:center; margin-bottom:11px; }
+.xp-history-top time { color:var(--muted); font-size:11px; flex:1; }
+.xp-history-status { color:var(--primary); background:var(--primary-soft); border-radius:999px; padding:5px 9px; font-size:10px; font-weight:700; }
+.xp-history-status.pushed { color:var(--success); background:rgba(22,199,132,.10); }
+.xp-history-card details { margin-top:12px; color:var(--primary); font-size:11px; cursor:pointer; }
+.xp-history-card pre { background:var(--code-bg); padding:11px; border-radius:8px; margin-top:9px; color:var(--danger); font:11px 'JetBrains Mono',monospace; }
+.xp-history-card pre b { color:var(--success); }
+.xp-overlay { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:22px; background:rgba(4,7,15,.68); backdrop-filter:blur(8px); }
+.xp-modal { width:min(570px,100%); max-height:92vh; overflow:auto; border-radius:22px; padding:24px; color:var(--text); background:var(--surface); border:1px solid var(--border); box-shadow:var(--shadow); }
+.xp-modal-header { display:flex; justify-content:space-between; gap:18px; margin-bottom:18px; }
+.xp-modal-header h2 { margin:0 0 5px; font-size:20px; letter-spacing:-.04em; }
+.xp-modal-header p { margin:0; color:var(--muted); font-size:12px; }
+.xp-changed-files { max-height:108px; overflow:auto; background:var(--surface-2); border:1px solid var(--border); border-radius:12px; padding:8px 12px; margin-bottom:17px; }
+.xp-changed-files div { display:flex; align-items:center; gap:7px; padding:5px 0; color:var(--text-soft); font:11px 'JetBrains Mono',monospace; }
+.xp-changed-files span { width:6px;height:6px;border-radius:50%;background:var(--warning); }
+.xp-field { margin-bottom:15px; }
+.xp-field label { display:block; color:var(--muted); text-transform:uppercase; letter-spacing:.09em; font-size:10px; font-weight:700; margin-bottom:7px; }
+.xp-field input { width:100%; border-radius:11px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); padding:12px 13px; outline:none; font:12px 'Inter',sans-serif; }
+.xp-field input:focus { border-color:var(--border-strong); }
+.xp-mode-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+.xp-mode-grid button { padding:13px; border-radius:12px; background:var(--surface-2); border:1px solid var(--border); color:var(--text-soft); display:flex; flex-direction:column; text-align:left; gap:5px; cursor:pointer; }
+.xp-mode-grid button.active { border-color:var(--border-strong); background:var(--primary-soft); color:var(--primary); }
+.xp-mode-grid strong { font-size:12px; }
+.xp-mode-grid span { color:var(--muted); font-size:10px; }
+.xp-push-result { border-radius:12px; border:1px solid; padding:13px; margin-bottom:16px; font-size:12px; }
+.xp-push-result.success { color:var(--success); border-color:rgba(22,199,132,.22); background:rgba(22,199,132,.07); }
+.xp-push-result.error { color:var(--danger); border-color:rgba(239,92,107,.22); background:rgba(239,92,107,.07); }
+.xp-push-result a { display:inline-flex; color:inherit; border:1px solid currentColor; border-radius:8px; padding:6px 10px; margin-top:10px; text-decoration:none; font-weight:600; }
+.xp-modal-actions { display:flex; gap:10px; margin-top:21px; }
+.xp-modal-actions .grow { flex:1; }
+.xp-toast { position:fixed; right:24px; bottom:24px; z-index:2000; border-radius:13px; padding:13px 16px; display:flex; gap:9px; align-items:center; font-size:12px; font-weight:600; box-shadow:var(--shadow); background:var(--surface); border:1px solid var(--border); }
+.xp-toast.success { color:var(--success); }
+.xp-toast.error { color:var(--danger); }
+.xp-spinner { display:inline-block; width:25px; height:25px; border:2px solid var(--border); border-top-color:var(--primary); border-radius:50%; animation:xp-spin .7s linear infinite; }
+.xp-spinner.small { width:13px; height:13px; }
+.xp-spinner.large { width:34px; height:34px; }
+.xp-loading { height:100vh; background:var(--bg); display:flex; align-items:center; justify-content:center; gap:12px; color:var(--muted); }
+.small-state { min-height:380px; }
+@keyframes xp-spin { to { transform:rotate(360deg); } }
+::-webkit-scrollbar { width:6px;height:6px; }
+::-webkit-scrollbar-thumb { border-radius:10px; background:rgba(125,145,181,.28); }
+::-webkit-scrollbar-track { background:transparent; }
+@media (max-width:1050px) {
+  .xp-content { grid-template-columns:250px minmax(0,1fr); padding:12px; gap:12px; }
+  .xp-project-bar { display:none; }
+  .xp-score-grid, .xp-recommendations { grid-template-columns:1fr; }
+}
+`;

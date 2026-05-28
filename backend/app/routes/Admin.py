@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.login_event import LoginEvent
 # backend/app/routes/Admin.py
 from sqlalchemy.sql import text
@@ -371,6 +371,8 @@ def get_all_analyses_diff(
 
 # ══════════════════════════════════════════════════════════════════
 # ANALYSES — TOUTES (admin) — vue globale rapide
+# Les analyses d'audit sont liées à DepotAnalyse via depot_analyse_id.
+# Les comparaisons utilisent Depot dans leurs routes dédiées plus bas.
 # ══════════════════════════════════════════════════════════════════
 @router.get("/analyses")
 def get_all_analyses(
@@ -379,47 +381,32 @@ def get_all_analyses(
 ):
     require_admin(authorization, db)
 
-    analyses = db.query(Analyse).order_by(Analyse.created_at.desc()).all()
+    rows = (
+        db.query(Analyse, DepotAnalyse, User)
+        .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
+        .join(User, DepotAnalyse.user_id == User.id)
+        .order_by(Analyse.created_at.desc())
+        .all()
+    )
+
     result = []
-    for a in analyses:
-        # Chercher le dépôt et l'utilisateur
-        depot_nom  = "Inconnu"
-        user_email = "Inconnu"
-
-        if a.depot_analyse_id:
-            da = db.query(DepotAnalyse).filter(
-                DepotAnalyse.id == a.depot_analyse_id
-            ).first()
-            if da:
-                depot_nom = da.nom
-                u = db.query(User).filter(User.id == da.user_id).first()
-                if u:
-                    user_email = u.email
-
-        elif a.depot_id:
-            d = db.query(Depot).filter(Depot.id == a.depot_id).first()
-            if d:
-                depot_nom = d.nom
-                u = db.query(User).filter(User.id == d.proprietaire_id).first()
-                if u:
-                    user_email = u.email
-
-        vulns = a.vulnerabilites or []
-        nb_vulns = len(vulns) if isinstance(vulns, list) else 0
-
+    for analyse, depot, user in rows:
+        vulnerabilites = analyse.vulnerabilites or []
         result.append({
-            "id": a.id,
-            "depot_nom": depot_nom,
-            "user_email": user_email,
-            "branche": a.branche,
-            "score_qualite": a.score_qualite or 0,
-            "score_securite": a.score_securite or 0,
-            "score_performance": a.score_performance or 0,
-            "statut": a.statut,
-            "created_at": str(a.created_at) if a.created_at else None,
-            "nb_vulns": nb_vulns,
+            "id": analyse.id,
+            "depot_nom": depot.nom or "Inconnu",
+            "user_email": user.email or "Inconnu",
+            "branche": analyse.branche or "—",
+            "score_qualite": analyse.score_qualite or 0,
+            "score_securite": analyse.score_securite or 0,
+            "score_performance": analyse.score_performance or 0,
+            "statut": analyse.statut or "inconnu",
+            "created_at": str(analyse.created_at) if analyse.created_at else None,
+            "nb_vulns": len(vulnerabilites) if isinstance(vulnerabilites, list) else 0,
         })
+
     return result
+
 @router.get("/comparaisons/all")
 def get_all_diffs_admin(
     db: Session = Depends(get_db),
@@ -977,6 +964,16 @@ class RapportEventOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+
+
+def normalize_datetime_admin(value: Optional[datetime]) -> Optional[datetime]:
+    """Normalise les dates pour pouvoir les comparer sans erreur timezone."""
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
 class ActivityStatsOut(BaseModel):
     total_analyses: int = 0
     total_videos: int = 0
@@ -997,66 +994,72 @@ def get_user_activity_stats(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
 
-    u = db.query(User).filter(User.id == user_id).first()
-    if not u:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
 
-    # Analyses : cherche via DepotAnalyse (user_id) + Depot (proprietaire_id)
-    analyses_via_da = (
+    # Les analyses d'audit sont reliées à DepotAnalyse, pas à Depot.
+    total_analyses = (
         db.query(func.count(Analyse.id))
         .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
         .filter(DepotAnalyse.user_id == user_id)
         .scalar() or 0
     )
-    analyses_via_depot = (
-        db.query(func.count(Analyse.id))
-        .join(Depot, Analyse.depot_id == Depot.id)
-        .filter(Depot.proprietaire_id == user_id)
-        .scalar() or 0
-    )
-    total_analyses = analyses_via_da + analyses_via_depot
 
-    # Vidéos
     total_videos = (
         db.query(func.count(VideoGeneree.id))
         .filter(VideoGeneree.user_id == user_id)
         .scalar() or 0
     )
 
-    # Rapports PDF
     total_rapports = (
         db.query(func.count(ExportRapport.id))
         .filter(ExportRapport.user_id == user_id)
         .scalar() or 0
     )
 
-    # Dernière activité : max(dernière analyse, dernière vidéo, dernière connexion)
     derniere_analyse = (
         db.query(func.max(Analyse.created_at))
         .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
         .filter(DepotAnalyse.user_id == user_id)
         .scalar()
     )
+
     derniere_video = (
         db.query(func.max(VideoGeneree.created_at))
         .filter(VideoGeneree.user_id == user_id)
         .scalar()
     )
+
     derniere_export = (
         db.query(func.max(ExportRapport.created_at))
         .filter(ExportRapport.user_id == user_id)
         .scalar()
     )
 
-    candidates = [d for d in [derniere_analyse, derniere_video, derniere_export] if d]
-    derniere_activite = max(candidates) if candidates else None
+    derniere_connexion = (
+        db.query(func.max(LoginEvent.created_at))
+        .filter(LoginEvent.user_id == user_id)
+        .scalar()
+    )
+
+    candidates = [
+        normalize_datetime_admin(date)
+        for date in (
+            derniere_analyse,
+            derniere_video,
+            derniere_export,
+            derniere_connexion,
+        )
+        if date is not None
+    ]
 
     return ActivityStatsOut(
         total_analyses=total_analyses,
         total_videos=total_videos,
         total_rapports=total_rapports,
-        sessions_actives=0,          # à connecter à un système de session si tu en as un
-        derniere_activite=derniere_activite,
+        sessions_actives=0,
+        derniere_activite=max(candidates) if candidates else None,
     )
 
 
@@ -1068,62 +1071,37 @@ def get_user_analyses(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Toutes les analyses lancées par un utilisateur."""
+    """Toutes les analyses d'audit lancées sur les dépôts analysés d'un utilisateur."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
 
-    u = db.query(User).filter(User.id == user_id).first()
-    if not u:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
 
-    result = []
-
-    # Via DepotAnalyse
-    rows_da = (
-        db.query(Analyse, DepotAnalyse.nom)
+    rows = (
+        db.query(Analyse, DepotAnalyse)
         .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
         .filter(DepotAnalyse.user_id == user_id)
         .order_by(Analyse.created_at.desc())
         .all()
     )
-    for analyse, depot_nom in rows_da:
-        vulns = analyse.vulnerabilites or []
+
+    result = []
+    for analyse, depot in rows:
+        vulnerabilites = analyse.vulnerabilites or []
         result.append({
-            "id":               analyse.id,
-            "depot_nom":        depot_nom or "Inconnu",
-            "branche":          analyse.branche or "—",
-            "score_qualite":    analyse.score_qualite or 0,
-            "score_securite":   analyse.score_securite or 0,
+            "id": analyse.id,
+            "depot_nom": depot.nom or "Inconnu",
+            "branche": analyse.branche or "—",
+            "score_qualite": analyse.score_qualite or 0,
+            "score_securite": analyse.score_securite or 0,
             "score_performance": analyse.score_performance or 0,
-            "statut":           analyse.statut or "inconnu",
-            "created_at":       str(analyse.created_at) if analyse.created_at else None,
-            "nb_vulns":         len(vulns) if isinstance(vulns, list) else 0,
+            "statut": analyse.statut or "inconnu",
+            "created_at": str(analyse.created_at) if analyse.created_at else None,
+            "nb_vulns": len(vulnerabilites) if isinstance(vulnerabilites, list) else 0,
         })
 
-    # Via Depot (ancienne structure)
-    rows_d = (
-        db.query(Analyse, Depot.nom)
-        .join(Depot, Analyse.depot_id == Depot.id)
-        .filter(Depot.proprietaire_id == user_id)
-        .order_by(Analyse.created_at.desc())
-        .all()
-    )
-    for analyse, depot_nom in rows_d:
-        vulns = analyse.vulnerabilites or []
-        result.append({
-            "id":               analyse.id,
-            "depot_nom":        depot_nom or "Inconnu",
-            "branche":          analyse.branche or "—",
-            "score_qualite":    analyse.score_qualite or 0,
-            "score_securite":   analyse.score_securite or 0,
-            "score_performance": analyse.score_performance or 0,
-            "statut":           analyse.statut or "inconnu",
-            "created_at":       str(analyse.created_at) if analyse.created_at else None,
-            "nb_vulns":         len(vulns) if isinstance(vulns, list) else 0,
-        })
-
-    # Trier par date décroissante
-    result.sort(key=lambda x: x["created_at"] or "", reverse=True)
     return result
 
 
@@ -1175,44 +1153,35 @@ def get_user_rapports(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
 
-    u = db.query(User).filter(User.id == user_id).first()
-    if not u:
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
 
     exports = (
-        db.query(ExportRapport, Analyse)
+        db.query(ExportRapport, Analyse, DepotAnalyse)
         .join(Analyse, ExportRapport.analyse_id == Analyse.id)
+        .join(DepotAnalyse, Analyse.depot_analyse_id == DepotAnalyse.id)
         .filter(ExportRapport.user_id == user_id)
         .order_by(ExportRapport.created_at.desc())
         .all()
     )
 
     result = []
-    for export, analyse in exports:
-        # Récupérer le nom du projet
-        nom_projet = "Inconnu"
-        if analyse.depot_analyse_id:
-            da = db.query(DepotAnalyse).filter(DepotAnalyse.id == analyse.depot_analyse_id).first()
-            if da:
-                nom_projet = da.nom
-        elif analyse.depot_id:
-            d = db.query(Depot).filter(Depot.id == analyse.depot_id).first()
-            if d:
-                nom_projet = d.nom
-
-        # Estimation pages depuis la taille fichier (≈ 50KB/page)
+    for export, analyse, depot in exports:
         nb_pages = None
         if export.taille:
             nb_pages = max(1, round(export.taille / 51200))
 
         result.append({
-            "id":         export.id,
-            "nom_projet": nom_projet,
+            "id": export.id,
+            "nom_projet": depot.nom or "Inconnu",
             "created_at": str(export.created_at) if export.created_at else None,
-            "nb_pages":   nb_pages,
+            "nb_pages": nb_pages,
         })
 
     return result
+
+
 @router.get("/users/{user_id}/logins")
 def get_user_logins(
     user_id: int,
@@ -1244,6 +1213,19 @@ def get_user_logins(
         "created_at":  r.created_at.isoformat() if r.created_at else None,
         "logout_at":   r.logout_at.isoformat()  if r.logout_at  else None,
     } for r in rows]
- 
- 
- 
+
+# ══════════════════════════════════════════════════════════════════
+# MODE PERSONNEL DE L'ADMINISTRATEUR
+# ══════════════════════════════════════════════════════════════════
+# Les fonctions d'analyse, comparaison Diff et exploration ne sont
+# volontairement pas exposées sous /admin.
+#
+# Lorsqu'un administrateur souhaite auditer ses propres dépôts GitLab,
+# il utilise les routes applicatives standard déjà utilisées par tout
+# utilisateur authentifié :
+#   - /analyses/*         : analyse IA de ses dépôts
+#   - /explorer/*         : exploration/correction de ses fichiers
+#   - /depots/*           : comparaison Diff/MR de ses branches
+#
+# Cette séparation empêche l'espace d'administration de déclencher
+# une action GitLab sur le dépôt d'un autre utilisateur.

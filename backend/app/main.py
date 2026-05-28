@@ -35,7 +35,7 @@ from app.routes.vulnerabilites import router as vulnerabilites_router
 from app.routes.tts import router as tts_router
 from app.routes.video import router as video_router
 from app.models.video_generee import VideoGeneree
-
+from app.routes.pipelines import router as pipelines_router
 # ── Application ──────────────────────────────────────────
 app = FastAPI(title="Plateforme Audit GitLab API")
 
@@ -70,6 +70,7 @@ app.include_router(vulnerabilites_router)
 app.include_router(tts_router)
 app.include_router(video_router)
 app.include_router(platform_status_router)
+app.include_router(pipelines_router)
 
 # ── Création des tables ──────────────────────────────────
 @app.on_event("startup")

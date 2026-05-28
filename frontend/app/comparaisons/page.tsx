@@ -168,281 +168,1112 @@ export default function ComparaisonsPage() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        * { box-sizing: border-box; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: ${D.bg}; }
-        ::-webkit-scrollbar-thumb { background: ${D.border}; border-radius: 3px; }
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(9px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulseSoft {
+          0%, 100% { opacity: .52; transform: scale(1); }
+          50% { opacity: .78; transform: scale(1.06); }
+        }
+
+        .cmp-page {
+          min-height: 100vh;
+          background: ${D.bg};
+          color: ${D.text};
+          font-family: 'Inter', system-ui, -apple-system, sans-serif;
+          position: relative;
+          overflow-x: hidden;
+          transition: background .28s ease, color .28s ease;
+        }
+        .cmp-page::before {
+          content: "";
+          position: fixed;
+          width: 560px;
+          height: 560px;
+          top: -250px;
+          right: -160px;
+          pointer-events: none;
+          border-radius: 999px;
+          background: radial-gradient(circle, ${isDark ? "rgba(99,102,241,.17)" : "rgba(99,102,241,.10)"} 0%, transparent 70%);
+          animation: pulseSoft 8s ease-in-out infinite;
+        }
+        .cmp-page::after {
+          content: "";
+          position: fixed;
+          width: 460px;
+          height: 460px;
+          left: -240px;
+          bottom: -220px;
+          pointer-events: none;
+          border-radius: 999px;
+          background: radial-gradient(circle, ${isDark ? "rgba(16,185,129,.11)" : "rgba(16,185,129,.07)"} 0%, transparent 70%);
+        }
+        .cmp-shell {
+          max-width: 1480px;
+          margin: 0 auto;
+          padding: 28px 38px 46px;
+          position: relative;
+          z-index: 1;
+        }
+        .cmp-nav {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
+          margin-bottom: 21px;
+        }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .brand-icon {
+          width: 42px;
+          height: 42px;
+          border-radius: 14px;
+          color: white;
+          font-size: 20px;
+          display: grid;
+          place-items: center;
+          background: linear-gradient(135deg, #6366f1, #8b5cf6);
+          box-shadow: 0 12px 30px rgba(99,102,241,.26);
+        }
+        .breadcrumb {
+          color: ${D.faint};
+          font-size: 11px;
+          font-weight: 750;
+          letter-spacing: .09em;
+          text-transform: uppercase;
+          margin-bottom: 3px;
+        }
+        .brand-title { color: ${D.text}; font-size: 16px; font-weight: 720; }
+        .nav-actions { display: flex; align-items: center; gap: 10px; }
+        .soft-btn {
+          height: 42px;
+          border: 1px solid ${D.border};
+          border-radius: 12px;
+          padding: 0 16px;
+          background: ${D.card};
+          color: ${D.muted};
+          font-weight: 650;
+          cursor: pointer;
+          transition: all .16s ease;
+        }
+        .soft-btn:hover {
+          border-color: rgba(99,102,241,.46);
+          color: #6366f1;
+          transform: translateY(-1px);
+        }
+
+        .hero {
+          background: ${isDark
+            ? "linear-gradient(125deg, rgba(99,102,241,.15), rgba(20,25,33,.95) 48%, rgba(16,185,129,.08))"
+            : "linear-gradient(125deg, #eef2ff, #ffffff 52%, #ecfdf5)"};
+          border: 1px solid ${D.border};
+          border-radius: 29px;
+          padding: 29px 31px;
+          margin-bottom: 20px;
+          display: flex;
+          justify-content: space-between;
+          gap: 25px;
+          align-items: center;
+          overflow: hidden;
+          position: relative;
+        }
+        .hero::after {
+          content: "";
+          position: absolute;
+          right: -80px;
+          top: -105px;
+          width: 310px;
+          height: 310px;
+          border-radius: 50%;
+          background: radial-gradient(circle, rgba(99,102,241,.15), transparent 68%);
+        }
+        .hero-content { position: relative; z-index: 1; }
+        .hero-tag {
+          display: inline-flex;
+          align-items: center;
+          gap: 7px;
+          padding: 7px 12px;
+          border-radius: 100px;
+          background: ${isDark ? "rgba(99,102,241,.15)" : "#eef2ff"};
+          color: #6366f1;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .08em;
+          margin-bottom: 14px;
+        }
+        .hero h1 {
+          font-size: clamp(29px, 3vw, 38px);
+          line-height: 1.12;
+          letter-spacing: -.05em;
+          font-weight: 800;
+          margin: 0 0 11px;
+        }
+        .hero h1 span {
+          background: linear-gradient(100deg, #6366f1, #8b5cf6);
+          -webkit-background-clip: text;
+          color: transparent;
+        }
+        .hero p {
+          max-width: 700px;
+          color: ${D.muted};
+          margin: 0;
+          line-height: 1.7;
+          font-size: 14px;
+        }
+        .hero-flow {
+          min-width: 350px;
+          position: relative;
+          z-index: 1;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+        }
+        .flow-step {
+          border: 1px solid ${D.border};
+          background: ${D.card};
+          border-radius: 16px;
+          padding: 14px 11px;
+          text-align: center;
+        }
+        .flow-num {
+          width: 27px;
+          height: 27px;
+          margin: 0 auto 9px;
+          border-radius: 10px;
+          display: grid;
+          place-items: center;
+          font-size: 12px;
+          font-weight: 800;
+          background: rgba(99,102,241,.12);
+          color: #6366f1;
+        }
+        .flow-step strong {
+          display: block;
+          font-size: 11px;
+          color: ${D.text};
+          line-height: 1.35;
+        }
+        .flow-step span {
+          display: block;
+          font-size: 10px;
+          color: ${D.faint};
+          margin-top: 5px;
+        }
+
+        .workspace {
+          display: grid;
+          grid-template-columns: 315px minmax(0, 1fr);
+          gap: 18px;
+          align-items: start;
+        }
+        .repo-panel {
+          background: ${D.card};
+          border: 1px solid ${D.border};
+          border-radius: 23px;
+          padding: 16px;
+          position: sticky;
+          top: 20px;
+          max-height: calc(100vh - 54px);
+          display: flex;
+          flex-direction: column;
+        }
+        .panel-title {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 13px;
+        }
+        .panel-title strong { font-size: 14px; font-weight: 740; }
+        .count {
+          background: ${D.tag};
+          color: ${D.tagText};
+          border-radius: 100px;
+          padding: 4px 9px;
+          font-size: 11px;
+          font-weight: 700;
+        }
+        .panel-help {
+          color: ${D.faint};
+          line-height: 1.5;
+          font-size: 12px;
+          margin-bottom: 14px;
+        }
+        .search-box { position: relative; margin-bottom: 13px; }
+        .search-box span {
+          position: absolute;
+          left: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          color: ${D.faint};
+        }
+        .search-box input {
+          height: 43px;
+          width: 100%;
+          padding: 0 12px 0 38px;
+          border: 1px solid ${D.border};
+          border-radius: 12px;
+          outline: none;
+          color: ${D.text};
+          background: ${D.bg};
+          font-size: 12px;
+        }
+        .search-box input:focus {
+          border-color: #6366f1;
+          box-shadow: 0 0 0 3px rgba(99,102,241,.10);
+        }
+        .repo-list { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .repo-card {
+          border: 1px solid transparent;
+          background: transparent;
+          border-radius: 15px;
+          padding: 12px;
+          cursor: pointer;
+          transition: all .16s ease;
+          text-align: left;
+          color: ${D.text};
+        }
+        .repo-card:hover {
+          background: ${isDark ? "rgba(99,102,241,.07)" : "#f7f7fe"};
+          transform: translateX(2px);
+        }
+        .repo-card.active {
+          background: ${isDark ? "rgba(99,102,241,.13)" : "#eef2ff"};
+          border-color: rgba(99,102,241,.34);
+        }
+        .repo-head {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+          margin-bottom: 7px;
+        }
+        .repo-avatar {
+          flex: none;
+          width: 33px;
+          height: 33px;
+          border-radius: 11px;
+          display: grid;
+          place-items: center;
+          color: #6366f1;
+          background: ${isDark ? "rgba(99,102,241,.13)" : "#eef2ff"};
+        }
+        .repo-name {
+          font-size: 13px;
+          font-weight: 720;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .repo-url {
+          color: ${D.faint};
+          font-family: ui-monospace, SFMono-Regular, monospace;
+          font-size: 10px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          margin-bottom: 7px;
+        }
+        .repo-date {
+          display: inline-flex;
+          color: ${D.faint};
+          font-size: 10px;
+          border-radius: 100px;
+          background: ${D.tag};
+          padding: 4px 8px;
+        }
+
+        .main-panel { min-width: 0; }
+        .welcome {
+          min-height: 530px;
+          border: 1px dashed ${D.border};
+          background: ${D.card};
+          border-radius: 25px;
+          display: grid;
+          place-items: center;
+          padding: 34px;
+          text-align: center;
+        }
+        .welcome-content { max-width: 670px; }
+        .welcome-icon {
+          height: 70px;
+          width: 70px;
+          margin: 0 auto 17px;
+          border-radius: 23px;
+          display: grid;
+          place-items: center;
+          font-size: 31px;
+          background: ${isDark ? "rgba(99,102,241,.12)" : "#eef2ff"};
+        }
+        .welcome h2 {
+          margin: 0 0 9px;
+          font-size: 23px;
+          letter-spacing: -.035em;
+        }
+        .welcome p {
+          margin: 0 auto 27px;
+          font-size: 13px;
+          line-height: 1.68;
+          color: ${D.muted};
+        }
+        .how-it-works {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 11px;
+        }
+        .how-card {
+          border: 1px solid ${D.border};
+          background: ${D.bg};
+          border-radius: 15px;
+          padding: 16px 11px;
+        }
+        .how-card div:first-child { font-size: 22px; margin-bottom: 9px; }
+        .how-card strong { display: block; font-size: 12px; margin-bottom: 5px; }
+        .how-card p { margin: 0; font-size: 10px; line-height: 1.5; }
+
+        .selected-header {
+          background: ${D.card};
+          border: 1px solid ${D.border};
+          border-radius: 23px;
+          padding: 20px 22px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 15px;
+          margin-bottom: 14px;
+        }
+        .selected-header h2 {
+          margin: 0 0 6px;
+          font-size: 20px;
+          font-weight: 750;
+          letter-spacing: -.035em;
+        }
+        .selected-header p {
+          font-size: 12px;
+          color: ${D.faint};
+          margin: 0;
+          font-family: ui-monospace, SFMono-Regular, monospace;
+        }
+        .selected-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          background: ${D.tag};
+          color: ${D.tagText};
+          border-radius: 100px;
+          padding: 8px 12px;
+          font-size: 11px;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        .metrics {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+        .metric {
+          background: ${D.card};
+          border: 1px solid ${D.border};
+          border-radius: 17px;
+          padding: 14px 13px;
+          transition: .16s ease;
+        }
+        .metric:hover {
+          transform: translateY(-2px);
+          border-color: rgba(99,102,241,.35);
+        }
+        .metric strong {
+          display: block;
+          font-size: 24px;
+          font-weight: 800;
+          letter-spacing: -.04em;
+          margin-bottom: 4px;
+        }
+        .metric span {
+          color: ${D.faint};
+          font-size: 10px;
+          font-weight: 650;
+        }
+
+        .results-panel {
+          background: ${D.card};
+          border: 1px solid ${D.border};
+          border-radius: 23px;
+          padding: 18px;
+        }
+        .results-toolbar {
+          display: flex;
+          justify-content: space-between;
+          gap: 15px;
+          align-items: center;
+          margin-bottom: 16px;
+        }
+        .results-toolbar h3 {
+          font-size: 15px;
+          margin: 0 0 4px;
+          font-weight: 730;
+        }
+        .results-toolbar p {
+          font-size: 11px;
+          color: ${D.faint};
+          margin: 0;
+        }
+        .filter-select {
+          height: 41px;
+          padding: 0 13px;
+          border: 1px solid ${D.border};
+          border-radius: 11px;
+          background: ${D.bg};
+          color: ${D.text};
+          font-size: 12px;
+          outline: none;
+        }
+        .timeline { display: flex; flex-direction: column; gap: 11px; }
+        .compare-card {
+          border: 1px solid ${D.border};
+          background: ${D.bg};
+          border-radius: 18px;
+          padding: 16px;
+          display: grid;
+          grid-template-columns: minmax(180px, 1.2fr) minmax(200px, 1fr) 220px 146px;
+          gap: 14px;
+          align-items: center;
+          cursor: pointer;
+          transition: all .17s ease;
+          animation: fadeUp .2s ease both;
+        }
+        .compare-card:hover {
+          border-color: rgba(99,102,241,.36);
+          transform: translateY(-2px);
+          box-shadow: ${isDark ? "0 16px 38px rgba(0,0,0,.20)" : "0 14px 30px rgba(15,23,42,.06)"};
+        }
+        .comparison-date {
+          font-size: 11px;
+          color: ${D.faint};
+          margin-bottom: 8px;
+        }
+        .branch-path {
+          display: flex;
+          gap: 6px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .branch-pill {
+          background: ${D.tag};
+          color: #6366f1;
+          border-radius: 9px;
+          padding: 6px 8px;
+          font-family: ui-monospace, SFMono-Regular, monospace;
+          font-size: 10px;
+          font-weight: 650;
+        }
+        .arrow { color: ${D.faint}; font-size: 11px; }
+        .impact {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .impact-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+          color: ${D.muted};
+        }
+        .impact-value { font-weight: 700; color: ${D.text}; }
+        .scores {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 6px;
+        }
+        .score {
+          border: 1px solid ${D.border};
+          background: ${D.card};
+          border-radius: 11px;
+          padding: 8px 5px;
+          text-align: center;
+        }
+        .score strong {
+          display: block;
+          font-size: 16px;
+          font-weight: 800;
+        }
+        .score span {
+          font-size: 9px;
+          color: ${D.faint};
+          font-weight: 650;
+        }
+        .decision { text-align: right; }
+        .decision-badge {
+          display: inline-flex;
+          gap: 5px;
+          align-items: center;
+          border-radius: 100px;
+          padding: 7px 10px;
+          font-size: 10px;
+          font-weight: 730;
+          margin-bottom: 9px;
+        }
+        .mr-link {
+          display: block;
+          color: #6366f1;
+          font-size: 11px;
+          font-weight: 680;
+          text-decoration: none;
+        }
+        .open-detail {
+          display: block;
+          font-size: 10px;
+          color: ${D.faint};
+          margin-top: 7px;
+        }
+        .results-empty, .results-loading {
+          text-align: center;
+          padding: 60px 20px;
+          color: ${D.faint};
+          font-size: 13px;
+        }
+        .spinner {
+          height: 28px;
+          width: 28px;
+          border-radius: 50%;
+          border: 2px solid ${D.border};
+          border-top-color: #6366f1;
+          animation: spin .62s linear infinite;
+          margin: 0 auto 12px;
+        }
+
+        .modal-layer {
+          position: fixed;
+          inset: 0;
+          z-index: 1000;
+          background: rgba(2,6,23,.60);
+          backdrop-filter: blur(7px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+        }
+        .detail-modal {
+          width: min(660px, 100%);
+          max-height: 86vh;
+          overflow: auto;
+          background: ${D.modalBg};
+          border: 1px solid ${D.border};
+          border-radius: 25px;
+          box-shadow: 0 28px 75px rgba(0,0,0,.25);
+          animation: fadeUp .2s ease;
+        }
+        .modal-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 16px;
+          padding: 22px 24px;
+          border-bottom: 1px solid ${D.border};
+        }
+        .modal-head h3 {
+          margin: 0 0 6px;
+          font-size: 19px;
+          letter-spacing: -.025em;
+        }
+        .modal-head p {
+          margin: 0;
+          color: ${D.faint};
+          font-size: 12px;
+        }
+        .close {
+          height: 34px;
+          width: 34px;
+          border-radius: 10px;
+          border: 1px solid ${D.border};
+          background: ${D.btnSec};
+          color: ${D.muted};
+          cursor: pointer;
+        }
+        .modal-body { padding: 22px 24px; }
+        .detail-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 11px;
+          margin-bottom: 19px;
+        }
+        .detail-box {
+          border: 1px solid ${D.border};
+          background: ${D.bg};
+          border-radius: 14px;
+          padding: 12px;
+        }
+        .detail-box label {
+          display: block;
+          color: ${D.faint};
+          font-size: 10px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .06em;
+          margin-bottom: 7px;
+        }
+        .detail-box div { font-size: 13px; color: ${D.text}; }
+        .modal-scores {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 9px;
+          margin: 18px 0;
+        }
+        .modal-score {
+          border: 1px solid ${D.border};
+          background: ${D.bg};
+          border-radius: 14px;
+          padding: 13px;
+          text-align: center;
+        }
+        .modal-score strong {
+          display: block;
+          font-size: 25px;
+          font-weight: 800;
+        }
+        .modal-score span { font-size: 11px; color: ${D.faint}; }
+        .warning {
+          border-radius: 12px;
+          padding: 11px 13px;
+          margin: 15px 0;
+          background: rgba(239,68,68,.08);
+          color: #ef4444;
+          font-size: 13px;
+          font-weight: 620;
+        }
+        .modal-actions {
+          display: flex;
+          gap: 10px;
+          margin-top: 20px;
+        }
+        .primary-btn {
+          flex: 1;
+          border: none;
+          height: 43px;
+          border-radius: 12px;
+          background: linear-gradient(135deg,#6366f1,#7c3aed);
+          color: white;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .secondary-btn {
+          flex: 1;
+          border: 1px solid ${D.border};
+          background: ${D.btnSec};
+          color: ${D.muted};
+          height: 43px;
+          border-radius: 12px;
+          font-weight: 650;
+          cursor: pointer;
+        }
+
+        @media (max-width: 1100px) {
+          .cmp-shell { padding: 20px 17px 40px; }
+          .hero { flex-direction: column; align-items: flex-start; }
+          .hero-flow { min-width: 0; width: 100%; }
+          .workspace { grid-template-columns: 1fr; }
+          .repo-panel { position: static; max-height: none; }
+          .repo-list { max-height: 310px; }
+          .metrics { grid-template-columns: repeat(3, 1fr); }
+          .compare-card { grid-template-columns: 1fr; }
+          .decision { text-align: left; }
+        }
+        @media (max-width: 650px) {
+          .cmp-nav { flex-direction: column; align-items: flex-start; }
+          .hero-flow, .how-it-works, .metrics { grid-template-columns: 1fr; }
+          .selected-header, .results-toolbar { flex-direction: column; align-items: flex-start; }
+        }
       `}</style>
 
-      <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text, display: "flex" }}>
-        
-        {/* Sidebar des dépôts */}
-        <div style={{ width: 320, background: D.card, borderRight: `1px solid ${D.border}`, display: "flex", flexDirection: "column", height: "100vh", position: "sticky", top: 0 }}>
-          <div style={{ padding: 24, borderBottom: `1px solid ${D.border}` }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: D.text, marginBottom: 4 }}>📁 Mes dépôts</h2>
-            <p style={{ fontSize: 12, color: D.faint }}>Sélectionnez un dépôt pour voir ses comparaisons</p>
-          </div>
-          <div style={{ padding: 16, borderBottom: `1px solid ${D.border}` }}>
-            <input
-              type="text"
-              placeholder="🔍 Rechercher un dépôt..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ width: "100%", padding: "10px 14px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, outline: "none", background: D.bg, color: D.text }}
-            />
-          </div>
-          <div style={{ flex: 1, overflowY: "auto", padding: 8 }}>
-            {loading ? (
-              <div style={{ textAlign: "center", padding: 40, color: D.faint }}>
-                <div style={{ 
-                  width: 20, 
-                  height: 20, 
-                  border: `2px solid ${D.border}`,
-                  borderTop: `2px solid #6366f1`,
-                  borderRadius: "50%", 
-                  animation: "spin 0.6s linear infinite", 
-                  margin: "0 auto 12px" 
-                }} />
-                Chargement...
+      <main className="cmp-page">
+        <div className="cmp-shell">
+          <nav className="cmp-nav">
+            <div className="brand">
+              <div className="brand-icon">⇄</div>
+              <div>
+                <div className="breadcrumb">AuditIA / Comparaisons</div>
+                <div className="brand-title">Historique des branches analysées</div>
               </div>
-            ) : filteredDepots.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 40, color: D.faint }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>📭</div>
-                <div>Aucun dépôt trouvé</div>
-              </div>
-            ) : (
-              filteredDepots.map(depot => (
-                <div
-                  key={depot.id}
-                  onClick={() => handleDepotClick(depot)}
-                  style={{
-                    padding: "14px 16px",
-                    margin: "4px 8px",
-                    borderRadius: 12,
-                    cursor: "pointer",
-                    transition: "all 0.2s",
-                    border: `1px solid ${selectedDepot?.id === depot.id ? "#6366f1" : "transparent"}`,
-                    background: selectedDepot?.id === depot.id ? "rgba(99,102,241,0.12)" : "transparent"
-                  }}
-                >
-                  <div style={{ fontSize: 14, fontWeight: 600, color: D.text, marginBottom: 4 }}>{depot.nom}</div>
-                  <div style={{ fontSize: 10, color: D.faint, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{depot.project_url}</div>
-                  <div style={{ fontSize: 10, color: D.faint, marginTop: 6 }}>{new Date(depot.created_at).toLocaleDateString()}</div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Main content */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          
-          {/* Topbar */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 32px", background: D.card, borderBottom: `1px solid ${D.border}` }}>
-            <div>
-              <h1 style={{ fontSize: 24, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", marginBottom: 4 }}>Historique des comparaisons</h1>
-              <p style={{ fontSize: 13, color: D.faint }}>
-                {selectedDepot ? `Comparaisons pour ${selectedDepot.nom}` : "Sélectionnez un dépôt dans la barre latérale"}
-              </p>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="nav-actions">
               <ThemeToggle />
-              <button onClick={() => router.push("/dashboard")} style={{ background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
+              <button className="soft-btn" onClick={() => router.push("/dashboard")}>
                 ← Tableau de bord
               </button>
             </div>
-          </div>
+          </nav>
 
-          {selectedDepot && (
-            <>
-              {/* Stats */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, padding: "20px 32px", background: D.card, borderBottom: `1px solid ${D.border}` }}>
-                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: "#6366f1", marginBottom: 4 }}>{comparaisons.length}</div>
-                  <div style={{ fontSize: 12, color: D.faint }}>Comparaisons</div>
-                </div>
-                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>
-                    {comparaisons.filter(c => c.analyses?.some(a => a.score_qualite >= 75)).length}
-                  </div>
-                  <div style={{ fontSize: 12, color: D.faint }}>Score ≥ 75%</div>
-                </div>
-                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: "#f59e0b", marginBottom: 4 }}>
-                    {comparaisons.filter(c => c.analyses?.some(a => a.score_qualite >= 50 && a.score_qualite < 75)).length}
-                  </div>
-                  <div style={{ fontSize: 12, color: D.faint }}>Score 50-74%</div>
-                </div>
-                <div style={{ background: D.bg, borderRadius: 16, padding: 16, textAlign: "center" }}>
-                  <div style={{ fontSize: 28, fontWeight: 700, color: "#ef4444", marginBottom: 4 }}>
-                    {comparaisons.filter(c => c.analyses?.some(a => a.score_qualite < 50)).length}
-                  </div>
-                  <div style={{ fontSize: 12, color: D.faint }}>Score &lt; 50%</div>
-                </div>
+          <section className="hero">
+            <div className="hero-content">
+              <div className="hero-tag">⇄ Comparaison intelligente</div>
+              <h1>Comprendre l'impact d'une <span>branche avant fusion</span></h1>
+              <p>
+                Cette page retrace vos comparaisons GitLab : branches confrontées, commits
+                concernés, décision de fusion issue de l’analyse et Merge Request associée.
+              </p>
+            </div>
+            <div className="hero-flow">
+              <div className="flow-step">
+                <div className="flow-num">1</div>
+                <strong>Sélectionner</strong>
+                <span>un dépôt</span>
+              </div>
+              <div className="flow-step">
+                <div className="flow-num">2</div>
+                <strong>Examiner</strong>
+                <span>les écarts</span>
+              </div>
+              <div className="flow-step">
+                <div className="flow-num">3</div>
+                <strong>Décider</strong>
+                <span>merge ou blocage</span>
+              </div>
+            </div>
+          </section>
+
+          <div className="workspace">
+            <aside className="repo-panel">
+              <div className="panel-title">
+                <strong>Mes dépôts</strong>
+                <span className="count">{filteredDepots.length}</span>
+              </div>
+              <p className="panel-help">
+                Sélectionnez un projet pour consulter l'historique de ses comparaisons.
+              </p>
+              <div className="search-box">
+                <span>⌕</span>
+                <input
+                  type="text"
+                  placeholder="Rechercher un dépôt..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
               </div>
 
-              {/* Filtres */}
-              <div style={{ display: "flex", gap: 12, padding: "16px 32px", background: D.card, borderBottom: `1px solid ${D.border}`, flexWrap: "wrap", alignItems: "center" }}>
-                <select value={filterResultat} onChange={e => setFilterResultat(e.target.value)} style={{ padding: "8px 16px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, background: D.card, color: D.text, cursor: "pointer" }}>
-                  <option value="tous">Tous les résultats</option>
-                  <option value="merge_autorise">✅ Merge autorisé</option>
-                  <option value="merge_bloque">🚫 Merge bloqué</option>
-                  <option value="aucun_changement">○ Aucun changement</option>
-                </select>
-              </div>
-
-              {/* Table des comparaisons */}
-              <div style={{ margin: "24px 32px", background: D.card, borderRadius: 20, border: `1px solid ${D.border}`, overflow: "auto" }}>
-                {loadingDetails ? (
-                  <div style={{ textAlign: "center", padding: 60, color: D.faint }}>
-                    <div style={{ 
-                      width: 20, 
-                      height: 20, 
-                      border: `2px solid ${D.border}`,
-                      borderTop: `2px solid #6366f1`,
-                      borderRadius: "50%", 
-                      animation: "spin 0.6s linear infinite", 
-                      margin: "0 auto 12px" 
-                    }} />
+              <div className="repo-list">
+                {loading ? (
+                  <div className="results-loading">
+                    <div className="spinner" />
                     Chargement...
                   </div>
-                ) : comparaisons.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: 60, color: D.faint }}>
-                    <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
-                    <div>Aucune comparaison trouvée pour ce dépôt</div>
+                ) : filteredDepots.length === 0 ? (
+                  <div className="results-empty">
+                    <div style={{ fontSize: 30, marginBottom: 10 }}>📭</div>
+                    Aucun dépôt trouvé
                   </div>
-                ) : (
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        {["Date", "Branches", "Commits", "Qualité", "Sécurité", "Performance", "Résultat", "MR"].map(h => (
-                          <th key={h} style={{ textAlign: "left", padding: "14px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {comparaisons.map(comp => {
-                        const latestAnalyse = comp.analyses?.[0];
-                        if (!latestAnalyse) return null;
-                        const resultat = getResultatBadge(latestAnalyse.resultat_statut);
-                        return (
-                          <tr key={comp.id} onClick={() => handleComparaisonClick(comp, latestAnalyse)} style={{ cursor: "pointer", borderBottom: `1px solid ${D.border}` }}>
-                            <td style={{ padding: "14px 20px", fontFamily: "monospace", fontSize: 12, color: D.muted }}>{new Date(comp.created_at).toLocaleDateString()}</td>
-                            <td style={{ padding: "14px 20px" }}>
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 500, background: D.tag, color: "#6366f1" }}>
-                                {comp.from_branch} → {comp.to_branch}
-                              </span>
-                            </td>
-                            <td style={{ padding: "14px 20px", color: D.muted }}>{comp.commits_count} commit(s)</td>
-                            {[latestAnalyse.score_qualite, latestAnalyse.score_securite, latestAnalyse.score_performance].map((s, idx) => (
-                              <td key={idx} style={{ padding: "14px 20px" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                  <span style={{ fontWeight: 600, fontFamily: "monospace", color: colorScore(s) }}>{s || "—"}</span>
-                                  <div style={{ width: 60, height: 4, background: D.border, borderRadius: 2, overflow: "hidden" }}>
-                                    <div style={{ width: `${s || 0}%`, height: 4, borderRadius: 2, background: colorScore(s || 0) }} />
+                ) : filteredDepots.map(depot => (
+                  <button
+                    type="button"
+                    className={`repo-card ${selectedDepot?.id === depot.id ? "active" : ""}`}
+                    key={depot.id}
+                    onClick={() => handleDepotClick(depot)}
+                  >
+                    <div className="repo-head">
+                      <div className="repo-avatar">◈</div>
+                      <div className="repo-name">{depot.nom}</div>
+                    </div>
+                    <div className="repo-url">{depot.project_url}</div>
+                    <span className="repo-date">◷ {new Date(depot.created_at).toLocaleDateString("fr-FR")}</span>
+                  </button>
+                ))}
+              </div>
+            </aside>
+
+            <section className="main-panel">
+              {!selectedDepot && !loading ? (
+                <div className="welcome">
+                  <div className="welcome-content">
+                    <div className="welcome-icon">⇄</div>
+                    <h2>À quoi sert cette page ?</h2>
+                    <p>
+                      Elle permet de retrouver les comparaisons réalisées entre deux branches
+                      d'un projet, de comprendre la décision de l'IA et d'accéder à la
+                      Merge Request générée lorsque la fusion est autorisée.
+                    </p>
+                    <div className="how-it-works">
+                      <div className="how-card">
+                        <div>📁</div>
+                        <strong>Choisissez un dépôt</strong>
+                        <p>Depuis la liste à gauche.</p>
+                      </div>
+                      <div className="how-card">
+                        <div>📊</div>
+                        <strong>Lisez le résultat</strong>
+                        <p>Scores et décision de fusion.</p>
+                      </div>
+                      <div className="how-card">
+                        <div>🔀</div>
+                        <strong>Ouvrez la MR</strong>
+                        <p>Quand le merge est autorisé.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : selectedDepot && (
+                <>
+                  <div className="selected-header">
+                    <div>
+                      <div className="hero-tag" style={{ marginBottom: 9 }}>Projet sélectionné</div>
+                      <h2>{selectedDepot.nom}</h2>
+                      <p>{selectedDepot.project_url}</p>
+                    </div>
+                    <span className="selected-chip">⎇ Historique de comparaison</span>
+                  </div>
+
+                  <div className="metrics">
+                    <div className="metric">
+                      <strong style={{ color: "#6366f1" }}>{comparaisons.length}</strong>
+                      <span>Comparaisons</span>
+                    </div>
+                    <div className="metric">
+                      <strong style={{ color: "#8b5cf6" }}>
+                        {comparaisons.reduce((sum, c) => sum + (c.commits_count || 0), 0)}
+                      </strong>
+                      <span>Commits comparés</span>
+                    </div>
+                    <div className="metric">
+                      <strong style={{ color: "#10b981" }}>
+                        {comparaisons.filter(c => c.analyses?.some(a => a.resultat_statut === "merge_autorise")).length}
+                      </strong>
+                      <span>Merges autorisés</span>
+                    </div>
+                    <div className="metric">
+                      <strong style={{ color: "#ef4444" }}>
+                        {comparaisons.filter(c => c.analyses?.some(a => a.resultat_statut === "merge_bloque")).length}
+                      </strong>
+                      <span>Merges bloqués</span>
+                    </div>
+                    <div className="metric">
+                      <strong style={{ color: "#f59e0b" }}>
+                        {comparaisons.filter(c => c.analyses?.some(a => a.mr_created && a.mr_url)).length}
+                      </strong>
+                      <span>MR associées</span>
+                    </div>
+                  </div>
+
+                  <div className="results-panel">
+                    <div className="results-toolbar">
+                      <div>
+                        <h3>Résultats des comparaisons</h3>
+                        <p>Ouvrez une comparaison pour consulter les détails de l'analyse.</p>
+                      </div>
+                      <select
+                        className="filter-select"
+                        value={filterResultat}
+                        onChange={e => setFilterResultat(e.target.value)}
+                      >
+                        <option value="tous">Tous les résultats</option>
+                        <option value="merge_autorise">✅ Merge autorisé</option>
+                        <option value="merge_bloque">🚫 Merge bloqué</option>
+                        <option value="aucun_changement">○ Aucun changement</option>
+                      </select>
+                    </div>
+
+                    {loadingDetails ? (
+                      <div className="results-loading">
+                        <div className="spinner" />
+                        Chargement des comparaisons...
+                      </div>
+                    ) : comparaisons.length === 0 ? (
+                      <div className="results-empty">
+                        <div style={{ fontSize: 34, marginBottom: 12 }}>🔍</div>
+                        Aucune comparaison enregistrée pour ce dépôt.
+                      </div>
+                    ) : (
+                      <div className="timeline">
+                        {comparaisons
+                          .filter(comp => {
+                            const analyse = comp.analyses?.[0];
+                            return filterResultat === "tous" || analyse?.resultat_statut === filterResultat;
+                          })
+                          .map((comp, index) => {
+                            const latestAnalyse = comp.analyses?.[0];
+                            if (!latestAnalyse) return null;
+                            const resultat = getResultatBadge(latestAnalyse.resultat_statut);
+
+                            return (
+                              <article
+                                className="compare-card"
+                                key={comp.id}
+                                onClick={() => handleComparaisonClick(comp, latestAnalyse)}
+                                style={{ animationDelay: `${index * 22}ms` }}
+                              >
+                                <div>
+                                  <div className="comparison-date">
+                                    Analyse du {new Date(comp.created_at).toLocaleDateString("fr-FR")}
+                                  </div>
+                                  <div className="branch-path">
+                                    <span className="branch-pill">{comp.from_branch}</span>
+                                    <span className="arrow">→</span>
+                                    <span className="branch-pill">{comp.to_branch}</span>
                                   </div>
                                 </div>
-                              </td>
-                            ))}
-                            <td style={{ padding: "14px 20px" }}>
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 11, fontWeight: 500, background: resultat.bg, color: resultat.color }}>
-                                {resultat.icon} {resultat.label}
-                              </span>
-                            </td>
-                            <td style={{ padding: "14px 20px" }}>
-                              {latestAnalyse.mr_created && latestAnalyse.mr_url ? (
-                                <a href={latestAnalyse.mr_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ color: "#6366f1", textDecoration: "none", fontSize: 12 }}>
-                                  🔀 Voir MR
-                                </a>
-                              ) : (
-                                <span style={{ color: D.faint, fontSize: 11 }}>—</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            </>
-          )}
 
-          {!selectedDepot && !loading && (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: D.faint }}>
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>📁</div>
-                <div>Sélectionnez un dépôt dans la barre latérale</div>
-              </div>
-            </div>
-          )}
+                                <div className="impact">
+                                  <div className="impact-row">
+                                    <span>Commits détectés</span>
+                                    <span className="impact-value">{comp.commits_count || 0}</span>
+                                  </div>
+                                  <div className="impact-row">
+                                    <span>Vulnérabilités</span>
+                                    <span className="impact-value" style={{ color: latestAnalyse.vulnerabilites_count > 0 ? "#ef4444" : "#10b981" }}>
+                                      {latestAnalyse.vulnerabilites_count || 0}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div className="scores">
+                                  {[
+                                    { label: "Qualité", value: latestAnalyse.score_qualite },
+                                    { label: "Sécurité", value: latestAnalyse.score_securite },
+                                    { label: "Perf.", value: latestAnalyse.score_performance },
+                                  ].map(score => (
+                                    <div className="score" key={score.label}>
+                                      <strong style={{ color: colorScore(score.value) }}>{score.value ?? "—"}</strong>
+                                      <span>{score.label}</span>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div className="decision">
+                                  <span
+                                    className="decision-badge"
+                                    style={{ color: resultat.color, background: resultat.bg }}
+                                  >
+                                    {resultat.icon} {resultat.label}
+                                  </span>
+                                  {latestAnalyse.mr_created && latestAnalyse.mr_url && (
+                                    <a
+                                      className="mr-link"
+                                      href={latestAnalyse.mr_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={e => e.stopPropagation()}
+                                    >
+                                      🔀 Voir la MR
+                                    </a>
+                                  )}
+                                  <span className="open-detail">Voir détails →</span>
+                                </div>
+                              </article>
+                            );
+                          })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </section>
+          </div>
         </div>
-      </div>
+      </main>
 
-      {/* Modal Détail */}
       {showDetailModal && selectedComparaison && selectedAnalyse && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setShowDetailModal(false)}>
-          <div style={{ background: D.modalBg, borderRadius: 24, width: "90%", maxWidth: 600, maxHeight: "80vh", overflowY: "auto", animation: "slideUp 0.3s ease" }} onClick={e => e.stopPropagation()}>
-            <div style={{ padding: "20px 24px", borderBottom: `1px solid ${D.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: D.text }}>📊 Détail de l'analyse</h3>
-              <button onClick={() => setShowDetailModal(false)} style={{ background: D.btnSec, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 18, color: D.muted }}>✕</button>
-            </div>
-            <div style={{ padding: 24 }}>
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Date</div>
-                <div style={{ fontSize: 14, color: D.text }}>{new Date(selectedAnalyse.created_at).toLocaleString()}</div>
+        <div className="modal-layer" onClick={() => setShowDetailModal(false)}>
+          <div className="detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <div className="hero-tag" style={{ marginBottom: 10 }}>Détail de comparaison</div>
+                <h3>Analyse du {new Date(selectedAnalyse.created_at).toLocaleDateString("fr-FR")}</h3>
+                <p>Résultat de la comparaison entre branches GitLab</p>
               </div>
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Branches comparées</div>
-                <div style={{ fontSize: 14, color: D.text }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 12px", borderRadius: 30, fontSize: 12, background: D.tag, color: "#6366f1" }}>
-                    {selectedComparaison.from_branch} → {selectedComparaison.to_branch}
+              <button className="close" onClick={() => setShowDetailModal(false)}>✕</button>
+            </div>
+
+            <div className="modal-body">
+              <div className="detail-grid">
+                <div className="detail-box">
+                  <label>Branches comparées</label>
+                  <div className="branch-path">
+                    <span className="branch-pill">{selectedComparaison.from_branch}</span>
+                    <span className="arrow">→</span>
+                    <span className="branch-pill">{selectedComparaison.to_branch}</span>
+                  </div>
+                </div>
+                <div className="detail-box">
+                  <label>Commits identifiés</label>
+                  <div>{selectedComparaison.commits_count} commit(s)</div>
+                </div>
+                <div className="detail-box">
+                  <label>Décision</label>
+                  <span
+                    className="decision-badge"
+                    style={{
+                      marginBottom: 0,
+                      ...{
+                        color: getResultatBadge(selectedAnalyse.resultat_statut).color,
+                        background: getResultatBadge(selectedAnalyse.resultat_statut).bg
+                      }
+                    }}
+                  >
+                    {getResultatBadge(selectedAnalyse.resultat_statut).icon} {getResultatBadge(selectedAnalyse.resultat_statut).label}
                   </span>
                 </div>
+                <div className="detail-box">
+                  <label>Vulnérabilités</label>
+                  <div style={{ color: selectedAnalyse.vulnerabilites_count > 0 ? "#ef4444" : "#10b981", fontWeight: 700 }}>
+                    {selectedAnalyse.vulnerabilites_count > 0
+                      ? `⚠ ${selectedAnalyse.vulnerabilites_count} détectée(s)`
+                      : "✓ Aucune détectée"}
+                  </div>
+                </div>
               </div>
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Commits</div>
-                <div style={{ fontSize: 14, color: D.text }}>{selectedComparaison.commits_count} commit(s)</div>
-              </div>
-              
-              <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Scores</div>
-              <div style={{ display: "flex", gap: 16, margin: "16px 0" }}>
+
+              <div className="modal-scores">
                 {[
-                  { label: "Qualité", val: selectedAnalyse.score_qualite },
-                  { label: "Sécurité", val: selectedAnalyse.score_securite },
-                  { label: "Performance", val: selectedAnalyse.score_performance },
-                ].map(s => (
-                  <div key={s.label} style={{ flex: 1, background: D.bg, borderRadius: 12, padding: 12, textAlign: "center" }}>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: colorScore(s.val) }}>{s.val || "—"}</div>
-                    <div style={{ fontSize: 11, color: D.faint }}>{s.label}</div>
+                  { label: "Qualité", value: selectedAnalyse.score_qualite },
+                  { label: "Sécurité", value: selectedAnalyse.score_securite },
+                  { label: "Performance", value: selectedAnalyse.score_performance },
+                ].map(score => (
+                  <div className="modal-score" key={score.label}>
+                    <strong style={{ color: colorScore(score.value) }}>{score.value ?? "—"}</strong>
+                    <span>{score.label}</span>
                   </div>
                 ))}
               </div>
 
               {selectedAnalyse.vulnerabilites_count > 0 && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Vulnérabilités détectées</div>
-                  <div style={{ fontSize: 14, color: "#ef4444" }}>⚠️ {selectedAnalyse.vulnerabilites_count} vulnérabilité(s)</div>
+                <div className="warning">
+                  ⚠ {selectedAnalyse.vulnerabilites_count} vulnérabilité(s) détectée(s) dans cette comparaison.
                 </div>
               )}
 
               {selectedAnalyse.mr_created && selectedAnalyse.mr_url && (
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: D.faint, textTransform: "uppercase", marginBottom: 6 }}>Merge Request associée</div>
-                  <a href={selectedAnalyse.mr_url} target="_blank" rel="noreferrer" style={{ color: "#6366f1", textDecoration: "none" }}>
+                <div className="detail-box">
+                  <label>Merge Request associée</label>
+                  <a
+                    className="mr-link"
+                    href={selectedAnalyse.mr_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
                     🔀 {selectedAnalyse.mr_title || "Voir la MR sur GitLab"} →
                   </a>
                 </div>
               )}
 
-              <div style={{ marginTop: 24, display: "flex", gap: 12 }}>
-                <button onClick={() => router.push(`/analyse/rapport?analyse_id=${selectedAnalyse.id}`)} style={{ flex: 1, padding: "10px", background: D.btnPrimary, border: "none", borderRadius: 12, color: "white", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                  📄 Voir le rapport complet
-                </button>
-                <button onClick={() => setShowDetailModal(false)} style={{ flex: 1, padding: "10px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
+              <div className="modal-actions">
+                {selectedAnalyse.mr_created && selectedAnalyse.mr_url && (
+                  <a
+                    className="primary-btn"
+                    href={selectedAnalyse.mr_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}
+                  >
+                    🔀 Ouvrir la Merge Request
+                  </a>
+                )}
+                <button className="secondary-btn" onClick={() => setShowDetailModal(false)}>
                   Fermer
                 </button>
               </div>
@@ -453,4 +1284,3 @@ export default function ComparaisonsPage() {
     </>
   );
 }
-

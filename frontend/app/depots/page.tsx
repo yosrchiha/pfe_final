@@ -82,6 +82,9 @@ export default function DepotsPage() {
   // analyseDetail supprimé — on navigue vers /analyse/rapport?analyse_id=X
   const [loadingA,      setLoadingA]      = useState(false);
 
+  // Suivi d’une analyse relancée depuis cette page
+  const [analyseEnCours, setAnalyseEnCours] = useState<{ id: number; nom: string; etape: string } | null>(null);
+
   // Toast
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
@@ -164,10 +167,6 @@ export default function DepotsPage() {
       setEditDepot(null);
       showToast("Dépôt modifié avec succès.");
 
-      if (isCritical) {
-        const res = await axios.get(`${API}/analyses/depots-user/${editDepot.id}`);
-        // Rafraîchir
-      }
 
     } catch (e: any) {
       const detail = e.response?.data?.detail;
@@ -187,10 +186,73 @@ export default function DepotsPage() {
       setDeleteDepot(null);
       showToast("Dépôt et toutes ses analyses supprimés.");
     } catch (e: any) {
-      showToast("Erreur lors de la suppression.", false);
+      const detail = e.response?.data?.detail;
+      showToast(typeof detail === "string" ? detail : "Erreur lors de la suppression.", false);
       setDeleteDepot(null);
     } finally {
       setDeleteLoading(false);
+    }
+  };
+
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  // Après une relance, suivre le traitement Celery puis ouvrir directement le rapport final.
+  const suivreAnalyseRelancee = async (
+    analyseId: number,
+    depot: DepotAnalyse,
+    tokenGitLab: string
+  ) => {
+    setAnalyseEnCours({ id: analyseId, nom: depot.nom, etape: "Analyse mise en file…" });
+
+    try {
+      for (let tentative = 0; tentative < 240; tentative++) {
+        const statutRes = await axios.get(`${API}/analyses/${analyseId}/statut`, { headers: getHeaders() });
+        const resultat = statutRes.data;
+        setAnalyseEnCours({
+          id: analyseId,
+          nom: depot.nom,
+          etape: resultat.etape_courante || resultat.statut || "Traitement en cours…"
+        });
+
+        if (resultat.statut === "termine") {
+          let issuesList: any[] = [];
+          try {
+            const issuesRes = await axios.get(`${API}/issues/analyse/${analyseId}`, { headers: getHeaders() });
+            issuesList = issuesRes.data || [];
+          } catch {
+            issuesList = [];
+          }
+
+          sessionStorage.setItem("rapport", JSON.stringify({
+            ...resultat,
+            analyse_id: analyseId,
+            depot_analyse_id: depot.id,
+            issues_gitlab: issuesList,
+          }));
+          sessionStorage.setItem("nomProjet", depot.nom);
+          sessionStorage.setItem("token", tokenGitLab);
+          sessionStorage.setItem("projectUrl", depot.project_url);
+          sessionStorage.setItem("branche", depot.branche || "main");
+          sessionStorage.setItem("autoTests", "false");
+          sessionStorage.setItem("autoMr", "false");
+
+          setAnalyseEnCours(null);
+          showToast("Analyse terminée. Ouverture du rapport.");
+          router.push(`/analyse/rapport?analyse_id=${analyseId}`);
+          return;
+        }
+
+        if (resultat.statut === "erreur") {
+          throw new Error("L’analyse a échoué côté serveur.");
+        }
+
+        await sleep(5000);
+      }
+
+      throw new Error("L’analyse prend trop de temps. Vérifiez Celery et Redis.");
+    } catch (e: any) {
+      setAnalyseEnCours(null);
+      showToast(e?.message || "Impossible de suivre l’analyse relancée.", false);
     }
   };
 
@@ -210,38 +272,52 @@ export default function DepotsPage() {
   };
 
   const validerToken = async () => {
+    if (!modalDepot) return;
     if (!modalToken.trim()) {
       setModalError("Le token GitLab est requis");
       return;
     }
+
+    const depotSelectionne = modalDepot;
+    const tokenGitLab = modalToken.trim();
     setModalLoading(true);
     setModalError("");
 
     try {
       if (modalMode === "relancer") {
-        await axios.post(`${API}/analyses/lancer`, {
-          nom_projet    : modalDepot!.nom,
-          gitlab_token  : modalToken,
-          project_url   : modalDepot!.project_url,
-          branche       : modalDepot!.branche,
+        const lancement = await axios.post(`${API}/analyses/lancer`, {
+          nom_projet    : depotSelectionne.nom,
+          gitlab_token  : tokenGitLab,
+          project_url   : depotSelectionne.project_url,
+          branche       : depotSelectionne.branche,
           owasp_enabled : true,
           auto_tests    : false,
           auto_mr       : false,
           seuil_qualite : 60,
         }, { headers: getHeaders() });
+
+        const nouvelleAnalyseId = lancement.data?.analyse_id;
+        if (!nouvelleAnalyseId) {
+          throw new Error("L'analyse a été lancée mais aucun identifiant n'a été retourné.");
+        }
+
+        setModalDepot(null);
+        setModalToken("");
+        showToast("Analyse relancée. Préparation du nouveau rapport…");
+        void suivreAnalyseRelancee(nouvelleAnalyseId, depotSelectionne, tokenGitLab);
+        return;
       }
 
       setLoadingA(true);
-      const res = await axios.get(`${API}/analyses/depot/${modalDepot!.id}`);
+      const res = await axios.get(`${API}/analyses/depot/${depotSelectionne.id}`, { headers: getHeaders() });
       setAnalyses(res.data);
-      setDepotVu(modalDepot);
+      setDepotVu(depotSelectionne);
       setModalDepot(null);
       setVueAnalyse(true);
-      // analyseDetail supprimé
 
     } catch (e: any) {
       const detail = e.response?.data?.detail;
-      setModalError(typeof detail === "string" ? detail : "Token invalide ou projet introuvable");
+      setModalError(typeof detail === "string" ? detail : (e.message || "Token invalide ou projet introuvable"));
     } finally {
       setModalLoading(false);
       setLoadingA(false);
@@ -278,374 +354,860 @@ export default function DepotsPage() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap');
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        * { box-sizing: border-box; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
-        .row-hover:hover td { background: ${D.rowHover} !important; }
-        .action-btn { transition: all 0.15s; }
-        .action-btn:hover { opacity: 0.8; transform: translateY(-1px); }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: ${D.bg}; }
-        ::-webkit-scrollbar-thumb { background: ${D.border}; border-radius: 3px; }
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideToast {
+          from { opacity: 0; transform: translateY(12px) scale(.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes glowPulse {
+          0%, 100% { opacity: .45; transform: scale(1); }
+          50% { opacity: .7; transform: scale(1.08); }
+        }
+
+        .depots-modern {
+          min-height: 100vh;
+          background: ${D.bg};
+          color: ${D.text};
+          font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+          position: relative;
+          overflow-x: hidden;
+          transition: background .3s ease, color .3s ease;
+        }
+        .depots-modern::before {
+          content: "";
+          position: fixed;
+          width: 520px;
+          height: 520px;
+          right: -180px;
+          top: -200px;
+          border-radius: 999px;
+          background: radial-gradient(circle, ${isDark ? "rgba(99,102,241,.20)" : "rgba(79,70,229,.13)"} 0%, transparent 68%);
+          pointer-events: none;
+          animation: glowPulse 8s ease-in-out infinite;
+        }
+        .depots-modern::after {
+          content: "";
+          position: fixed;
+          width: 440px;
+          height: 440px;
+          left: -220px;
+          bottom: -220px;
+          border-radius: 999px;
+          background: radial-gradient(circle, ${isDark ? "rgba(16,185,129,.12)" : "rgba(16,185,129,.08)"} 0%, transparent 70%);
+          pointer-events: none;
+        }
+        .page-wrap {
+          max-width: 1460px;
+          margin: 0 auto;
+          padding: 32px 42px 54px;
+          position: relative;
+          z-index: 1;
+        }
+        .topbar {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+        .brand-line {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          color: ${D.faint};
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: .1em;
+          text-transform: uppercase;
+        }
+        .brand-mark {
+          width: 38px;
+          height: 38px;
+          border-radius: 12px;
+          background: linear-gradient(135deg,#6366f1,#8b5cf6);
+          color: white;
+          display: grid;
+          place-items: center;
+          font-size: 18px;
+          box-shadow: 0 12px 30px rgba(99,102,241,.25);
+        }
+        .top-actions { display: flex; align-items: center; gap: 12px; }
+        .hero {
+          border: 1px solid ${D.border};
+          background: ${D.card};
+          border-radius: 28px;
+          padding: 30px 32px;
+          display: grid;
+          grid-template-columns: 1.35fr .9fr;
+          gap: 26px;
+          margin-bottom: 25px;
+          overflow: hidden;
+          position: relative;
+          box-shadow: ${isDark ? "0 24px 70px rgba(0,0,0,.15)" : "0 20px 60px rgba(15,23,42,.05)"};
+        }
+        .hero::after {
+          content: "";
+          position: absolute;
+          width: 310px;
+          height: 310px;
+          right: -80px;
+          top: -130px;
+          border-radius: 999px;
+          background: radial-gradient(circle, ${isDark ? "rgba(99,102,241,.22)" : "rgba(99,102,241,.10)"}, transparent 70%);
+        }
+        .hero-copy, .hero-panel { position: relative; z-index: 1; }
+        .hero-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 7px 12px;
+          border-radius: 100px;
+          background: ${isDark ? "rgba(99,102,241,.14)" : "#eef2ff"};
+          color: #6366f1;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: .08em;
+          margin-bottom: 16px;
+        }
+        .hero h1 {
+          font-size: clamp(29px, 3vw, 39px);
+          line-height: 1.12;
+          font-weight: 800;
+          letter-spacing: -.045em;
+          color: ${D.text};
+          margin: 0 0 11px;
+        }
+        .hero h1 span {
+          background: linear-gradient(100deg,#6366f1,#8b5cf6);
+          -webkit-background-clip: text;
+          color: transparent;
+        }
+        .hero p {
+          font-size: 14px;
+          color: ${D.faint};
+          line-height: 1.7;
+          max-width: 600px;
+          margin: 0 0 22px;
+        }
+        .cta-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .primary-btn {
+          border: none;
+          border-radius: 13px;
+          padding: 12px 18px;
+          color: #fff;
+          background: linear-gradient(135deg,#6366f1,#7c3aed);
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          display: inline-flex;
+          gap: 8px;
+          align-items: center;
+          transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+          box-shadow: 0 11px 25px rgba(99,102,241,.25);
+        }
+        .primary-btn:hover { transform: translateY(-2px); box-shadow: 0 16px 34px rgba(99,102,241,.34); }
+        .ghost-btn {
+          border: 1px solid ${D.border};
+          border-radius: 13px;
+          padding: 11px 16px;
+          color: ${D.muted};
+          background: ${D.btnSec};
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: .18s ease;
+        }
+        .ghost-btn:hover { transform: translateY(-1px); border-color: #6366f1; color: #6366f1; }
+        .hero-panel {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+          align-content: center;
+        }
+        .metric {
+          min-height: 99px;
+          padding: 16px;
+          border: 1px solid ${D.border};
+          background: ${isDark ? "rgba(255,255,255,.025)" : "#ffffff"};
+          border-radius: 18px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          transition: transform .18s ease, border-color .18s ease;
+        }
+        .metric:hover { transform: translateY(-3px); border-color: rgba(99,102,241,.38); }
+        .metric.wide { grid-column: span 2; min-height: 78px; flex-direction: row; align-items: center; }
+        .metric-icon {
+          font-size: 14px;
+          width: 32px;
+          height: 32px;
+          display: grid;
+          place-items: center;
+          border-radius: 10px;
+          background: ${isDark ? "rgba(99,102,241,.16)" : "#eef2ff"};
+        }
+        .metric-value { font-size: 26px; font-weight: 800; line-height: 1; letter-spacing: -.04em; }
+        .metric-label { color: ${D.faint}; font-size: 11px; font-weight: 600; margin-top: 6px; }
+        .content-bar {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 18px;
+          margin-bottom: 21px;
+        }
+        .section-heading h2 {
+          margin: 0 0 5px;
+          font-size: 20px;
+          letter-spacing: -.03em;
+          font-weight: 750;
+        }
+        .section-heading p { margin: 0; color: ${D.faint}; font-size: 13px; }
+        .search-wrap { position: relative; width: min(390px, 100%); }
+        .search-wrap span {
+          position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+          color: ${D.faint}; font-size: 15px;
+        }
+        .search-input {
+          width: 100%;
+          padding: 13px 16px 13px 43px;
+          border: 1px solid ${D.border};
+          background: ${D.card};
+          color: ${D.text};
+          outline: none;
+          border-radius: 15px;
+          font-size: 13px;
+          transition: box-shadow .16s ease, border-color .16s ease;
+        }
+        .search-input:focus {
+          border-color: #6366f1;
+          box-shadow: 0 0 0 4px rgba(99,102,241,.11);
+        }
+        .repository-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(375px, 1fr));
+          gap: 17px;
+        }
+        .repo-card {
+          background: ${D.card};
+          border: 1px solid ${D.border};
+          border-radius: 22px;
+          padding: 20px;
+          animation: fadeUp .26s ease both;
+          position: relative;
+          overflow: hidden;
+          transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+        }
+        .repo-card:hover {
+          transform: translateY(-4px);
+          border-color: rgba(99,102,241,.35);
+          box-shadow: ${isDark ? "0 22px 50px rgba(0,0,0,.25)" : "0 18px 44px rgba(15,23,42,.09)"};
+        }
+        .repo-card::before {
+          content: "";
+          position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+          background: linear-gradient(180deg,#6366f1,#8b5cf6);
+        }
+        .repo-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 15px; }
+        .repo-identity { display: flex; align-items: center; gap: 11px; min-width: 0; }
+        .repo-logo {
+          height: 42px; width: 42px; border-radius: 14px;
+          background: ${isDark ? "rgba(99,102,241,.15)" : "#eef2ff"};
+          color: #6366f1; display: grid; place-items: center; font-size: 18px; flex: none;
+        }
+        .repo-name { font-size: 15px; font-weight: 700; color: ${D.text}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .repo-url {
+          margin-top: 4px; max-width: 230px;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 11px; color: ${D.faint};
+        }
+        .status {
+          display: inline-flex; align-items: center; gap: 6px;
+          border-radius: 100px; padding: 5px 9px;
+          color: #10b981; background: ${isDark ? "rgba(16,185,129,.12)" : "#ecfdf5"};
+          font-size: 11px; font-weight: 700; white-space: nowrap;
+        }
+        .status-dot { height: 7px; width: 7px; border-radius: 99px; background: #10b981; }
+        .repo-meta {
+          display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+          border-top: 1px dashed ${D.border};
+          border-bottom: 1px dashed ${D.border};
+          padding: 12px 0;
+          margin-bottom: 15px;
+        }
+        .chip {
+          display: inline-flex; align-items: center; gap: 6px;
+          padding: 6px 10px;
+          background: ${D.tag};
+          border-radius: 100px;
+          color: ${D.tagText};
+          font-size: 11px; font-weight: 600;
+        }
+        .repo-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .repo-action {
+          border: 1px solid ${D.border};
+          background: ${isDark ? "rgba(255,255,255,.025)" : "#fff"};
+          border-radius: 11px;
+          padding: 9px 8px;
+          cursor: pointer;
+          color: ${D.muted};
+          font-size: 12px;
+          font-weight: 600;
+          transition: .16s ease;
+        }
+        .repo-action:hover { transform: translateY(-1px); }
+        .repo-action.view { color: #6366f1; }
+        .repo-action.view:hover { background: rgba(99,102,241,.08); border-color: rgba(99,102,241,.35); }
+        .repo-action.run { color: #f59e0b; }
+        .repo-action.run:hover { background: rgba(245,158,11,.08); border-color: rgba(245,158,11,.35); }
+        .repo-action.edit:hover { color: ${D.text}; border-color: ${D.muted}; }
+        .repo-action.danger { color: #ef4444; }
+        .repo-action.danger:hover { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.35); }
+        .empty-box {
+          border: 1px dashed ${D.border};
+          background: ${D.card};
+          border-radius: 25px;
+          padding: 62px 24px;
+          text-align: center;
+        }
+        .empty-icon {
+          margin: 0 auto 18px; width: 68px; height: 68px; border-radius: 22px;
+          background: ${isDark ? "rgba(99,102,241,.12)" : "#eef2ff"};
+          display: grid; place-items: center; font-size: 30px;
+        }
+        .empty-title { font-size: 18px; font-weight: 700; margin-bottom: 7px; }
+        .empty-text { font-size: 13px; color: ${D.faint}; margin-bottom: 18px; }
+        .loader { text-align:center; padding:68px 20px; color:${D.faint}; }
+        .back-row { margin-bottom: 20px; }
+        .analysis-banner {
+          background: ${D.card};
+          border: 1px solid ${D.border};
+          border-radius: 25px;
+          padding: 24px 26px;
+          margin-bottom: 22px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 18px;
+        }
+        .analysis-banner h1 { font-size: 25px; margin: 0 0 6px; letter-spacing: -.04em; }
+        .analysis-banner p { color: ${D.faint}; font-size: 13px; margin: 0; }
+        .analysis-grid {
+          display:grid;
+          grid-template-columns: repeat(auto-fill, minmax(360px,1fr));
+          gap: 17px;
+        }
+        .analysis-card {
+          border: 1px solid ${D.border};
+          background: ${D.card};
+          border-radius: 22px;
+          padding: 20px;
+          cursor: pointer;
+          transition: .18s ease;
+        }
+        .analysis-card:hover { transform: translateY(-3px); border-color: rgba(99,102,241,.4); box-shadow: 0 18px 38px rgba(15,23,42,.08); }
+        .analysis-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:17px; }
+        .analysis-date { font-size:12px; color:${D.faint}; }
+        .done-chip {
+          font-size:11px; padding:5px 11px; border-radius:100px; font-weight:700;
+          background: rgba(16,185,129,.11); color:#10b981;
+        }
+        .score-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:17px; }
+        .score-box { border-radius:14px; padding:13px 8px; text-align:center; background:${D.bg}; border:1px solid ${D.border}; }
+        .score-val { font-size:22px; font-weight:800; letter-spacing:-.03em; }
+        .score-title { margin-top:4px; font-size:10px; color:${D.faint}; font-weight:600; }
+        .vuln-banner {
+          display:flex; align-items:center; justify-content:space-between;
+          font-size:12px; font-weight:600; padding:10px 12px; border-radius:11px;
+        }
+        .modal-layer {
+          position: fixed; inset: 0; background: rgba(2,6,23,.58);
+          backdrop-filter: blur(7px);
+          display: flex; justify-content: center; align-items: center;
+          z-index: 1000; padding: 18px;
+        }
+        .modal {
+          width: min(510px, 100%);
+          background: ${D.modalBg};
+          border: 1px solid ${D.border};
+          border-radius: 25px;
+          padding: 26px;
+          box-shadow: 0 28px 72px rgba(0,0,0,.25);
+          animation: fadeUp .18s ease;
+        }
+        .modal.danger-modal { width:min(450px,100%); text-align:center; }
+        .modal-header { margin-bottom: 19px; }
+        .modal-title { font-size: 19px; font-weight: 750; color: ${D.text}; margin-bottom: 5px; letter-spacing: -.025em; }
+        .modal-sub { font-size: 12px; color: ${D.faint}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .field { margin-bottom: 14px; }
+        .field label {
+          display:block; margin-bottom:6px; color:${D.muted}; font-size:11px;
+          font-weight:750; text-transform:uppercase; letter-spacing:.065em;
+        }
+        .field-input {
+          width:100%; border:1px solid ${D.border}; border-radius:12px;
+          padding:12px 14px; background:${D.card}; color:${D.text}; font-size:13px; outline:none;
+        }
+        .field-input:focus { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.10); }
+        .changed {
+          margin-left:7px; background:rgba(245,158,11,.12); color:#f59e0b;
+          padding:2px 7px; border-radius:100px; font-size:10px; text-transform:none;
+        }
+        .alert-warning {
+          background:${isDark ? "rgba(245,158,11,.10)" : "#fffbeb"};
+          border:1px solid ${isDark ? "rgba(245,158,11,.25)" : "#fde68a"};
+          color:${isDark ? "#fbbf24" : "#92400e"};
+          border-radius:13px; padding:12px 13px; margin:4px 0 15px;
+          font-size:12px; line-height:1.55;
+        }
+        .alert-error {
+          background:rgba(239,68,68,.09); border:1px solid rgba(239,68,68,.25);
+          color:#ef4444; border-radius:11px; padding:10px 12px;
+          font-size:12px; margin-bottom:15px;
+        }
+        .modal-footer { display:flex; gap:10px; margin-top:19px; }
+        .modal-footer button { flex:1; }
+        .danger-icon {
+          width:64px;height:64px;border-radius:22px;margin:0 auto 15px;
+          display:grid;place-items:center;font-size:29px;
+          background:rgba(239,68,68,.09);
+        }
+        .danger-copy {
+          margin:16px 0 20px; padding:12px 14px; border-radius:12px;
+          border:1px solid rgba(239,68,68,.25); background:rgba(239,68,68,.07);
+          color:${isDark ? "#fca5a5" : "#b91c1c"}; font-size:12px; line-height:1.6;
+        }
+        .delete-btn {
+          border:0;border-radius:12px;background:#ef4444;color:#fff;
+          padding:12px 16px;font-size:13px;font-weight:700;cursor:pointer;
+        }
+        .analysis-progress {
+          display:flex; align-items:center; justify-content:space-between; gap:18px;
+          padding:14px 17px; margin-bottom:19px; border-radius:16px;
+          border:1px solid rgba(99,102,241,.26);
+          background:${isDark ? "rgba(99,102,241,.10)" : "#eef2ff"};
+          animation:fadeUp .2s ease;
+        }
+        .progress-left { display:flex; align-items:center; gap:12px; }
+        .progress-loader {
+          width:20px; height:20px; border-radius:50%; border:2px solid rgba(99,102,241,.22);
+          border-top-color:#6366f1; animation:spin .7s linear infinite; flex:none;
+        }
+        .progress-title { font-size:13px; font-weight:700; color:${D.text}; }
+        .progress-step { font-size:12px; color:${D.faint}; margin-top:3px; }
+        .progress-id { font-size:11px; font-weight:700; color:#6366f1; background:${D.card}; padding:6px 10px; border-radius:100px; }
+        .toast {
+          position:fixed;bottom:25px;right:25px;z-index:1500;
+          padding:14px 18px;border-radius:15px;color:#fff;
+          font-size:13px;font-weight:600;display:flex;align-items:center;gap:9px;
+          background:${toast?.ok ? "#0f172a" : "#ef4444"};
+          box-shadow:0 18px 45px rgba(0,0,0,.18);
+          animation:slideToast .23s ease;
+        }
+        @media (max-width: 970px) {
+          .page-wrap { padding:22px 18px 44px; }
+          .hero { grid-template-columns:1fr; padding:24px; }
+          .content-bar { flex-direction:column; align-items:flex-start; }
+          .search-wrap { width:100%; }
+        }
+        @media (max-width: 500px) {
+          .repository-grid, .analysis-grid { grid-template-columns:1fr; }
+          .hero-panel { grid-template-columns:1fr; }
+          .metric.wide { grid-column:auto; }
+          .topbar { align-items:flex-start; }
+        }
       `}</style>
 
-      <div style={{ minHeight: "100vh", background: D.bg, fontFamily: "'Inter', sans-serif", color: D.text, transition: "background 0.3s, color 0.3s" }}>
-        <div style={{ maxWidth: 1400, margin: "0 auto", padding: "32px 40px" }}>
-
-          {/* HEADER avec ThemeToggle */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, flexWrap: "wrap", gap: 16 }}>
-            <div>
-              <h1 style={{ fontSize: 28, fontWeight: 700, color: D.text, letterSpacing: "-0.02em", margin: 0 }}>
-                {vueAnalyse
-                  ? `Analyses • ${depotVu?.nom}`
-                  : "Mes projets"}
-              </h1>
-              <p style={{ fontSize: 14, color: D.faint, margin: 0 }}>
-                {vueAnalyse
-                  ? `${analyses.length} analyse(s) réalisée(s)`
-                  : "Projets analysés par l'intelligence artificielle"}
-              </p>
+      <main className="depots-modern">
+        <div className="page-wrap">
+          <header className="topbar">
+            <div className="brand-line">
+              <div className="brand-mark">◈</div>
+              <span>AuditIA / Dépôts</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div className="top-actions">
               <ThemeToggle />
-              {!vueAnalyse && (
-                <button
-                  onClick={() => router.push("/analyse")}
-                  style={{ background: D.btnPrimary, color: "white", border: "none", padding: "10px 24px", borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
-                >
-                  + Nouvelle analyse
-                </button>
-              )}
             </div>
-          </div>
+          </header>
 
-          {/* STATS (uniquement en vue liste) */}
-          {!vueAnalyse && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20, marginBottom: 32 }}>
-              <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: "20px 24px" }}>
-                <div style={{ fontSize: 32, fontWeight: 700, color: "#6366f1", marginBottom: 4 }}>{depots.length}</div>
-                <div style={{ fontSize: 13, color: D.faint, fontWeight: 500 }}>Projets analysés</div>
-              </div>
-              <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: "20px 24px" }}>
-                <div style={{ fontSize: 32, fontWeight: 700, color: "#f59e0b", marginBottom: 4 }}>{[...new Set(depots.map(d => d.branche))].length}</div>
-                <div style={{ fontSize: 13, color: D.faint, fontWeight: 500 }}>Branches</div>
-              </div>
-              <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: "20px 24px" }}>
-                <div style={{ fontSize: 32, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>✓</div>
-                <div style={{ fontSize: 13, color: D.faint, fontWeight: 500 }}>Analysé par IA</div>
-              </div>
-            </div>
-          )}
-
-          {/* SEARCH (uniquement en vue liste) */}
-          {!vueAnalyse && (
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-              <div style={{ position: "relative", flex: 1, maxWidth: 360 }}>
-                <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: D.faint, fontSize: 16 }}>🔍</span>
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Rechercher un projet..."
-                  style={{ width: "100%", padding: "10px 16px 10px 42px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 14, background: D.card, color: D.text, outline: "none" }}
-                />
-              </div>
-              <span style={{ fontSize: 13, color: D.faint }}>{filtered.length} projet{filtered.length !== 1 ? "s" : ""}</span>
-            </div>
-          )}
-
-          {/* VUE 1 — LISTE DES PROJETS */}
-          {!vueAnalyse && (
-            <>
-              {loading ? (
-                <div style={{ textAlign: "center", padding: "60px 20px" }}>
-                  <div style={spinnerStyle} />
-                  <div style={{ color: D.faint }}>Chargement...</div>
+          {analyseEnCours && (
+            <div className="analysis-progress">
+              <div className="progress-left">
+                <span className="progress-loader" />
+                <div>
+                  <div className="progress-title">Relance de l’analyse — {analyseEnCours.nom}</div>
+                  <div className="progress-step">{analyseEnCours.etape}</div>
                 </div>
-              ) : filtered.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "60px 20px" }}>
-                  <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.5 }}>📁</div>
-                  <div style={{ color: D.faint, fontSize: 14 }}>
-                    {depots.length === 0 ? "Aucun projet analysé — lance ta première analyse !" : "Aucun résultat pour cette recherche"}
+              </div>
+              <span className="progress-id">#{analyseEnCours.id}</span>
+            </div>
+          )}
+
+          {!vueAnalyse ? (
+            <>
+              <section className="hero">
+                <div className="hero-copy">
+                  <div className="hero-badge">✦ Portfolio d'audits</div>
+                  <h1>Pilotez vos projets <span>analysés par IA</span></h1>
+                  <p>
+                    Visualisez l’historique de vos audits, relancez une analyse et accédez
+                    rapidement aux rapports de sécurité de chaque dépôt GitLab.
+                  </p>
+                  <div className="cta-row">
+                    <button className="primary-btn" onClick={() => router.push("/analyse")}>
+                      <span>＋</span> Nouvelle analyse
+                    </button>
+                    <button className="ghost-btn" onClick={() => router.push("/mes-analyses")}>
+                      ◎ Toutes les analyses
+                    </button>
+                    <span className="chip">🔒 GitLab connecté</span>
                   </div>
-                  {depots.length === 0 && (
-                    <button onClick={() => router.push("/analyse")} style={{ marginTop: 16, background: D.btnPrimary, color: "white", border: "none", padding: "10px 20px", borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
-                      + Lancer une analyse
+                </div>
+
+                <div className="hero-panel">
+                  <div className="metric">
+                    <div className="metric-icon">📁</div>
+                    <div>
+                      <div className="metric-value" style={{ color: "#6366f1" }}>{depots.length}</div>
+                      <div className="metric-label">Projets analysés</div>
+                    </div>
+                  </div>
+                  <div className="metric">
+                    <div className="metric-icon">⑂</div>
+                    <div>
+                      <div className="metric-value" style={{ color: "#8b5cf6" }}>
+                        {[...new Set(depots.map(d => d.branche))].length}
+                      </div>
+                      <div className="metric-label">Branches auditées</div>
+                    </div>
+                  </div>
+                  <div className="metric wide">
+                    <div>
+                      <div className="metric-value" style={{ color: "#10b981", fontSize: 22 }}>✓ Analyse IA</div>
+                      <div className="metric-label">Rapports, scores et vulnérabilités disponibles</div>
+                    </div>
+                    <div className="status"><span className="status-dot" /> Actif</div>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <div className="content-bar">
+                  <div className="section-heading">
+                    <h2>Mes dépôts analysés</h2>
+                    <p>{filtered.length} projet{filtered.length !== 1 ? "s" : ""} disponible{filtered.length !== 1 ? "s" : ""}</p>
+                  </div>
+                  <div className="search-wrap">
+                    <span>⌕</span>
+                    <input
+                      className="search-input"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      placeholder="Rechercher par nom ou URL GitLab..."
+                    />
+                  </div>
+                </div>
+
+                {loading ? (
+                  <div className="loader">
+                    <div style={spinnerStyle} />
+                    Chargement de vos projets...
+                  </div>
+                ) : filtered.length === 0 ? (
+                  <div className="empty-box">
+                    <div className="empty-icon">📁</div>
+                    <div className="empty-title">
+                      {depots.length === 0 ? "Aucun dépôt analysé" : "Aucun résultat trouvé"}
+                    </div>
+                    <div className="empty-text">
+                      {depots.length === 0
+                        ? "Lancez votre première analyse de code pour voir votre projet apparaître ici."
+                        : "Modifiez votre recherche pour retrouver un dépôt."}
+                    </div>
+                    {depots.length === 0 && (
+                      <button className="primary-btn" onClick={() => router.push("/analyse")}>
+                        ＋ Lancer une analyse
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="repository-grid">
+                    {filtered.map((d, index) => (
+                      <article className="repo-card" key={d.id} style={{ animationDelay: `${index * 30}ms` }}>
+                        <div className="repo-head">
+                          <div className="repo-identity">
+                            <div className="repo-logo">◫</div>
+                            <div style={{ minWidth: 0 }}>
+                              <div className="repo-name">{d.nom}</div>
+                              <div className="repo-url" title={d.project_url}>{d.project_url}</div>
+                            </div>
+                          </div>
+                          <div className="status"><span className="status-dot" /> analysé</div>
+                        </div>
+
+                        <div className="repo-meta">
+                          <span className="chip">⎇ {d.branche}</span>
+                          <span className="chip">◷ {new Date(d.created_at).toLocaleDateString("fr-FR")}</span>
+                        </div>
+
+                        <div className="repo-actions">
+                          <button className="repo-action view" onClick={() => ouvrirModalAnalyse(d)}>📊 Analyses</button>
+                          <button className="repo-action run" onClick={() => ouvrirModalRelancer(d)}>↻ Relancer</button>
+                          <button className="repo-action edit" onClick={() => ouvrirEdit(d)}>✏ Modifier</button>
+                          <button className="repo-action danger" onClick={() => setDeleteDepot(d)}>🗑 Supprimer</button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>
+          ) : (
+            <>
+              <div className="back-row">
+                <button className="ghost-btn" onClick={() => setVueAnalyse(false)}>← Retour aux projets</button>
+              </div>
+
+              <section className="analysis-banner">
+                <div>
+                  <div className="hero-badge">Rapports disponibles</div>
+                  <h1>{depotVu?.nom}</h1>
+                  <p>{depotVu?.project_url} · Branche {depotVu?.branche}</p>
+                </div>
+                <div className="cta-row">
+                  <span className="chip">📊 {analyses.length} analyse{analyses.length !== 1 ? "s" : ""}</span>
+                  {depotVu && (
+                    <button className="primary-btn" onClick={() => ouvrirModalRelancer(depotVu)}>
+                      ↻ Relancer
                     </button>
                   )}
                 </div>
-              ) : (
-                <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, overflow: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: "left", padding: "16px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>Nom</th>
-                        <th style={{ textAlign: "left", padding: "16px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>URL</th>
-                        <th style={{ textAlign: "left", padding: "16px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>Branche</th>
-                        <th style={{ textAlign: "left", padding: "16px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>Date</th>
-                        <th style={{ textAlign: "left", padding: "16px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>Statut</th>
-                        <th style={{ textAlign: "left", padding: "16px 20px", fontSize: 12, fontWeight: 600, color: D.faint, borderBottom: `1px solid ${D.border}` }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filtered.map(d => (
-                        <tr key={d.id} className="row-hover" style={{ borderBottom: `1px solid ${D.border}` }}>
-                          <td style={{ padding: "16px 20px", fontWeight: 600, color: D.text }}>{d.nom}</td>
-                          <td style={{ padding: "16px 20px", fontSize: 12, color: "#6366f1", fontFamily: "monospace" }}>{d.project_url}</td>
-                          <td style={{ padding: "16px 20px" }}>
-                            <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 500, background: D.tag, color: D.tagText }}>{d.branche}</span>
-                          </td>
-                          <td style={{ padding: "16px 20px" }}>
-                            <span style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 500, background: D.tag, color: D.tagText }}>{new Date(d.created_at).toLocaleDateString("fr-FR")}</span>
-                          </td>
-                          <td style={{ padding: "16px 20px" }}>
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#10b981" }}>
-                              <span style={{ width: 8, height: 8, background: "#10b981", borderRadius: "50%" }} />
-                              analysé
-                            </span>
-                          </td>
-                          <td style={{ padding: "16px 20px" }}>
-                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                              <button className="action-btn"
-                                onClick={() => ouvrirModalAnalyse(d)}
-                                style={{ background: "transparent", border: `1px solid ${D.border}`, padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", color: "#6366f1", fontWeight: 500 }}>
-                                📊 Analyses
-                              </button>
-                              <button className="action-btn"
-                                onClick={() => ouvrirModalRelancer(d)}
-                                style={{ background: "transparent", border: `1px solid ${D.border}`, padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", color: "#f59e0b", fontWeight: 500 }}>
-                                ↻ Relancer
-                              </button>
-                              <button className="action-btn"
-                                onClick={() => ouvrirEdit(d)}
-                                style={{ background: "transparent", border: `1px solid ${D.border}`, padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", color: D.muted, fontWeight: 500 }}>
-                                ✏️ Modifier
-                              </button>
-                              <button className="action-btn"
-                                onClick={() => setDeleteDepot(d)}
-                                style={{ background: "transparent", border: `1px solid ${D.border}`, padding: "6px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer", color: "#ef4444", fontWeight: 500 }}>
-                                🗑 Supprimer
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          )}
+              </section>
 
-          {/* VUE 2 — ANALYSES D'UN PROJET */}
-          {vueAnalyse && (
-            <>
-              <div style={{ marginBottom: 20 }}>
-                <button onClick={() => setVueAnalyse(false)} style={{ background: D.btnSec, border: `1px solid ${D.border}`, padding: "8px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }}>
-                  ← Retour aux projets
-                </button>
-              </div>
               {loadingA ? (
-                <div style={{ textAlign: "center", padding: "60px 20px" }}>
+                <div className="loader">
                   <div style={spinnerStyle} />
-                  <div style={{ color: D.faint }}>Chargement des analyses...</div>
+                  Chargement des analyses...
                 </div>
               ) : analyses.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "60px 20px" }}>
-                  <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.5 }}>🔍</div>
-                  <div style={{ color: D.faint }}>Aucune analyse pour ce projet</div>
-                  <button onClick={() => ouvrirModalRelancer(depotVu!)} style={{ marginTop: 16, background: D.btnPrimary, color: "white", border: "none", padding: "10px 20px", borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+                <div className="empty-box">
+                  <div className="empty-icon">🔍</div>
+                  <div className="empty-title">Aucune analyse disponible</div>
+                  <div className="empty-text">Lancez une analyse pour générer votre premier rapport.</div>
+                  <button className="primary-btn" onClick={() => ouvrirModalRelancer(depotVu!)}>
                     Lancer une analyse
                   </button>
                 </div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 20, marginTop: 20 }}>
+                <div className="analysis-grid">
                   {analyses.map(a => {
                     const vulnCount = a.vulnerabilites?.length || 0;
                     return (
-                      <div key={a.id} onClick={() => {
-                        // Préparer sessionStorage pour la page rapport
-                        sessionStorage.setItem("rapport", JSON.stringify({
-                          ...a,
-                          analyse_id: a.id,
-                          depot_analyse_id: depotVu?.id,
-                        }));
-                        sessionStorage.setItem("nomProjet", depotVu?.nom || "");
-                        sessionStorage.setItem("projectUrl", depotVu?.project_url || "");
-                        sessionStorage.setItem("branche", a.branche || depotVu?.branche || "main");
-                        sessionStorage.setItem("autoTests", "false");
-                        router.push(`/analyse/rapport?analyse_id=${a.id}`);
-                      }} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 20, padding: 20, cursor: "pointer", transition: "all 0.2s" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-                          <span style={{ fontSize: 12, color: D.faint }}>{new Date(a.created_at).toLocaleDateString("fr-FR")}</span>
-                          <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, background: "rgba(16,185,129,0.12)", color: "#10b981" }}>{a.statut === "termine" ? "Terminé" : "En cours"}</span>
+                      <article
+                        key={a.id}
+                        className="analysis-card"
+                        onClick={() => {
+                          sessionStorage.setItem("rapport", JSON.stringify({
+                            ...a,
+                            analyse_id: a.id,
+                            depot_analyse_id: depotVu?.id,
+                          }));
+                          sessionStorage.setItem("nomProjet", depotVu?.nom || "");
+                          sessionStorage.setItem("projectUrl", depotVu?.project_url || "");
+                          sessionStorage.setItem("branche", a.branche || depotVu?.branche || "main");
+                          sessionStorage.setItem("autoTests", "false");
+                          router.push(`/analyse/rapport?analyse_id=${a.id}`);
+                        }}
+                      >
+                        <div className="analysis-top">
+                          <span className="analysis-date">Analyse du {new Date(a.created_at).toLocaleDateString("fr-FR")}</span>
+                          <span className="done-chip">{a.statut === "termine" ? "Terminé" : "En cours"}</span>
                         </div>
-                        <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+
+                        <div className="score-grid">
                           {[
                             { label: "Qualité", val: a.score_qualite },
                             { label: "Sécurité", val: a.score_securite },
                             { label: "Performance", val: a.score_performance },
                           ].map(s => (
-                            <div key={s.label} style={{ flex: 1, background: D.bg, borderRadius: 12, padding: 12, textAlign: "center" }}>
-                              <div style={{ fontSize: 20, fontWeight: 700, color: colorScore(s.val) }}>{s.val ?? "—"}</div>
-                              <div style={{ fontSize: 10, color: D.faint, marginTop: 4 }}>{s.label}</div>
+                            <div className="score-box" key={s.label}>
+                              <div className="score-val" style={{ color: colorScore(s.val) }}>{s.val ?? "—"}</div>
+                              <div className="score-title">{s.label}</div>
                             </div>
                           ))}
                         </div>
-                        <div style={{ fontSize: 12, fontWeight: 500, color: vulnCount === 0 ? "#10b981" : "#ef4444" }}>
-                          {vulnCount === 0 ? "✓ Code propre" : `⚠ ${vulnCount} vulnérabilité(s)`}
+
+                        <div
+                          className="vuln-banner"
+                          style={{
+                            background: vulnCount === 0 ? "rgba(16,185,129,.10)" : "rgba(239,68,68,.09)",
+                            color: vulnCount === 0 ? "#10b981" : "#ef4444",
+                          }}
+                        >
+                          <span>{vulnCount === 0 ? "✓ Code propre" : `⚠ ${vulnCount} vulnérabilité(s)`}</span>
+                          <span>Ouvrir le rapport →</span>
                         </div>
-                      </div>
+                      </article>
                     );
                   })}
                 </div>
               )}
             </>
           )}
-
         </div>
-      </div>
+      </main>
 
-      {/* ═══════════════════════════════════════
-          MODAL — MODIFIER DÉPÔT
-      ═══════════════════════════════════════ */}
       {editDepot && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={() => setEditDepot(null)}>
-          <div style={{ background: D.modalBg, borderRadius: 24, maxWidth: 500, width: "100%", padding: 28, boxShadow: "0 20px 50px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 18, fontWeight: 700, color: D.text, marginBottom: 4 }}>✏️ Modifier le dépôt</div>
-            <div style={{ fontSize: 12, color: D.faint, marginBottom: 20, fontFamily: "monospace" }}>{editDepot.project_url}</div>
-
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: D.muted, marginBottom: 5, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>Nom du projet</label>
-              <input style={{ width: "100%", padding: "11px 14px", border: `1px solid ${D.border}`, borderRadius: 10, fontSize: 13, background: D.card, color: D.text, outline: "none" }} value={editNom} onChange={e => setEditNom(e.target.value)} placeholder="Nom du projet" />
+        <div className="modal-layer" onClick={() => setEditDepot(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">✏ Modifier le dépôt</div>
+              <div className="modal-sub">{editDepot.project_url}</div>
             </div>
 
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: D.muted, marginBottom: 5, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <div className="field">
+              <label>Nom du projet</label>
+              <input className="field-input" value={editNom} onChange={e => setEditNom(e.target.value)} placeholder="Nom du projet" />
+            </div>
+
+            <div className="field">
+              <label>
                 URL du projet
-                {urlChanged && <span style={{ marginLeft: 8, fontSize: 10, background: "#fef3c7", color: "#b45309", padding: "1px 7px", borderRadius: 10, fontWeight: 600, textTransform: "none" }}>modifié</span>}
+                {urlChanged && <span className="changed">modifié</span>}
               </label>
-              <input style={{ width: "100%", padding: "11px 14px", border: `1px solid ${urlChanged ? "#f59e0b" : D.border}`, borderRadius: 10, fontSize: 13, background: D.card, color: D.text, outline: "none" }} value={editUrl} onChange={e => setEditUrl(e.target.value)} placeholder="namespace/projet" />
+              <input
+                className="field-input"
+                style={{ borderColor: urlChanged ? "#f59e0b" : undefined }}
+                value={editUrl}
+                onChange={e => setEditUrl(e.target.value)}
+                placeholder="namespace/projet"
+              />
             </div>
 
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: D.muted, marginBottom: 5, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <div className="field">
+              <label>
                 Branche
-                {brancheChanged && <span style={{ marginLeft: 8, fontSize: 10, background: "#fef3c7", color: "#b45309", padding: "1px 7px", borderRadius: 10, fontWeight: 600, textTransform: "none" }}>modifié</span>}
+                {brancheChanged && <span className="changed">modifié</span>}
               </label>
-              <input style={{ width: "100%", padding: "11px 14px", border: `1px solid ${brancheChanged ? "#f59e0b" : D.border}`, borderRadius: 10, fontSize: 13, background: D.card, color: D.text, outline: "none" }} value={editBranche} onChange={e => setEditBranche(e.target.value)} placeholder="main" />
+              <input
+                className="field-input"
+                style={{ borderColor: brancheChanged ? "#f59e0b" : undefined }}
+                value={editBranche}
+                onChange={e => setEditBranche(e.target.value)}
+                placeholder="main"
+              />
             </div>
 
             {isCritical && (
-              <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#92400e", marginBottom: 6 }}>⚠️ Attention — modification importante</div>
-                <div style={{ fontSize: 12, color: "#78350f", lineHeight: 1.6, marginBottom: 10 }}>
-                  {urlChanged && brancheChanged ? "L'URL et la branche ont changé." : urlChanged ? "L'URL du projet a changé." : "La branche a changé."}
-                  {" "}Les analyses existantes de ce dépôt font référence à l'ancienne configuration.
-                  Elles resteront accessibles mais ne correspondront plus à ce dépôt.
-                  <strong> Il est recommandé de relancer une nouvelle analyse après cette modification.</strong>
-                </div>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: "#92400e", fontWeight: 600 }}>
-                  <input type="checkbox" checked={editConfirmed} onChange={e => setEditConfirmed(e.target.checked)} style={{ width: 15, height: 15, accentColor: "#f59e0b", cursor: "pointer" }} />
-                  Je comprends et je confirme la modification
+              <div className="alert-warning">
+                <strong>⚠ Modification importante</strong><br />
+                {urlChanged && brancheChanged ? "L’URL et la branche ont changé." : urlChanged ? "L’URL du projet a changé." : "La branche a changé."}
+                {" "}Les anciennes analyses resteront accessibles mais pourront ne plus correspondre à la nouvelle configuration.
+                <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, cursor: "pointer", fontWeight: 700 }}>
+                  <input type="checkbox" checked={editConfirmed} onChange={e => setEditConfirmed(e.target.checked)} />
+                  Je confirme cette modification
                 </label>
               </div>
             )}
 
-            {editError && (
-              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 9, padding: "9px 12px", fontSize: 12, color: "#ef4444", marginBottom: 14 }}>
-                ⚠️ {editError}
-              </div>
-            )}
+            {editError && <div className="alert-error">⚠ {editError}</div>}
 
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ flex: 1, padding: "10px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer", color: D.muted }} onClick={() => setEditDepot(null)}>Annuler</button>
-              <button disabled={editLoading || (isCritical && !editConfirmed)} onClick={validerEdit} style={{ flex: 2, padding: "11px", background: (isCritical && !editConfirmed) ? "#94a3b8" : D.btnPrimary, border: "none", borderRadius: 11, color: "white", fontSize: 14, fontWeight: 600, cursor: (isCritical && !editConfirmed) ? "not-allowed" : "pointer", opacity: editLoading ? 0.7 : 1 }}>
-                {editLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid white", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.6s linear infinite", marginRight: 8 }} /> Enregistrement...</> : "Enregistrer"}
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => setEditDepot(null)}>Annuler</button>
+              <button
+                className="primary-btn"
+                disabled={editLoading || (isCritical && !editConfirmed)}
+                onClick={validerEdit}
+                style={{ justifyContent: "center", opacity: editLoading || (isCritical && !editConfirmed) ? .55 : 1 }}
+              >
+                {editLoading ? "Enregistrement..." : "Enregistrer"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══════════════════════════════════════
-          MODAL — SUPPRIMER DÉPÔT
-      ═══════════════════════════════════════ */}
       {deleteDepot && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={() => setDeleteDepot(null)}>
-          <div style={{ background: D.modalBg, borderRadius: 24, maxWidth: 440, width: "100%", padding: 28, textAlign: "center", boxShadow: "0 20px 50px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 42, marginBottom: 14 }}>🗑️</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: D.text, marginBottom: 8 }}>Supprimer ce dépôt ?</div>
-            <div style={{ fontSize: 13, color: D.muted, marginBottom: 6 }}>
-              <strong style={{ color: D.text }}>{deleteDepot.nom}</strong>
+        <div className="modal-layer" onClick={() => setDeleteDepot(null)}>
+          <div className="modal danger-modal" onClick={e => e.stopPropagation()}>
+            <div className="danger-icon">🗑</div>
+            <div className="modal-title">Supprimer ce dépôt ?</div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginTop: 7 }}>{deleteDepot.nom}</div>
+            <div className="modal-sub" style={{ marginTop: 5 }}>{deleteDepot.project_url}</div>
+            <div className="danger-copy">
+              Cette action est irréversible. Toutes les analyses, tests, issues et merge requests associés seront supprimés.
             </div>
-            <div style={{ fontSize: 12, color: D.faint, marginBottom: 6, fontFamily: "monospace" }}>{deleteDepot.project_url}</div>
-            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "11px 14px", margin: "14px 0 20px", fontSize: 12, color: "#b91c1c", lineHeight: 1.6 }}>
-              ⚠️ Cette action est <strong>irréversible</strong>. Toutes les analyses, tests générés,
-              issues et merge requests liés à ce dépôt seront également supprimés.
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ flex: 1, padding: "11px", background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 11, fontSize: 14, fontWeight: 500, cursor: "pointer", color: D.muted }} onClick={() => setDeleteDepot(null)}>Annuler</button>
-              <button disabled={deleteLoading} onClick={confirmerSupprimer} style={{ flex: 1, padding: "11px", background: "#ef4444", border: "none", borderRadius: 11, color: "white", fontSize: 14, fontWeight: 700, cursor: "pointer", opacity: deleteLoading ? 0.7 : 1 }}>
-                {deleteLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid white", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.6s linear infinite", marginRight: 8 }} /> Suppression...</> : "Supprimer définitivement"}
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => setDeleteDepot(null)}>Annuler</button>
+              <button className="delete-btn" disabled={deleteLoading} onClick={confirmerSupprimer}>
+                {deleteLoading ? "Suppression..." : "Supprimer"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══════════════════════════════════════
-          MODAL — TOKEN (analyse / relancer)
-      ═══════════════════════════════════════ */}
       {modalDepot && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }} onClick={() => setModalDepot(null)}>
-          <div style={{ background: D.modalBg, borderRadius: 24, maxWidth: 480, width: "100%", padding: 28, boxShadow: "0 20px 35px -12px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 20, fontWeight: 700, color: D.text, marginBottom: 4 }}>
-              {modalMode === "relancer" ? "Relancer l'analyse" : "Accéder aux analyses"}
-            </div>
-            <div style={{ fontSize: 13, color: D.faint, marginBottom: 20 }}>{modalDepot.nom} · {modalDepot.project_url}</div>
-
-            <label style={{ fontSize: 13, fontWeight: 600, color: D.text, marginBottom: 6, display: "block" }}>Token GitLab</label>
-            <input
-              type="password"
-              placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
-              value={modalToken}
-              onChange={e => setModalToken(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && validerToken()}
-              style={{ width: "100%", padding: "12px 14px", border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 14, fontFamily: "monospace", background: D.card, color: D.text, outline: "none", marginBottom: 8 }}
-              autoFocus
-            />
-            <div style={{ fontSize: 11, color: D.faint, marginBottom: 20 }}>GitLab → Settings → Access Tokens (scopes: api, read_repository)</div>
-
-            {modalError && (
-              <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 10, padding: "10px 12px", fontSize: 12, color: "#ef4444", marginBottom: 20 }}>
-                ⚠️ {modalError}
+        <div className="modal-layer" onClick={() => setModalDepot(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="hero-badge" style={{ marginBottom: 12 }}>
+                {modalMode === "relancer" ? "Nouvelle exécution" : "Accès sécurisé"}
               </div>
-            )}
+              <div className="modal-title">
+                {modalMode === "relancer" ? "Relancer l'analyse" : "Consulter les analyses"}
+              </div>
+              <div className="modal-sub">{modalDepot.nom} · {modalDepot.project_url}</div>
+            </div>
 
-            <div style={{ display: "flex", gap: 12 }}>
-              <button onClick={() => setModalDepot(null)} style={{ flex: 1, padding: 10, background: D.btnSec, border: `1px solid ${D.border}`, borderRadius: 12, fontSize: 14, fontWeight: 500, cursor: "pointer", color: D.muted }}>Annuler</button>
-              <button onClick={validerToken} disabled={modalLoading} style={{ flex: 2, padding: 10, background: D.btnPrimary, border: "none", borderRadius: 12, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer", opacity: modalLoading ? 0.6 : 1 }}>
-                {modalLoading ? <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid white", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.6s linear infinite", marginRight: 8 }} /> Validation...</> : (modalMode === "relancer" ? "Lancer l'analyse" : "Valider")}
+            <div className="field">
+              <label>Token GitLab</label>
+              <input
+                className="field-input"
+                type="password"
+                placeholder="glpat-xxxxxxxxxxxxxxxxxxxx"
+                value={modalToken}
+                onChange={e => setModalToken(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && validerToken()}
+                autoFocus
+                style={{ fontFamily: "ui-monospace, monospace" }}
+              />
+            </div>
+            <p style={{ margin: "-4px 0 18px", color: D.faint, fontSize: 11 }}>
+              GitLab → Settings → Access Tokens · scopes : api, read_repository
+            </p>
+
+            {modalError && <div className="alert-error">⚠ {modalError}</div>}
+
+            <div className="modal-footer">
+              <button className="ghost-btn" onClick={() => setModalDepot(null)}>Annuler</button>
+              <button
+                className="primary-btn"
+                disabled={modalLoading}
+                onClick={validerToken}
+                style={{ justifyContent: "center", opacity: modalLoading ? .6 : 1 }}
+              >
+                {modalLoading ? "Validation..." : modalMode === "relancer" ? "Lancer l'analyse" : "Valider"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* TOAST */}
       {toast && (
-        <div style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 2000,
-          background: toast.ok ? D.btnPrimary : "#ef4444",
-          color: "white", borderRadius: 12, padding: "13px 20px",
-          fontSize: 13, fontWeight: 500, boxShadow: "0 8px 30px rgba(0,0,0,0.2)",
-          display: "flex", alignItems: "center", gap: 8, animation: "fadeIn 0.2s ease",
-        }}>
-          {toast.ok ? "✓" : "✕"} {toast.msg}
+        <div className="toast">
+          <span>{toast.ok ? "✓" : "✕"}</span>
+          {toast.msg}
         </div>
       )}
     </>
   );
 }
-

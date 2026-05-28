@@ -80,9 +80,9 @@ export default function AdminDashboard() {
                 {[
                   { href: "/admin/users",       icon: "◈", label: "Gérer utilisateurs", desc: "Activer, désactiver, rôles" },
                   { href: "/admin/depots",       icon: "▣", label: "Voir les dépôts",    desc: "Tous les projets GitLab" },
-                  { href: "/admin/new-analyse",  icon: "▶", label: "Lancer analyse",     desc: "Analyse IA complète" },
-                  { href: "/admin/new-diff",     icon: "⇌", label: "Comparer branches",  desc: "Analyse diff IA" },
-                  { href: "/admin/explorer",     icon: "⊞", label: "Explorer le code",   desc: "Parcourir les fichiers" },
+                  { href: "/admin-pages/new-analyse", icon: "▶", label: "Analyser mon projet", desc: "Mode personnel GitLab" },
+                  { href: "/admin-pages/new-diff", icon: "⇌", label: "Comparer mes branches", desc: "Mode personnel GitLab" },
+                  { href: "/admin-pages/explorer", icon: "⊞", label: "Explorer mon code", desc: "Mode personnel GitLab" },
                   { href: "/admin/stats",        icon: "◈", label: "Statistiques",       desc: "Métriques globales" },
                 ].map(a => (
                   <a key={a.href} href={a.href} style={{

@@ -19,9 +19,9 @@ const NAV = [
   { href: "/admin-pages/corrections",          icon: "🩹", label: "Corrections IA",   sub: "Vulns corrigées" },
   { href: "/admin-pages/mr-explorations",      icon: "⊛",  label: "MR Explorer",      sub: "MR via explorateur" },
   { label: "──────", divider: true },
-  { href: "/admin-pages/new-analyse",          icon: "▶",  label: "Lancer Analyse",   sub: "Analyse simple",  action: true },
-  { href: "/admin-pages/new-diff",             icon: "⇌",  label: "Lancer Diff",      sub: "Analyse diff",    action: true },
-  { href: "/admin-pages/explorer",             icon: "⊞",  label: "Explorer",         sub: "Parcourir le code", action: true },
+  { href: "/admin-pages/new-analyse",          icon: "▶",  label: "Mon analyse",      sub: "Mes projets GitLab", action: true },
+  { href: "/admin-pages/new-diff",             icon: "⇌",  label: "Mon Diff",         sub: "Mes branches",      action: true },
+  { href: "/admin-pages/explorer",             icon: "⊞",  label: "Mon Explorer",     sub: "Mes dépôts",        action: true },
   { label: "──────", divider: true },
   { href: "/dashboard",                        icon: "←",  label: "Espace client",    sub: "Retour au dashboard" },
 ];

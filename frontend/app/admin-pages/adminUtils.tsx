@@ -67,6 +67,8 @@ export const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pousse:               { color: "#22c55e", label: "Poussé" },
   genere:               { color: "#818cf8", label: "Généré" },
   aucun_changement:     { color: "#6b7280", label: "Inchangé" },
+  en_attente: { color: "#f59e0b", label: "En attente" },
+  en_file:    { color: "#38bdf8", label: "En file" },
 };
 
 // ─── COMPOSANTS THEME-AWARE ───────────────────────────────────────
